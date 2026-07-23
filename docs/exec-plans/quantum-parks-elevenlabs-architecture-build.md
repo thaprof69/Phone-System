@@ -56,6 +56,7 @@ Implement the approved PRD v2.0 and Architecture Pack v2.0 as a complete local, 
 - Removed backend/provider secrets from web task definitions and restricted the API task role to immutable evidence writes.
 - Added Cognito authentication at the admin ALB rule and propagation/verification of the Cognito access token at the API.
 - Added a server-only encrypted provider credential vault and test-before-save proof after the Administration integration requirement was supplied.
+- A final Docker image unpack failed when the host data volume reached 100%. Only reproducible `.turbo` and `.next` caches were removed; Docker Desktop was restarted, persisted volumes and the encrypted connection remained intact, and all services returned healthy.
 
 ## External gates
 

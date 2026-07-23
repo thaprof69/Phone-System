@@ -224,9 +224,15 @@ services:
         args:
           {
             APP: '@quantum-parks/admin-web',
-            START_COMMAND: 'node apps/admin-web/node_modules/next/dist/bin/next start apps/admin-web --hostname 0.0.0.0 --port 3000',
+            START_COMMAND: 'HOSTNAME=0.0.0.0 PORT=3000 node apps/admin-web/.next/standalone/apps/admin-web/server.js',
           },
       }
+    command:
+      [
+        '/bin/sh',
+        '-c',
+        'HOSTNAME=0.0.0.0 PORT=3000 node apps/admin-web/.next/standalone/apps/admin-web/server.js',
+      ]
     environment:
       { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production, QP_ENVIRONMENT: development }
     depends_on: { api: { condition: service_healthy } }
@@ -242,9 +248,15 @@ services:
         args:
           {
             APP: '@quantum-parks/customer-web',
-            START_COMMAND: 'node apps/customer-web/node_modules/next/dist/bin/next start apps/customer-web --hostname 0.0.0.0 --port 3001',
+            START_COMMAND: 'HOSTNAME=0.0.0.0 PORT=3001 node apps/customer-web/.next/standalone/apps/customer-web/server.js',
           },
       }
+    command:
+      [
+        '/bin/sh',
+        '-c',
+        'HOSTNAME=0.0.0.0 PORT=3001 node apps/customer-web/.next/standalone/apps/customer-web/server.js',
+      ]
     environment: { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production }
     depends_on: { api: { condition: service_healthy } }
     ports: ['3001:3001']

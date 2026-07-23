@@ -37,6 +37,13 @@ test('administrator securely validates, connects, manages, and disconnects Eleve
   await page.goto('/administration');
   const integration = page.getByRole('heading', { name: 'ElevenLabs' });
   await expect(integration).toBeVisible();
+  const existingManage = page.getByRole('button', { name: 'Manage' });
+  if (await existingManage.isVisible()) {
+    await existingManage.click();
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+    await page.getByRole('button', { name: 'Confirm disconnect' }).click();
+    await page.getByRole('button', { name: 'Close dialog' }).click();
+  }
   await page.getByRole('button', { name: 'Connect' }).click();
   await page.getByLabel('Connection label').fill('Quantum Parks simulator');
   await page.getByLabel('Environment').selectOption('SANDBOX');
