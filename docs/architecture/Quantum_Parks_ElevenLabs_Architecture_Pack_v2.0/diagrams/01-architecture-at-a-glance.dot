@@ -1,0 +1,16 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  caller [label="Caller", fillcolor="#FFF4DE"];
+  route [label="Telephone route\nVodafone / Twilio / SIP", fillcolor="#FFF4DE"];
+  el [label="ElevenLabs managed runtime\nLive voice agent\nSpeech + turn management\nKnowledge + tools + transfer", fillcolor="#E8F3FF"];
+  qp [label="Quantum Parks platform\nControl + knowledge + testing\nCanonical history + intelligence", fillcolor="#EAF7EE"];
+  systems [label="Customer / Booking / Zendesk\nMessaging / OIDC", fillcolor="#F2EDFF"];
+  caller -> route -> el;
+  el -> qp [label="APIs, tools, signed webhooks"];
+  qp -> el [label="approved agent, knowledge, tests, voices"];
+  qp -> systems [dir=both, label="controlled integrations"];
+
+    }

@@ -1,0 +1,11 @@
+﻿Risk,Preventive control,Detective control,Corrective control,Blocking test
+Stable fact hallucination,Approved effective knowledge only,Source/version and confidence audit,Safe fallback + knowledge gap,Factual launch set
+Dynamic fact hallucination,Typed authoritative tool required,Tool/result provenance,"Correct record and retrain test, not model",Tool contract scenarios
+False action completion,Success claim allowed only after SUCCESS result,Claim/result consistency evaluator,Correction + task/incident,No-false-completion corpus
+Prompt injection,Policy hierarchy; retrieved text treated as data,Injection classifier and audit,Quarantine source; revise parser/policy,Caller/document injection suite
+Arbitrary tool or URL,Code-owned registry and link allowlist,Rejected invocation metric,Disable release/tool,Tool abuse tests
+Summary hallucination,Evidence-linked atomic facts and schema,Claim coverage evaluator,Human correction/version,Summary evidence suite
+Unreviewed learning,No automatic knowledge/prompt publication,Release provenance audit,Withdraw/rollback,Release gate tests
+Provider drift,Read-back checksums and reconciliation,Scheduled drift scan,Re-publish or incident,Drift injection tests
+Payment data retention,Agent interruption + post-call DLP/redaction,Restricted incident metric,Redact/delete/provider incident,Payment adversarial corpus
+Sensitive mishandling,"Sensitive scripts, offer suppression, restricted route",QA sampling and SLA alerts,Escalation/incident,Sensitive routing corpus

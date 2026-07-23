@@ -1,0 +1,5 @@
+﻿Class,Examples,Access,Encryption/masking,Default retention posture
+PUBLIC,"Published park facts, public links",All callers/users as relevant,Integrity controls,Until superseded/archived
+INTERNAL,"Agent configuration metadata, operational metrics",Authorized staff,At rest/in transit,Business policy
+CONFIDENTIAL,"Phone, email, booking context, transcript, support history",Purpose-based roles,Encryption + field masking,Minimum approved period
+RESTRICTED,"Sensitive calls, safeguarding, payment incidents, custom voice consent, raw webhooks",Special clearance,"Separate/restricted storage, audited access",Shortest lawful period or legal hold

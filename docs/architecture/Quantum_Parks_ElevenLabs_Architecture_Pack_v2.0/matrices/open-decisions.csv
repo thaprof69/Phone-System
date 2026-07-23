@@ -1,0 +1,11 @@
+﻿ID,Decision,Options/considerations,Required owner,Blocking stage
+D-01,Telephone routing and transfer model,"Native provider route, Twilio, SIP, Vodafone forwarding; transfer capability tradeoffs",Telecom/Operations,Production approval
+D-02,ElevenLabs workspace tier and capabilities,Agent/KB/test/voice/webhook/privacy features,Platform owner,Staging integration
+D-03,"EU residency, ZRM, retention and audio",Processing/storage/contractual posture,Privacy/Legal,Production approval
+D-04,Optional audio ingestion,"None, sampled QA, sensitive exclusion, broader retention",Privacy/QA,Production approval
+D-05,Verification policy by intent,Light/strong/operator-only factors,Operations/Privacy,Tool activation
+D-06,Human queues and SLAs,"Locations, hours, languages, callback timing",Operations,Production approval
+D-07,Active languages,Portuguese/English baseline and additional packs,Business/QA,Language activation
+D-08,Custom voice policy,"Ownership, consent, revocation, permitted users",Legal/Brand,Custom voice activation
+D-09,Retention values,Per data class and jurisdiction,Privacy/Legal,Production approval
+D-10,Customer/booking/Zendesk field mappings,Minimum required fields and write permissions,System owners,Live integration

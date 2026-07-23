@@ -1,0 +1,32 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  '@scarf/scarf': false
+  '@swc/core': true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+minimumReleaseAgeExclude:
+  - '@turbo/darwin-64@2.10.6'
+  - '@turbo/darwin-arm64@2.10.6'
+  - '@turbo/linux-64@2.10.6'
+  - '@turbo/linux-arm64@2.10.6'
+  - '@turbo/windows-64@2.10.6'
+  - '@turbo/windows-arm64@2.10.6'
+  - turbo@2.10.6
+  - '@aws-sdk/checksums@3.1000.19'
+  - '@aws-sdk/client-s3@3.1092.0'
+  - '@aws-sdk/core@3.976.0'
+  - '@aws-sdk/credential-provider-env@3.972.60'
+  - '@aws-sdk/credential-provider-http@3.972.62'
+  - '@aws-sdk/credential-provider-ini@3.973.5'
+  - '@aws-sdk/credential-provider-login@3.972.67'
+  - '@aws-sdk/credential-provider-node@3.972.71'
+  - '@aws-sdk/credential-provider-process@3.972.60'
+  - '@aws-sdk/credential-provider-sso@3.973.4'
+  - '@aws-sdk/credential-provider-web-identity@3.972.66'
+  - '@aws-sdk/middleware-sdk-s3@3.972.65'
+  - '@aws-sdk/nested-clients@3.997.34'
+  - '@aws-sdk/token-providers@3.1092.0'
+  - jose@6.2.4

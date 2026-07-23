@@ -1,0 +1,21 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  users [label="Quantum Parks users\nAdmins, editors, QA, operators, analysts", fillcolor="#FFF4DE"];
+  app [label="Quantum Parks application\nExclusive normal-user interface", fillcolor="#EAF7EE"];
+  el [label="ElevenLabs", fillcolor="#E8F3FF"];
+  caller [label="Caller", fillcolor="#FFF4DE"];
+  tel [label="Telephone route", fillcolor="#F2EDFF"];
+  cust [label="Customer system"];
+  book [label="Booking system"];
+  zen [label="Zendesk / support"];
+  msg [label="WhatsApp / SMS"];
+  idp [label="OIDC identity provider"];
+  users -> app;
+  app -> el [dir=both, label="control APIs / webhooks"];
+  caller -> tel -> el;
+  app -> cust [dir=both]; app -> book [dir=both]; app -> zen [dir=both]; app -> msg [dir=both]; app -> idp [dir=both];
+
+    }

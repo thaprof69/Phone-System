@@ -1,0 +1,11 @@
+﻿Capability,Required use,Local owner,Runtime copy,Readiness treatment
+Agent configuration/versioning,Create/update/publish/rollback receptionist,AgentVersion/ReleaseManifest,ElevenLabs agent/version,Must be verified; alternative mapping documented
+Knowledge text/file/URL,Publish approved company knowledge,KnowledgeVersion/Release,ElevenLabs KB documents,Must be verified and reconciled
+Voice catalogue/preview,Select and assign voices in-app,VoiceCatalogue/Assignment,ElevenLabs voice IDs,Unavailable voice blocks release
+Custom voice,Approved company voice workflow,Consent/Approval records,ElevenLabs custom voice,Activation gated and restricted
+Agent tests/simulation,In-app regression testing,TestSuite/TestRun,Provider tests/runs,Provider + internal evaluation required
+Inbound personalization,Call-start context,Personalization policy/snapshot,Dynamic variables/overrides,Minimum data; route dependent
+Webhook tools,Authoritative business lookups/actions,ToolDefinition/Version,Provider tool IDs,"Typed, authorized, tested"
+Post-call transcript webhook,Call history input,Raw ProviderEvent,Provider webhook payload,"Signed, replay safe, reconciled"
+Privacy/retention/ZRM/residency,Provider data governance,SystemConfiguration/Approval,Provider settings/contract,Explicit production gate
+Telephony transfer,Human handoff,TransferPolicy/Handoff,Provider telephony configuration,Validate selected route capability

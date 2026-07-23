@@ -1,0 +1,19 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  case [label="Versioned test cases"];
+  candidate [label="Candidate agent release"];
+  provider [label="ElevenLabs tests / simulation", fillcolor="#E8F3FF"];
+  internal [label="Quantum Parks evaluators\nPolicy + facts + tool + evidence"];
+  human [label="Human language / high-risk review"];
+  gate [label="Server-enforced release gate"];
+  publish [label="Publish + verify", fillcolor="#EAF7EE"];
+  fail [label="Fail + defect + revise", fillcolor="#FFEAEA"];
+  case -> provider; candidate -> provider; provider -> internal -> human -> gate;
+  gate -> publish [label="pass"];
+  gate -> fail [label="fail"];
+  fail -> candidate [style=dashed];
+
+    }

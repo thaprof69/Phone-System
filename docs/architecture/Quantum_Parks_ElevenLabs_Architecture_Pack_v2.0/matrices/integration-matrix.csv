@@ -1,0 +1,10 @@
+﻿Integration,Direction,Purpose,Authentication,Data classification,Timeout/retry,Fallback,Owner
+ElevenLabs agent/knowledge/voice/test APIs,QP -> ElevenLabs,"Configure, test, publish and reconcile runtime artifacts",Scoped API key in secret manager,Internal/Confidential,"Bounded retry, rate aware",Queue/reconcile; never fake success,Platform owner
+ElevenLabs post-call webhook,ElevenLabs -> QP,Deliver provider transcript and metadata,HMAC/signature + replay validation,Confidential/Restricted,Fast ACK; durable inbox,Replay/reconciliation,Platform owner
+Inbound personalization,ElevenLabs -> QP,Provide minimum call-start context,Provider verification,Confidential,Strict low latency; no unbounded retry,No context / general greeting,Customer systems owner
+Typed webhook tools,ElevenLabs <-> QP,Authoritative facts and approved actions,Signed/authenticated endpoint,Public to Restricted by tool,Tool-specific timeout/circuit breaker,Safe unavailable result/handoff,Domain owner
+Customer system,QP <-> Customer,Lookup and create/update allowed customer records,Approved service auth,Confidential,Bounded retry,No match/unavailable,CRM owner
+Booking system,QP -> Booking,Read booking/availability; approved writes gated,Approved service auth,Confidential,Short timeout; read-only default,Digital link/human,Booking owner
+Zendesk,QP <-> Zendesk,Read cross-channel context and optional tasks/tickets,OAuth/service auth,Confidential,Bounded retry,Continue without context / task backlog,Support owner
+WhatsApp/SMS,QP <-> Provider,"Links, summaries, receipts and fallback",Provider API auth + signed status webhook,Confidential,Bounded retry + SMS fallback,Staff task,Operations owner
+OIDC,Browser/API <-> IdP,"Authentication, MFA and identity claims",OIDC/OAuth2,Confidential,Fail closed,No access,Security owner

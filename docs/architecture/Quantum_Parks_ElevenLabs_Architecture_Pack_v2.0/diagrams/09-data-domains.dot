@@ -1,0 +1,19 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  provider [label="Provider + mappings"];
+  agent [label="Agents + releases"];
+  knowledge [label="Knowledge + approvals"];
+  voice [label="Voices + consent"];
+  tests [label="Tests + evidence"];
+  calls [label="Calls + canonical transcripts"];
+  context [label="Customer / booking / support snapshots"];
+  ops [label="Tasks + callbacks + messages"];
+  intel [label="Facts + aggregates + reports"];
+  gov [label="Audit + retention + readiness"];
+  provider -> agent; agent -> knowledge; agent -> voice; agent -> tests; agent -> calls;
+  calls -> context; calls -> ops; calls -> intel; provider -> gov; knowledge -> gov; tests -> gov; calls -> gov;
+
+    }

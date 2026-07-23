@@ -1,0 +1,15 @@
+﻿Event,Aggregate,Purpose,Classification,Primary consumers
+ProviderConnected,ProviderWorkspace,Record verified connection and capabilities,INTERNAL,"Readiness, audit"
+AgentPublicationRequested,AgentReleaseManifest,Start durable publication,INTERNAL,Agent publish workflow
+AgentPublished,AgentReleaseManifest,Record remote verification and activation,INTERNAL,"UI, readiness, monitoring"
+AgentDriftDetected,ProviderObjectMapping,Record remote/local mismatch,INTERNAL,"Alert, reconciliation"
+KnowledgePublished,KnowledgeRelease,Record verified provider knowledge release,INTERNAL,"Agent compiler, audit"
+TestRunCompleted,TestRun,Store results and release evidence,INTERNAL,"Release gate, QA"
+PostCallWebhookReceived,CallSession,Record verified provider event,CONFIDENTIAL,Post-call workflow
+CanonicalTranscriptCreated,CanonicalTranscript,Complete normalized call record,CONFIDENTIAL,"Summary, classification, UI"
+CallSummaryCreated,CallSummary,Store evidence-linked summary,CONFIDENTIAL,"History, tasks, reporting"
+SensitiveCallDetected,CallSession,Apply restricted handling,RESTRICTED,"Restricted workflow, alert"
+KnowledgeGapDetected,KnowledgeGap,Create human-reviewed improvement candidate,INTERNAL,Knowledge backlog
+ReportGenerated,ReportRun,Publish report artifact and lineage,INTERNAL/RESTRICTED,"Recipients, audit"
+DeletionCompleted,DeletionJob,Record deletion evidence,RESTRICTED,Privacy audit
+ReadinessChanged,ReadinessEvaluation,Record computed lifecycle transition,INTERNAL,"Dashboard, deployment gate"

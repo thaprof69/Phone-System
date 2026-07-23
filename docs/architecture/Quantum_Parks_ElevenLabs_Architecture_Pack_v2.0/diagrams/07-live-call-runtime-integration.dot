@@ -1,0 +1,18 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  caller [label="Caller", fillcolor="#FFF4DE"];
+  el [label="ElevenLabs voice agent\nLive conversation", fillcolor="#E8F3FF"];
+  pers [label="QP inbound personalization\nMinimum permitted context", fillcolor="#EAF7EE"];
+  tools [label="QP typed business tools\nVerification + authorization", fillcolor="#EAF7EE"];
+  systems [label="Customer / Booking / Zendesk", fillcolor="#F2EDFF"];
+  human [label="Human queue / callback"];
+  caller -> el;
+  el -> pers [dir=both, label="call start"];
+  el -> tools [dir=both, label="authoritative facts/actions"];
+  tools -> systems [dir=both];
+  el -> human [label="configured transfer"];
+
+    }

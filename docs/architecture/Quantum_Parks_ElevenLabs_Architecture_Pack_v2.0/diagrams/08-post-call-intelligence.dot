@@ -1,0 +1,18 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  el [label="ElevenLabs signed post-call webhook", fillcolor="#E8F3FF"];
+  ingest [label="Verify + deduplicate + archive raw evidence"];
+  canon [label="Normalize + redact + canonical transcript"];
+  facts [label="Evidence-linked facts\nTrusted events + transcript segments"];
+  enrich [label="Summary + taxonomy + outcome + quality"];
+  link [label="Customer / booking / support linkage"];
+  ops [label="Tasks + callbacks + messages"];
+  agg [label="Incremental facts + aggregates"];
+  ui [label="History + dashboards + reports", fillcolor="#EAF7EE"];
+  el -> ingest -> canon -> facts -> enrich;
+  enrich -> link; enrich -> ops; enrich -> agg; link -> ui; ops -> ui; agg -> ui;
+
+    }

@@ -1,0 +1,15 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Readiness Evaluation",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["environment","status","evaluated_at","checks","blockers","evidence_ids"],
+  "properties":{
+    "environment":{"enum":["development","staging","production"]},
+    "status":{"enum":["ENGINEERING_COMPLETE","STAGING_VALIDATED","PRODUCTION_DEPLOYMENT_READY","EXTERNALLY_BLOCKED","PRODUCTION_APPROVED","PRODUCTION_ACTIVE"]},
+    "evaluated_at":{"type":"string","format":"date-time"},
+    "checks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["key","passed","severity"],"properties":{"key":{"type":"string"},"passed":{"type":"boolean"},"severity":{"enum":["INFO","WARNING","BLOCKING"]},"evidence_ids":{"type":"array","items":{"type":"string"}}}}},
+    "blockers":{"type":"array","items":{"type":"string"}},
+    "evidence_ids":{"type":"array","items":{"type":"string"}}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Provider Result",
+  "oneOf":[
+    {"type":"object","additionalProperties":false,"required":["status","data"],"properties":{"status":{"const":"SUCCESS"},"data":{},"provider_request_id":{"type":["string","null"]}}},
+    {"type":"object","additionalProperties":false,"required":["status","error"],"properties":{"status":{"enum":["NOT_FOUND","UNAUTHORIZED","FORBIDDEN","VALIDATION_FAILED","CONFLICT","RATE_LIMITED","TIMEOUT","UNAVAILABLE","CAPABILITY_UNSUPPORTED","PROVIDER_ERROR","UNKNOWN_FAILURE"]},"error":{"type":"object","additionalProperties":false,"required":["code","safe_message"],"properties":{"code":{"type":"string"},"safe_message":{"type":"string"},"retryable":{"type":"boolean"}}},"provider_request_id":{"type":["string","null"]}}}
+  ]
+}

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "knowledge_sync_release_workspace_unique" ON "knowledge_syncs" USING btree ("knowledge_version_id","workspace_id");

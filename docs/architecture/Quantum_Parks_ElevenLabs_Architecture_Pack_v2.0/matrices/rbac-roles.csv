@@ -1,0 +1,11 @@
+﻿Role,Key permissions,Restricted from,Separation-of-duties notes
+Platform Owner,"Provider connection, system configuration, readiness, emergency rollback",Routine transcript access unless separately granted,Cannot self-approve high-risk content by default
+Agent Administrator,Draft agent/prompt/tool/transfer/voice configuration; run tests,Raw provider secrets; sensitive call details,Publisher/approver separate for production
+Knowledge Editor,"Create and edit knowledge drafts, link tests",Publish high-risk content,Cannot approve own high-risk version
+Knowledge Approver,Review and approve scoped knowledge,Provider credentials,Must be independent of author for high risk
+QA Reviewer,"Create suites, review runs and sampled calls",Provider secret management,Critical language tests require human evidence
+Operations Manager,"Calls, tasks, callbacks, queues, reports",Agent publication unless granted,Sensitive clearance separate
+Customer Service Operator,Assigned calls/tasks/callbacks and permitted context,"Bulk export, configuration, sensitive calls by default",Purpose-based access
+Analyst / Executive,"Aggregates, reports and masked drill-down",Raw sensitive transcript/audio,Export separately audited
+Privacy / Security Auditor,"Audit, retention, deletion, incident and access review",Business configuration mutation,Read-only independent oversight
+Restricted Vendor Administrator,External account/billing/bootstrap exceptions,Normal operations unless separately granted,Use only when API does not support function

@@ -1,0 +1,11 @@
+﻿ID,Risk,Impact,Likelihood,Mitigation,Indicator,Owner
+R-01,Required ElevenLabs API capability unavailable at account tier,Control-plane gap,Medium,Capability registry; external boundary; no fake success,CAPABILITY_UNSUPPORTED,Platform owner
+R-02,Remote edits create drift,Unsafe/unreviewed runtime,Medium,Restrict console; scheduled reconciliation; block release,Drift findings,Agent admin
+R-03,Post-call webhook delayed or missing,Incomplete history/intelligence,Medium,"Inbox, replay, conversation reconciliation, alerts",Artifact lag/completion,SRE
+R-04,Provider transcript inaccurate,Bad summaries/trends,Medium,"Quality flags, corrections, selective QA/retranscription option",Correction/low-quality rate,QA lead
+R-05,Stale/conflicting knowledge published,Incorrect caller answers,Medium,"Effective dates, conflicts, owners, tests, rollback",Stale/conflict metric,Knowledge owner
+R-06,Summary or classification hallucinates,False history/reporting,Medium,"Evidence-linked schema, deterministic outcomes, review",Unsupported claim rate,Data/QA lead
+R-07,Sensitive or payment data retained,Privacy/security incident,Low/High impact,"Provider settings, DLP, redaction, restricted access, tests",Incident count,Privacy/Security
+R-08,Vendor dependency/cost change,Operational or budget risk,Medium,"Adapter, exportable local master, cost alerts, contract review",Cost/capability trend,Executive owner
+R-09,Customer/booking API unavailable,Reduced personalization,High,"Typed unavailable states, safe general service, digital/human path",Integration error rate,System owner
+R-10,Custom voice lacks valid consent,Legal/reputation risk,Low,"Restricted workflow, evidence, two-person approval, revocation",Missing consent check,Legal/Platform

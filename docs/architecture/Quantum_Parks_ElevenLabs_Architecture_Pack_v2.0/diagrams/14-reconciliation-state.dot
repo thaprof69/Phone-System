@@ -1,0 +1,23 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  draft [label="LOCAL_DRAFT"];
+  approved [label="LOCAL_APPROVED"];
+  pending [label="PUBLISH_PENDING"];
+  sync [label="IN_SYNC", fillcolor="#EAF7EE"];
+  drift [label="DRIFTED", fillcolor="#FFF4DE"];
+  missing [label="REMOTE_MISSING", fillcolor="#FFEAEA"];
+  failed [label="PUBLISH_FAILED", fillcolor="#FFEAEA"];
+  rollback [label="ROLLBACK_PENDING"];
+  blocked [label="EXTERNALLY_BLOCKED", fillcolor="#F2EDFF"];
+  draft -> approved -> pending -> sync;
+  pending -> failed; pending -> blocked;
+  sync -> drift; sync -> missing;
+  drift -> pending [label="reconcile"];
+  missing -> pending [label="recreate"];
+  failed -> pending [label="retry"];
+  sync -> rollback -> pending;
+
+    }

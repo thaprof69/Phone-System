@@ -1,0 +1,13 @@
+# Immutable governing sources and their generated architecture pack.
+Quantum_Park_Loyalty_Platform_PRD_v1.0.docx
+Quantum_Parks_ElevenLabs_Architecture_Driven_Master_Production_Build_Prompt_v2.0.md
+docs/product/source/
+docs/architecture/source/
+docs/architecture/Quantum_Parks_ElevenLabs_Architecture_Pack_v2.0/
+
+# Generated database snapshots and dependencies.
+packages/db/migrations/meta/
+node_modules/
+.next/
+dist/
+**/next-env.d.ts

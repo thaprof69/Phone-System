@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Call Classification",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["primary_intent","secondary_intents","park","language","outcome","sensitive","evidence_ids"],
+  "properties":{
+    "primary_intent":{"type":"string"},
+    "secondary_intents":{"type":"array","items":{"type":"string"}},
+    "park":{"type":["string","null"]},
+    "language":{"type":"string"},
+    "outcome":{"enum":["RESOLVED_BY_AGENT","OFFICIAL_LINK_SENT","TRANSFER_COMPLETED","TRANSFER_FAILED_CALLBACK_CREATED","CALLBACK_REQUESTED","STAFF_TASK_CREATED","UNRESOLVED_KNOWLEDGE_GAP","CUSTOMER_DISCONNECTED","TECHNICAL_FAILURE","SENSITIVE_ESCALATION","PAYMENT_DATA_INTERRUPTED","NO_ACTION_REQUIRED"]},
+    "sensitive":{"type":"boolean"},
+    "sentiment_indicator":{"type":["object","null"],"additionalProperties":false,"required":["label","confidence"],"properties":{"label":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}}},
+    "evidence_ids":{"type":"array","items":{"type":"string"},"minItems":1}
+  }
+}

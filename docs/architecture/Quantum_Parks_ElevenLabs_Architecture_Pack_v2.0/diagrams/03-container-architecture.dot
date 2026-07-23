@@ -1,0 +1,22 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  subgraph cluster_qp { label="Quantum Parks platform"; color="#8DB3D3"; style="rounded";
+    admin [label="admin-web\nControl + intelligence UI", fillcolor="#EAF7EE"];
+    customer [label="customer-web\nRegistration + digital handoff", fillcolor="#EAF7EE"];
+    api [label="api\nREST + webhooks + tools", fillcolor="#EAF7EE"];
+    worker [label="worker\nTemporal workflows", fillcolor="#EAF7EE"];
+    sim [label="provider-simulator\nLocal + CI", fillcolor="#F8F8F8"];
+    db [label="PostgreSQL\nAuthoritative data", shape=cylinder, fillcolor="#FFF4DE"];
+    redis [label="Redis\nEphemeral state", shape=cylinder, fillcolor="#FFF4DE"];
+    s3 [label="S3\nDocuments + evidence", shape=cylinder, fillcolor="#FFF4DE"];
+    temporal [label="Temporal\nDurable orchestration", fillcolor="#F2EDFF"];
+    admin -> api; customer -> api; api -> db; api -> redis; api -> s3; api -> temporal; worker -> temporal; worker -> db; worker -> s3; sim -> api [style=dashed];
+  }
+  el [label="ElevenLabs", fillcolor="#E8F3FF"];
+  ext [label="Customer / Booking / Zendesk / Messaging", fillcolor="#F2EDFF"];
+  api -> el [dir=both]; worker -> el [dir=both]; api -> ext [dir=both]; worker -> ext [dir=both];
+
+    }

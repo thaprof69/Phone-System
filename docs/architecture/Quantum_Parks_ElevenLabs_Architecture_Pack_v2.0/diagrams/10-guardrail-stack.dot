@@ -1,0 +1,16 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  safety [label="1. Immutable safety / privacy / payment / verification", fillcolor="#FFEAEA"];
+  business [label="2. Approved business policy"];
+  role [label="3. Agent role / tone / language"];
+  kb [label="4. Approved knowledge release"];
+  tools [label="5. Typed tool registry + explicit results"];
+  vars [label="6. Minimum dynamic variables"];
+  untrusted [label="7. Caller speech / tickets / documents\nUNTRUSTED DATA", fillcolor="#FFF4DE"];
+  validate [label="Schema validation + deterministic post-policy", fillcolor="#EAF7EE"];
+  safety -> business -> role -> kb -> tools -> vars -> untrusted -> validate;
+
+    }

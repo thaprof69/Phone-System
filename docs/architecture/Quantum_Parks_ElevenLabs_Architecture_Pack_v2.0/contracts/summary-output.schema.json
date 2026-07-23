@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "title":"Evidence-linked Call Summary",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["purpose","caller_requests","information_provided","confirmed_actions","unconfirmed_requests","unresolved_items","handoff","evidence_coverage"],
+  "properties":{
+    "purpose":{"$ref":"#/$defs/claim"},
+    "caller_requests":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+    "information_provided":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+    "confirmed_actions":{"type":"array","items":{"$ref":"#/$defs/actionClaim"}},
+    "unconfirmed_requests":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+    "unresolved_items":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+    "handoff":{"type":["object","null"],"additionalProperties":false,"required":["status","evidence_ids"],"properties":{"status":{"enum":["REQUESTED","COMPLETED","FAILED","CALLBACK_CREATED"]},"evidence_ids":{"type":"array","items":{"type":"string"},"minItems":1}}},
+    "quality_flags":{"type":"array","items":{"type":"string"}},
+    "evidence_coverage":{"type":"number","minimum":0,"maximum":1}
+  },
+  "$defs":{
+    "claim":{"type":"object","additionalProperties":false,"required":["text","evidence_ids"],"properties":{"text":{"type":"string","minLength":1},"evidence_ids":{"type":"array","items":{"type":"string"},"minItems":1},"confidence":{"type":"number","minimum":0,"maximum":1}}},
+    "actionClaim":{"allOf":[{"$ref":"#/$defs/claim"},{"type":"object","required":["result_status"],"properties":{"result_status":{"const":"SUCCESS"}}}]}
+  }
+}

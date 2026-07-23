@@ -1,0 +1,19 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  source [label="Author / upload / URL / structured source"];
+  scan [label="Scan + extract + sanitize"];
+  metadata [label="Scope + owner + risk + effective dates"];
+  review [label="Review + approval\n2-person for high risk"];
+  release [label="Immutable knowledge release manifest"];
+  publish [label="Publish to ElevenLabs"];
+  verify [label="Read-back + dependency verification"];
+  tests [label="Knowledge regression tests"];
+  active [label="Active runtime copy", fillcolor="#EAF7EE"];
+  source -> scan -> metadata -> review -> release -> publish -> verify -> tests -> active;
+  gap [label="Knowledge gap candidates\nfrom calls + corrections", fillcolor="#FFF4DE"];
+  gap -> source [label="human-authored draft", style=dashed];
+
+    }

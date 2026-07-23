@@ -1,0 +1,11 @@
+.git
+.next
+**/.next
+**/dist
+**/node_modules
+node_modules
+.turbo
+playwright-report
+test-results
+docs/product/source/*.docx
+Quantum_Park_Loyalty_Platform_PRD_v1.0.docx

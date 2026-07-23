@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "provider_test_mapping_unique" ON "provider_test_mappings" USING btree ("test_version_id","workspace_id");

@@ -1,0 +1,22 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  internet [label="Users / ElevenLabs / messaging", fillcolor="#FFF4DE"];
+  waf [label="WAF + ALB"];
+  admin [label="ECS admin-web"];
+  customer [label="ECS customer-web"];
+  api [label="ECS api"];
+  worker [label="ECS worker"];
+  rds [label="RDS PostgreSQL", shape=cylinder];
+  redis [label="ElastiCache Redis", shape=cylinder];
+  s3 [label="S3 + KMS", shape=cylinder];
+  secrets [label="Secrets Manager"];
+  temporal [label="Temporal Cloud / approved cluster", fillcolor="#F2EDFF"];
+  obs [label="OTel + logs + metrics + alarms"];
+  internet -> waf; waf -> admin; waf -> customer; waf -> api;
+  admin -> api; customer -> api; api -> rds; api -> redis; api -> s3; api -> secrets; api -> temporal;
+  worker -> rds; worker -> s3; worker -> temporal; api -> obs; worker -> obs;
+
+    }

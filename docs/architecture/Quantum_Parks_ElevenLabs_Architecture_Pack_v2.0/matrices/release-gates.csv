@@ -1,0 +1,9 @@
+﻿Gate,Required evidence,Blocking conditions
+Architecture conformance,"Dependency checks, ADRs, no media gateway, local-master mappings","Provider DTO leakage, custom live runtime, browser secrets"
+Agent release,"Critical tests, approvals, release manifest, provider read-back","Failed critical test, draft/expired dependency, drift"
+Knowledge release,"Approvals, checksums, effective dates, conflict scan, regression tests","High-risk single approval, stale/conflicting content"
+Voice activation,"Availability, preview, language QA, fallback; consent for custom","Unavailable voice, missing approval/consent"
+Tool activation,"Schema, auth, verification, contract/security tests","Unknown fields, excessive data, false success"
+Post-call pipeline,"Signed/idempotent webhook, canonical transcript, evidence summary","Signature/replay failure, unsupported summary claim"
+Production deployment,"Security, migrations, backup/restore, monitoring, readiness","Critical/high issue, synthetic/local dependency"
+Production activation,"Live provider/telephony/message validation, approvals, rollback",External onboarding or legal/privacy gaps

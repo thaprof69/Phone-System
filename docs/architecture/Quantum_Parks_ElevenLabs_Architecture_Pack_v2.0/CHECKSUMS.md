@@ -1,0 +1,7 @@
+# Checksums
+
+- `816785718ee2069cd68ab32c37addd39a909e75b7a3417c8f5be69368f60db07`  `ARCHITECTURE.md`
+- `a677fc795450ef53c1c5459882757c268da192d5ffe416fa348b185161e3efbc`  `Quantum_Parks_ElevenLabs_Architecture_Pack_v2.0.docx`
+- `470072cd8864e5f5b438045ae767cb02c43659ab86d310e29e9ac296f8b9f720`  `Quantum_Parks_ElevenLabs_Architecture_Pack_v2.0.pdf`
+- `a5743e095f6775809d04e9ab279c2f41909cd8b62765c6178e596ea96a25f118`  `source/Quantum_Parks_ElevenLabs_AI_Receptionist_PRD_v2.0.docx`
+- `7cc9f01d8e9f376a0aae989c558bd5dd31173748142bf7dd16412020ab500528`  `source/Quantum_Parks_ElevenLabs_One_Shot_Production_Build_Prompt_v2.0.md`

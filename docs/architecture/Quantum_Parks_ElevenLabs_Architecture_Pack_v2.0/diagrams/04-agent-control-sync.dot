@@ -1,0 +1,19 @@
+digraph G {
+      graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.45", ranksep="0.65", fontname="Arial"];
+      node [shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#345B7E", fontname="Arial", fontsize=10, margin="0.16,0.10"];
+      edge [color="#61788C", fontname="Arial", fontsize=9, arrowsize=0.75];
+      
+  draft [label="Draft local agent version"];
+  review [label="Review + approval"];
+  compile [label="Release compiler\nResolve prompt, knowledge, voice, tools"];
+  test [label="Required test suites"];
+  publish [label="Durable publish workflow"];
+  provider [label="ElevenLabs runtime copy", fillcolor="#E8F3FF"];
+  verify [label="Read-back + checksum verification"];
+  active [label="Active release", fillcolor="#EAF7EE"];
+  drift [label="Reconciliation + drift detection", fillcolor="#FFF4DE"];
+  draft -> review -> compile -> test -> publish -> provider -> verify -> active;
+  active -> drift -> provider [style=dashed];
+  drift -> review [label="drift / correction", style=dashed];
+
+    }

@@ -1,0 +1,11 @@
+﻿API group,Representative endpoints,Caller,Authorization,Idempotency,Primary controls
+Provider administration,/v1/provider-connections; /v1/admin/integrations/elevenlabs,Admin UI,Platform Owner/Restricted Vendor Admin,Test-before-save proof,"Encrypted secret reference, scope, retry limit, capability check"
+Agent control,/v1/agents; /agent-versions; /agent-releases,Admin UI/worker,Agent Admin/Approver,Required for publish/rollback,Release compiler and gates
+Knowledge,/v1/knowledge; /knowledge-releases,Admin UI/worker,Editor/Approver,Required for publish,"Risk approval, checksums, effective dates"
+Voices,/v1/voices; /custom-voices,Admin UI/worker,Agent Admin/Voice Approver,Required for custom operation,"Consent, ownership, fallback"
+Testing,/v1/test-suites; /test-runs,Admin UI/worker,QA/Admin,Run command key,"Versioned tests, repeated runs, evidence"
+Provider webhooks,/v1/webhooks/elevenlabs/post-call,ElevenLabs,Signature,Provider event/conversation,"Replay, size, schema, inbox"
+Personalization,/v1/elevenlabs/personalization/inbound-call,ElevenLabs,Provider verification,Call identifier,"Minimum data, match states"
+Business tools,/v1/elevenlabs/tools/{toolKey},ElevenLabs,Provider/tool auth,Tool-specific,"Schema, purpose, verification, allowlist"
+Calls/intelligence,/v1/calls; /transcripts; /summaries; /analytics,Admin UI,RBAC/purpose,Corrections/export keys,"Masking, provenance, query budgets"
+Governance,/v1/audit; /retention; /readiness; /reconciliation,Admin UI/worker,Special roles,Command key,"Immutable audit, server-computed gates"

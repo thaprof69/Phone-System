@@ -1,0 +1,13 @@
+﻿Component,Type,Responsibility,Authoritative data,Dependencies,Scale/availability,Security notes
+admin-web,Deployable,"Authenticated control, knowledge, testing, operations and intelligence UI",None,"api, OIDC",Horizontal; stateless,No provider secret; server authorization
+customer-web,Deployable,Public registration and digital handoff,None,api,Horizontal; isolated public surface,Signed short-lived sessions; CSRF/abuse controls
+api,Deployable,"REST APIs, provider webhooks, personalization and typed tools",Transactional commands,"PostgreSQL, Redis, Temporal, integrations",Horizontal; stateless,"OIDC/RBAC, signatures, rate limits, schema validation"
+worker,Deployable,"Durable publication, testing, enrichment, reports, retention and reconciliation",Workflow outcomes,"Temporal, PostgreSQL, S3, providers",Scale by task queue,Least privilege activities; idempotent operations
+provider-simulator,Dev/CI,Deterministic ElevenLabs-compatible APIs and webhooks,Synthetic fixtures,api/worker,Local/CI only,Forbidden in production readiness
+PostgreSQL,Data,"Authoritative application records, versions, events and aggregates",All domain records,RDS,HA/PITR,"Encryption, access boundaries, partitioning"
+Redis,Data,"Ephemeral cache, locks and rate state",None,ElastiCache,HA where required,No durable PII authority
+S3,Data,"Source assets, raw webhook evidence, exports and optional audio",Large/restricted objects,KMS,Versioning/lifecycle,"Signed access, classification and retention"
+Temporal,Platform,Durable workflows and retries,Workflow history,worker/api,Managed/HA,No secret or unnecessary PII payloads
+ElevenLabs adapter,Package,"Provider API mapping, capability detection, signatures, reconciliation",Provider mapping only,ElevenLabs,Circuit breakers/retries,No provider DTO leakage; redacted logs
+Knowledge service,Package,Authoritative content lifecycle and release manifests,Knowledge records,"S3, provider adapter",Worker-scaled,Two-person approval for high risk
+Intelligence service,Package,"Canonical transcript enrichment, trends and reports",Derived intelligence,"PostgreSQL, workflow",Async scalable,"Evidence-linked output, restricted cases"

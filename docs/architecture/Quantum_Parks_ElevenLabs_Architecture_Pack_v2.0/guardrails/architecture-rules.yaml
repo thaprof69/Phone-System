@@ -1,0 +1,33 @@
+version: 1
+system: quantum-parks-elevenlabs-platform
+forbidden_primary_components:
+  - custom-media-gateway
+  - custom-live-stt-orchestration
+  - custom-live-tts-orchestration
+  - custom-turn-engine
+  - custom-pbx-or-carrier
+boundaries:
+  browser:
+    forbidden_imports: [elevenlabs-server-sdk, secrets, database-drivers]
+    may_call: [quantum-parks-api]
+  domain:
+    forbidden_imports: [provider-dtos, elevenlabs-sdk]
+    must_use: [domain-types, provider-result-union]
+  provider_adapter:
+    required: [schema-validation, timeout, rate-limit-mapping, redacted-logging, capability-check]
+  release:
+    required: [approved-local-version, dependency-manifest, critical-tests, approvals, provider-readback]
+  tools:
+    required: [registry-id, input-schema, output-schema, purpose, verification-level, explicit-result-state, audit]
+    forbidden: [arbitrary-url, arbitrary-tool-name, payment-card-field]
+  summaries:
+    required: [schema, evidence-references, model-version, prompt-version, correction-history]
+production_readiness_rejects:
+  - synthetic-record
+  - draft-or-expired-content
+  - simulator-or-local-adapter
+  - sandbox-provider-route
+  - missing-language-approval
+  - missing-privacy-retention-approval
+  - remote-drift
+  - skipped-critical-tests

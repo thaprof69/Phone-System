@@ -1,0 +1,259 @@
+name: quantum-parks-voice-platform
+
+x-application-environment: &application-environment
+  QP_ENVIRONMENT: development
+  DATABASE_URL: postgresql://quantum_parks:local-development-only@postgres:5432/quantum_parks
+  REDIS_URL: redis://redis:6379
+  TEMPORAL_ADDRESS: temporal:7233
+  TEMPORAL_NAMESPACE: default
+  TEMPORAL_TASK_QUEUE: quantum-parks-post-call
+  S3_ENDPOINT: http://minio:9000
+  S3_REGION: eu-west-1
+  S3_BUCKET_RAW: qp-raw-evidence
+  S3_BUCKET_ASSETS: qp-assets
+  S3_ACCESS_KEY: minio
+  S3_SECRET_KEY: minio-development-secret
+  OIDC_ISSUER: http://localhost:8080/realms/quantum-parks
+  OIDC_CLIENT_ID: quantum-parks-admin
+  OIDC_AUDIENCE: quantum-parks-api
+  OIDC_CLIENT_SECRET_REF: local/keycloak/quantum-parks-admin
+  ELEVENLABS_BASE_URL: http://provider-simulator:4100
+  ELEVENLABS_SANDBOX_BASE_URL: http://provider-simulator:4100
+  ELEVENLABS_WORKSPACE_ID: workspace_synthetic
+  ELEVENLABS_SECRET_REF: local/elevenlabs/api-key
+  ELEVENLABS_WEBHOOK_SECRET_REF: local/elevenlabs/webhook-secret
+  LOCAL_ELEVENLABS_API_KEY: synthetic-api-key
+  LOCAL_ELEVENLABS_WEBHOOK_SECRET: synthetic-webhook-secret
+  LOCAL_TOOL_TOKEN: synthetic-tool-token
+  METRICS_TOKEN: synthetic-metrics-token
+  ELEVENLABS_CAPABILITY_MODE: simulator
+  ENRICHMENT_PROVIDER: deterministic-local
+  AUDIO_INGESTION_ENABLED: 'false'
+  CUSTOM_VOICE_ENABLED: 'false'
+  BOOKING_WRITES_ENABLED: 'false'
+  PRODUCTION_RETENTION_APPROVED: 'false'
+  PROVIDER_PRIVACY_APPROVED: 'false'
+  PROVIDER_CREDENTIAL_MASTER_KEY_FILE: /run/quantum-parks-secrets/provider-credential-master-key
+  PROVIDER_CREDENTIAL_KEY_VERSION: local-v1
+
+services:
+  provider-credential-key-init:
+    image: node:24.14.0-bookworm-slim
+    user: root
+    command:
+      [
+        'node',
+        '-e',
+        "const fs=require('node:fs');const p='/secrets/provider-credential-master-key';if(!fs.existsSync(p)){fs.writeFileSync(p,require('node:crypto').randomBytes(32).toString('base64'),{mode:0o400});fs.chownSync(p,1000,1000)}",
+      ]
+    volumes: ['provider-credential-key:/secrets']
+    restart: 'no'
+    security_opt: ['no-new-privileges:true']
+
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_USER: quantum_parks
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: quantum_parks
+    ports: ['5432:5432']
+    volumes: ['postgres-data:/var/lib/postgresql/data']
+    healthcheck:
+      {
+        test: ['CMD-SHELL', 'pg_isready -U quantum_parks -d quantum_parks'],
+        interval: 5s,
+        timeout: 3s,
+        retries: 20,
+      }
+    security_opt: ['no-new-privileges:true']
+
+  redis:
+    image: redis:8.2.1-bookworm
+    command: ['redis-server', '--appendonly', 'yes']
+    ports: ['6379:6379']
+    volumes: ['redis-data:/data']
+    healthcheck: { test: ['CMD', 'redis-cli', 'ping'], interval: 5s, timeout: 3s, retries: 20 }
+    security_opt: ['no-new-privileges:true']
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-06-13T11-33-47Z
+    command: ['server', '/data', '--console-address', ':9001']
+    environment: { MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-development-secret }
+    ports: ['9000:9000', '9001:9001']
+    volumes: ['minio-data:/data']
+    healthcheck:
+      {
+        test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live'],
+        interval: 5s,
+        timeout: 3s,
+        retries: 20,
+      }
+    security_opt: ['no-new-privileges:true']
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-05-21T01-59-54Z
+    depends_on: { minio: { condition: service_healthy } }
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      [
+        'mc alias set local http://minio:9000 minio minio-development-secret && mc mb --ignore-existing local/qp-raw-evidence && mc mb --ignore-existing local/qp-assets',
+      ]
+    security_opt: ['no-new-privileges:true']
+
+  temporal:
+    image: temporalio/auto-setup:1.29.5
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: quantum_parks
+      POSTGRES_PWD: local-development-only
+      POSTGRES_SEEDS: postgres
+    ports: ['7233:7233']
+    healthcheck:
+      {
+        test: ['CMD', 'tctl', '--address', 'temporal:7233', 'cluster', 'health'],
+        interval: 10s,
+        timeout: 5s,
+        retries: 30,
+      }
+    security_opt: ['no-new-privileges:true']
+
+  provider-simulator:
+    build:
+      {
+        context: .,
+        args:
+          {
+            APP: '@quantum-parks/provider-simulator',
+            START_COMMAND: 'node apps/provider-simulator/dist/main.js',
+          },
+      }
+    environment: { PORT: 4100 }
+    ports: ['4100:4100']
+    healthcheck:
+      {
+        test:
+          [
+            'CMD',
+            'node',
+            '-e',
+            "fetch('http://localhost:4100/health').then(r=>{if(!r.ok)process.exit(1)})",
+          ],
+        interval: 5s,
+        timeout: 3s,
+        retries: 20,
+      }
+    read_only: true
+    tmpfs: ['/tmp']
+    security_opt: ['no-new-privileges:true']
+
+  migrate:
+    build:
+      {
+        context: .,
+        args: { APP: '@quantum-parks/api', START_COMMAND: 'node packages/db/dist/migrate.js' },
+      }
+    environment: *application-environment
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: 'no'
+    security_opt: ['no-new-privileges:true']
+
+  seed:
+    build:
+      {
+        context: .,
+        args: { APP: '@quantum-parks/api', START_COMMAND: 'node packages/db/dist/seed.js' },
+      }
+    environment: *application-environment
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: 'no'
+    security_opt: ['no-new-privileges:true']
+
+  api:
+    build:
+      {
+        context: .,
+        args: { APP: '@quantum-parks/api', START_COMMAND: 'node apps/api/dist/main.js' },
+      }
+    environment: { <<: *application-environment, PORT: 4000 }
+    depends_on:
+      provider-credential-key-init: { condition: service_completed_successfully }
+      seed: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      temporal: { condition: service_healthy }
+      provider-simulator: { condition: service_healthy }
+    ports: ['4000:4000']
+    healthcheck:
+      {
+        test:
+          [
+            'CMD',
+            'node',
+            '-e',
+            "fetch('http://localhost:4000/health').then(r=>{if(!r.ok)process.exit(1)})",
+          ],
+        interval: 5s,
+        timeout: 3s,
+        retries: 20,
+      }
+    read_only: true
+    volumes: ['provider-credential-key:/run/quantum-parks-secrets:ro']
+    tmpfs: ['/tmp']
+    security_opt: ['no-new-privileges:true']
+
+  worker:
+    build:
+      {
+        context: .,
+        args: { APP: '@quantum-parks/worker', START_COMMAND: 'node apps/worker/dist/main.js' },
+      }
+    environment: *application-environment
+    depends_on:
+      api: { condition: service_healthy }
+      temporal: { condition: service_healthy }
+    read_only: true
+    volumes: ['provider-credential-key:/run/quantum-parks-secrets:ro']
+    tmpfs: ['/tmp']
+    security_opt: ['no-new-privileges:true']
+
+  admin-web:
+    build:
+      {
+        context: .,
+        args:
+          {
+            APP: '@quantum-parks/admin-web',
+            START_COMMAND: 'node apps/admin-web/node_modules/next/dist/bin/next start apps/admin-web --hostname 0.0.0.0 --port 3000',
+          },
+      }
+    environment:
+      { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production, QP_ENVIRONMENT: development }
+    depends_on: { api: { condition: service_healthy } }
+    ports: ['3000:3000']
+    read_only: true
+    tmpfs: ['/tmp', '/workspace/apps/admin-web/.next/cache']
+    security_opt: ['no-new-privileges:true']
+
+  customer-web:
+    build:
+      {
+        context: .,
+        args:
+          {
+            APP: '@quantum-parks/customer-web',
+            START_COMMAND: 'node apps/customer-web/node_modules/next/dist/bin/next start apps/customer-web --hostname 0.0.0.0 --port 3001',
+          },
+      }
+    environment: { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production }
+    depends_on: { api: { condition: service_healthy } }
+    ports: ['3001:3001']
+    read_only: true
+    tmpfs: ['/tmp', '/workspace/apps/customer-web/.next/cache']
+    security_opt: ['no-new-privileges:true']
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  provider-credential-key:

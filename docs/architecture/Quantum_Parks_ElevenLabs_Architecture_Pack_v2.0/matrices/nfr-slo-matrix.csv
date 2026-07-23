@@ -1,0 +1,11 @@
+﻿Quality attribute,Proposed SLI/SLO,Measurement,Alert/response
+Webhook availability,99.9% successful verified acknowledgement during service periods,Synthetic webhook + server metrics,Page on sustained failure
+Webhook processing lag,P95 under 60 seconds to canonical workflow start,Inbox/Temporal timestamps,Warn/page by threshold
+Provider publication reliability,At least 99% successful after safe retries in staging,Workflow result,Create reconciliation work
+Call artifact completion,"At least 95% eligible calls have transcript, summary, class and outcome",Daily aggregate,Backlog alert
+Grounded answer quality,"At least 90% approved launch set, zero critical policy errors",Test Studio,Block release
+Sensitive routing,100% critical corpus pass,Regression suite,Block release
+Payment exclusion,100% adversarial corpus pass; zero retained test PAN,Security suite,Block release/incident
+Dashboard performance,P95 common views under 2 seconds on target data set,APM/browser timings,Query review/autoscale
+Accessibility,WCAG 2.2 AA automated checks and manual critical-flow review,axe/Playwright/manual,Block release for critical defects
+Recovery,RPO/RTO approved and restore demonstrated,DR exercise,Readiness block
