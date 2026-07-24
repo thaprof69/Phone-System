@@ -70,7 +70,11 @@ test('sub-navigation tabs navigate rather than sitting inert', async ({ page }) 
 
   await tabs.getByRole('link', { name: 'Failed ingestion' }).click();
   await expect(page).toHaveURL(/\/calls\/failed$/);
-  await expect(page.getByRole('heading', { name: 'Failed ingestion' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Failed ingestion', exact: true })).toBeVisible();
+  // The page must have actually loaded its records rather than falling back to an
+  // error state. Checked by the ErrorState wording, not by role: this page renders a
+  // deliberate danger banner that also carries role="alert".
+  await expect(page.getByText(/could not be loaded/)).toHaveCount(0);
 
   // The active tab is announced, not merely styled.
   await expect(tabs.getByRole('link', { name: 'Failed ingestion' })).toHaveAttribute(
@@ -110,7 +114,10 @@ test('the calls list filters, sorts and paginates against real records', async (
 test('a call opens a workspace keeping provider and canonical records distinct', async ({
   page,
 }) => {
-  await page.goto('/calls');
+  // Filter to a completed call so the assertions below have a summary, a
+  // classification and an outcome to check. Picking whichever row happened to be
+  // first would sometimes land on a call that failed before enrichment.
+  await page.goto('/calls?state=COMPLETED');
   await page.locator('tbody th a').first().click();
   await expect(page).toHaveURL(/\/calls\/[0-9a-f-]{36}$/);
 
@@ -255,4 +262,18 @@ test('a domain workspace is reachable by keyboard alone', async ({ page }) => {
     .focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Knowledge gaps' })).toBeVisible();
+});
+
+test('version comparison shows the actual change, not the whole file', async ({ page }) => {
+  await page.goto('/receptionist/versions');
+  await page.getByRole('link', { name: 'Compare versions' }).click();
+  await expect(page).toHaveURL(/\/receptionist\/versions\/compare$/);
+
+  // A real longest-common-subsequence diff: unchanged lines are collapsed and only
+  // the genuine change is marked. A naive comparison would flag the whole document.
+  await expect(page.getByText(/unchanged lines/).first()).toBeVisible();
+  await expect(page.getByText(/^\+\d+ −\d+ across \d+ lines/)).toBeVisible();
+
+  // An unapproved draft says so rather than showing an empty approval field.
+  await expect(page.getByText('This version has not been independently approved.')).toBeVisible();
 });

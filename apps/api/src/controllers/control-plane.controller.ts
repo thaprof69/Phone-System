@@ -130,6 +130,11 @@ export class ControlPlaneController {
   publish(@Param('id') id: string) {
     return this.platform.requestPublication(id);
   }
+  @RequirePermission('agent:write')
+  @Get('agent-versions/compare')
+  compareAgentVersions(@Query('left') left: string, @Query('right') right: string) {
+    return this.platform.compareAgentVersions(z.uuid().parse(left), z.uuid().parse(right));
+  }
   @RequirePermission('knowledge:write')
   @Get('knowledge')
   knowledge() {

@@ -11,6 +11,7 @@ import {
   toneForState,
   type Column,
 } from '@quantum-parks/ui';
+import Link from 'next/link';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
 import type { AgentListRow } from '../../../lib/types';
@@ -104,6 +105,13 @@ export default async function VersionsPage() {
       title="Versions"
       description="Every configuration version is immutable. A change creates a new version rather than editing the one in front of callers."
       meta={<StatusPill tone="neutral">{formatNumber(versions.length)} versions</StatusPill>}
+      actions={
+        versions.length >= 2 ? (
+          <Link className="button secondary" href="/receptionist/versions/compare">
+            Compare versions
+          </Link>
+        ) : undefined
+      }
     >
       <Panel
         title="Version history"

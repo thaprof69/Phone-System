@@ -312,6 +312,56 @@ export class PlatformService {
     };
   }
 
+  /**
+   * Two agent versions with their full configuration, for side-by-side review.
+   *
+   * Returned as canonical JSON text rather than as objects so the reviewer sees the
+   * same bytes the checksum was taken over. A diff computed against a re-serialised
+   * object could differ from what was actually approved and published.
+   */
+  async compareAgentVersions(leftId: string, rightId: string) {
+    const [left, right] = await Promise.all([
+      this.database.db.query.agentConfigVersions.findFirst({
+        where: eq(agentConfigVersions.id, leftId),
+      }),
+      this.database.db.query.agentConfigVersions.findFirst({
+        where: eq(agentConfigVersions.id, rightId),
+      }),
+    ]);
+    if (!left || !right) return { status: 'NOT_FOUND' as const };
+
+    const approvals = await this.database.db
+      .select()
+      .from(agentApprovals)
+      .where(inArray(agentApprovals.agentVersionId, [leftId, rightId]));
+
+    const render = (version: typeof left) => ({
+      id: version.id,
+      version: version.version,
+      state: version.state,
+      changeReason: version.changeReason,
+      authorId: version.authorId,
+      checksum: version.checksum,
+      createdAt: version.createdAt,
+      configurationText: JSON.stringify(version.configuration, null, 2),
+      approvals: approvals
+        .filter((approval) => approval.agentVersionId === version.id)
+        .map((approval) => ({
+          reviewerId: approval.reviewerId,
+          decision: approval.decision,
+          reason: approval.reason,
+          createdAt: approval.createdAt,
+        })),
+    });
+
+    return {
+      status: 'OK' as const,
+      left: render(left),
+      right: render(right),
+      identical: left.checksum === right.checksum,
+    };
+  }
+
   async listKnowledge() {
     const items = await this.database.db
       .select({

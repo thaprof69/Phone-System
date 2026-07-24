@@ -71,7 +71,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 ### Phase 2 — Depth passes (fixed order)
 
 - [x] 2.1 Mission Control (§7)
-- [ ] 2.2 Agent Studio (§8)
+- [~] 2.2 Agent Studio (§8) — agent list, detail with tabs, version history and **version comparison with a real line diff** complete; conversation editor, governed tool contracts and visual transfer routing still to build
 - [ ] 2.3 Knowledge Hub (§9)
 - [ ] 2.4 Voice Library (§10)
 - [ ] 2.5 Test Studio (§11)
@@ -119,18 +119,18 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 
 ### Breadth pass results — 2026-07-25
 
-| Command | Result |
-|---|---|
-| `pnpm format` | `All matched files use Prettier code style!` |
-| `pnpm architecture:check` | `Architecture fitness checks passed.` |
-| `pnpm traceability:check` | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.` |
-| `pnpm typecheck` | 17 tasks successful, 17 total |
-| `pnpm test` | 29 tasks successful, 29 total |
-| `pnpm test:unit` | **9 test files, 62 tests passed** (was 8 files / 26) |
-| `pnpm build` | 17 tasks successful; 44 admin routes compiled |
-| `npx playwright test --project=admin-chromium` | **18 passed**, including 3 axe scans (was 6 tests) |
-| HTTP probe of all 44 routes | every route `200` |
-| New endpoints probed | `mission-control`, `knowledge-releases`, `knowledge-gaps`, `corrections`, `calls-reconciliation`, `quality-reviews`, `administration/access`, `administration/feature-flags`, `analytics/series` — all `200` |
+| Command                                        | Result                                                                                                                                                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm format`                                  | `All matched files use Prettier code style!`                                                                                                                                                                 |
+| `pnpm architecture:check`                      | `Architecture fitness checks passed.`                                                                                                                                                                        |
+| `pnpm traceability:check`                      | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                                                                                                                                                       |
+| `pnpm typecheck`                               | 17 tasks successful, 17 total                                                                                                                                                                                |
+| `pnpm test`                                    | 29 tasks successful, 29 total                                                                                                                                                                                |
+| `pnpm test:unit`                               | **9 test files, 62 tests passed** (was 8 files / 26)                                                                                                                                                         |
+| `pnpm build`                                   | 17 tasks successful; 44 admin routes compiled                                                                                                                                                                |
+| `npx playwright test --project=admin-chromium` | **18 passed**, including 3 axe scans (was 6 tests)                                                                                                                                                           |
+| HTTP probe of all 44 routes                    | every route `200`                                                                                                                                                                                            |
+| New endpoints probed                           | `mission-control`, `knowledge-releases`, `knowledge-gaps`, `corrections`, `calls-reconciliation`, `quality-reviews`, `administration/access`, `administration/feature-flags`, `analytics/series` — all `200` |
 
 Toolchain: Node v26.0.0, pnpm 11.9.0, Docker running.
 
@@ -142,13 +142,13 @@ Recorded as encountered. Evidence base path: `docs/qa/evidence/`.
 
 ### Failures encountered and corrected during the breadth pass
 
-| # | Failure | Correction |
-|---|---|---|
-| F1 | Turbopack could not resolve the `.js` specifiers `packages/ui` used under NodeNext, so the barrel exported nothing and every page 500'd | `packages/ui` is bundler-consumed only; switched it to `moduleResolution: bundler` with extensionless relative imports |
-| F2 | A generated 32-byte credential key was written into the committed `.env.local.example` | Replaced with an empty placeholder plus the command to generate one; added `!.env.local.example` to `.gitignore` so the template is tracked while `.env.local` stays ignored |
-| F3 | **Real accessibility defect introduced by this work**: chart containers were marked `aria-hidden`, but Recharts renders its own focusable surface inside, which axe reports as 163 violations | Replaced `aria-hidden` with `inert`, which removes the subtree from both the accessibility tree and the tab order. Verified by the axe scan in the analytics browser test |
-| F4 | 14 browser tests failed against the dev server at default parallelism | Cold Turbopack compiles, not product defects: the API answered in ~140 ms throughout. Raised the Playwright assertion timeout to 15 s with the reason recorded in the config, and gave the route-walking tests their own budget |
-| F5 | `getByRole('heading', { name: 'Roles' })` matched both the `h1` "Users and roles" and the `h2` "Roles" | Test selector corrected to `exact: true` |
+| #   | Failure                                                                                                                                                                                       | Correction                                                                                                                                                                                                                      |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | Turbopack could not resolve the `.js` specifiers `packages/ui` used under NodeNext, so the barrel exported nothing and every page 500'd                                                       | `packages/ui` is bundler-consumed only; switched it to `moduleResolution: bundler` with extensionless relative imports                                                                                                          |
+| F2  | A generated 32-byte credential key was written into the committed `.env.local.example`                                                                                                        | Replaced with an empty placeholder plus the command to generate one; added `!.env.local.example` to `.gitignore` so the template is tracked while `.env.local` stays ignored                                                    |
+| F3  | **Real accessibility defect introduced by this work**: chart containers were marked `aria-hidden`, but Recharts renders its own focusable surface inside, which axe reports as 163 violations | Replaced `aria-hidden` with `inert`, which removes the subtree from both the accessibility tree and the tab order. Verified by the axe scan in the analytics browser test                                                       |
+| F4  | 14 browser tests failed against the dev server at default parallelism                                                                                                                         | Cold Turbopack compiles, not product defects: the API answered in ~140 ms throughout. Raised the Playwright assertion timeout to 15 s with the reason recorded in the config, and gave the route-walking tests their own budget |
+| F5  | `getByRole('heading', { name: 'Roles' })` matched both the `h1` "Users and roles" and the `h2` "Roles"                                                                                        | Test selector corrected to `exact: true`                                                                                                                                                                                        |
 
 ### Defects this remediation corrects (verified by inspection, 2026-07-24)
 
@@ -167,8 +167,23 @@ Recorded as encountered. Evidence base path: `docs/qa/evidence/`.
 
 ## 6. FR/NFR and architecture-compliance updates
 
-Pending completion of the phases above. `docs/product/requirements-traceability.md` and
-`docs/architecture/compliance-matrix.md` are updated as each module reaches depth, not in advance.
+Presentation now exists for the requirement groups below. These are marked as *surfaced*,
+not as *complete*: a list view backed by an authoritative endpoint is not the same as the
+full authoring and approval workflow the requirement describes.
+
+| Requirement group | Surface | State |
+|---|---|---|
+| FR-01–16 provider connection, agents, prompts, tools, transfers | Receptionist domain, Administration → Voice runtime | Read, compare and release-state surfaces built; authoring and tool-contract editing outstanding |
+| FR-17–29 knowledge lifecycle and provider sync | Knowledge domain | Library, review queue, publication state and gaps built; authoring and approval actions outstanding |
+| FR-30–35 voice catalogue, assignment, approval, consent | Receptionist → Voice library | Catalogue, assignments, availability and consent state built; comparison and approval actions outstanding |
+| FR-36–43 Test Studio and release gates | Quality domain | Cases, suites, runs, gates and QA reviews built; test-case editor outstanding |
+| FR-54–64 webhooks, evidence, transcripts, enrichment, reconciliation | Calls domain | Full call workspace, partial and failed views, corrections and reconciliation built |
+| FR-65–73 calls, analytics, reports, exports | Calls and Intelligence domains | Analytics with validated charts, trends and report lineage built; export and scheduling actions outstanding |
+| FR-74–82 operations, messaging, QA, RBAC, audit, retention | Operations and Administration domains | Queues, SLA view, access registry, audit chain, retention and flags built; work-item transitions outstanding |
+| NFR-10 accessibility (WCAG 2.2 AA) | Whole control plane | Three axe scans pass with zero violations; semantic tables, real navigation landmarks, keyboard paths tested |
+
+`docs/architecture/compliance-matrix.md` and `docs/product/requirements-traceability.md`
+are updated as each module reaches full depth, not on the strength of a surface existing.
 
 ---
 
