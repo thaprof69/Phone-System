@@ -2,7 +2,7 @@
 
 Branch: `feature/product-remediation`
 Started: 2026-07-24
-Status: IN PROGRESS
+Status: IN PROGRESS — foundations and breadth pass complete; depth passes 2.2 onward remain
 
 ---
 
@@ -184,6 +184,31 @@ full authoring and approval workflow the requirement describes.
 
 `docs/architecture/compliance-matrix.md` and `docs/product/requirements-traceability.md`
 are updated as each module reaches full depth, not on the strength of a surface existing.
+
+---
+
+## 6a. Resume point
+
+The next unchecked item is **2.2 Agent Studio (§8)**, specifically the parts not yet built:
+
+1. **Conversation editor** — system prompt with immutable policy fragments separated from
+   editable business fragments, first message, disclosure, closure, after-hours behaviour,
+   turn and interruption settings, per-language variants. Needs validation, unsaved-change
+   handling, a mandatory change reason, and a save that creates a new version rather than
+   editing the live one. The diff to review it against already exists at
+   `/receptionist/versions/compare`.
+2. **Governed tool contracts** — the fifteen tools in `tool-registry.service.ts` have no
+   operator surface. Each needs name, purpose, endpoint, authentication, schema,
+   verification tier, risk level, enabled environments, last contract test and state.
+3. **Visual transfer routing** — park × language × intent → target, with fallback, operating
+   hours, SLA and test state. The data is in `agent_config_versions.configuration.transfers`.
+
+After 2.2, continue in the order recorded in section 3.
+
+**Known gap carried forward**: the AI console's Execution, Governance and Monitoring
+sections still render `.length` counts rather than the registry rows the workspace payload
+already contains (`ai-console.tsx`, `GroupedArea`). That is depth item 2.8 and is the
+largest single piece of remaining slop.
 
 ---
 
