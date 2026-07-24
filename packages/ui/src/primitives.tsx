@@ -227,13 +227,7 @@ export function Banner({
   );
 }
 
-export function Skeleton({
-  rows = 3,
-  label = 'Loading',
-}: {
-  rows?: number;
-  label?: string;
-}) {
+export function Skeleton({ rows = 3, label = 'Loading' }: { rows?: number; label?: string }) {
   return (
     <div className="skeleton" role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">{label}</span>

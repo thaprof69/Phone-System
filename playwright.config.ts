@@ -6,6 +6,10 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: [['html', { open: 'never' }], ['list']],
+  // `webServer` below runs the Next dev server, so the first request to each route
+  // pays a Turbopack compile of several seconds. The default 5s assertion timeout
+  // fails on that cold compile rather than on anything the page got wrong.
+  expect: { timeout: 15_000 },
   use: { trace: 'retain-on-failure', screenshot: 'only-on-failure', video: 'retain-on-failure' },
   projects: [
     {

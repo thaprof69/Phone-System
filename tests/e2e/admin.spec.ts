@@ -1,109 +1,258 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
-test('admin overview exposes product boundary and readiness', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: /Good afternoon/ })).toBeVisible();
-  await expect(page.getByText('Quantum Parks is authoritative')).toBeVisible();
-  await expect(page.getByText('Production is externally blocked')).toBeVisible();
+/**
+ * Browser coverage for the operator control plane.
+ *
+ * The assertions that matter most here are the negative ones. The product previously
+ * rendered thirty-two tab-looking `<span>` elements that did nothing, and eight
+ * administration routes that printed "0 governed records". Tests that only check a
+ * heading is visible would have passed against all of that, so several tests below
+ * assert the absence of those patterns directly.
+ */
+
+const PRIMARY_DOMAINS = [
+  'Mission Control',
+  'Receptionist',
+  'Knowledge',
+  'Quality',
+  'Calls',
+  'Operations',
+  'Intelligence',
+  'Administration',
+] as const;
+
+async function expectNoAxeViolations(page: Page) {
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
-});
+}
 
-test('all primary control-plane areas are reachable by keyboard', async ({ page }) => {
+test('Mission Control reports live state, attention and readiness', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: 'Knowledge Hub' }).focus();
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Knowledge Hub' })).toBeVisible();
-  await expect(page.getByText('No approved company knowledge')).toBeVisible();
-  await page.getByText('Create knowledge draft').click();
-  await expect(page.getByLabel('Approved factual content')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: /Good (morning|afternoon|evening)/ }),
+  ).toBeVisible();
+
+  // The cockpit must answer the operator's questions, not describe the architecture.
+  await expect(page.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Readiness' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent calls' })).toBeVisible();
+
+  // Synthetic data must be labelled as synthetic.
+  await expect(page.getByText('Synthetic data').first()).toBeVisible();
+
+  await expectNoAxeViolations(page);
 });
 
-test('mobile navigation exposes every daily operations area', async ({ page }) => {
+test('every primary navigation item opens a working workspace', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto('/');
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+
+  for (const domain of PRIMARY_DOMAINS) {
+    await navigation.getByRole('link', { name: domain, exact: true }).click();
+    // A workspace is a page with its own heading, not a placeholder.
+    await expect(page.locator('main h1')).toBeVisible();
+    await expect(page.getByText('governed records')).toHaveCount(0);
+    await page.goto('/');
+  }
+});
+
+test('sub-navigation tabs navigate rather than sitting inert', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls');
+  const tabs = page.getByRole('navigation', { name: 'Calls areas' });
+
+  // Every tab is a real link with an href. The previous implementation rendered
+  // <span> elements with no href, no role and a hardcoded active index.
+  const links = tabs.getByRole('link');
+  await expect(links).toHaveCount(5);
+
+  await tabs.getByRole('link', { name: 'Failed ingestion' }).click();
+  await expect(page).toHaveURL(/\/calls\/failed$/);
+  await expect(page.getByRole('heading', { name: 'Failed ingestion' })).toBeVisible();
+
+  // The active tab is announced, not merely styled.
+  await expect(tabs.getByRole('link', { name: 'Failed ingestion' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+});
+
+test('no navigation element looks like a tab without being one', async ({ page }) => {
+  test.setTimeout(120_000);
+  for (const path of ['/', '/calls', '/knowledge/library', '/quality/runs', '/operations/sla']) {
+    await page.goto(path);
+    // `.tabs span` was the old inert pattern; it must not reappear anywhere.
+    await expect(page.locator('.tabs span')).toHaveCount(0);
+  }
+});
+
+test('the calls list filters, sorts and paginates against real records', async ({ page }) => {
+  await page.goto('/calls');
+  await expect(page.getByRole('heading', { name: /\d+ calls?/ })).toBeVisible();
+
+  // Sorting is expressed in the URL so a sorted view can be shared and reloaded.
+  await page.getByRole('link', { name: /^Park/ }).click();
+  await expect(page).toHaveURL(/sort=park/);
+  await expect(page.locator('th[aria-sort="ascending"]')).toHaveCount(1);
+
+  // Filtering genuinely reduces the set rather than decorating the page.
+  await page.goto('/calls?state=FAILED_FINAL');
+  await expect(page.getByText('Filtered')).toBeVisible();
+  const rows = page.locator('tbody tr');
+  await expect(rows.first()).toBeVisible();
+  for (const cell of await page.locator('tbody tr td').allTextContents()) {
+    expect(cell).not.toContain('Completed');
+  }
+});
+
+test('a call opens a workspace keeping provider and canonical records distinct', async ({
+  page,
+}) => {
+  await page.goto('/calls');
+  await page.locator('tbody th a').first().click();
+  await expect(page).toHaveURL(/\/calls\/[0-9a-f-]{36}$/);
+
+  // The redacted revision is what operators see; the provider payload sits behind
+  // a disclosure and is never presented as the platform's own record.
+  await expect(page.getByRole('heading', { name: 'Transcript' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Provider evidence' })).toBeVisible();
+  await expect(page.getByText(/never edited/)).toBeVisible();
+
+  // In-page tabs switch content in the same document.
+  await page.getByRole('tab', { name: 'Outcome' }).click();
+  await expect(page.getByText(/never asserted by a model/)).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
+test('release gates are reported individually and cannot be bypassed here', async ({ page }) => {
+  await page.goto('/quality/gates');
+  await expect(page.getByText('Gates are enforced by the server')).toBeVisible();
+
+  // Each gate is its own decision rather than one combined score.
+  await expect(page.getByRole('heading', { name: 'Mandatory tests pass' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No unresolved provider drift' })).toBeVisible();
+
+  // There is deliberately no override control.
+  await expect(page.getByRole('button', { name: /override|bypass|force/i })).toHaveCount(0);
+});
+
+test('knowledge releases report local and runtime state separately', async ({ page }) => {
+  await page.goto('/knowledge/releases');
+  await expect(page.getByRole('columnheader', { name: 'Local state' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Voice runtime' })).toBeVisible();
+  await expect(page.getByText(/never overwrites local state/)).toBeVisible();
+});
+
+test('analytics renders charts with an accessible table fallback', async ({ page }) => {
+  await page.goto('/intelligence/analytics');
+  await expect(page.getByRole('heading', { name: 'Call demand' })).toBeVisible();
+
+  // Every chart carries the same numbers in a table, so the visual is never the
+  // only representation.
+  const fallbacks = page.getByText('View data as a table');
+  expect(await fallbacks.count()).toBeGreaterThan(0);
+  await fallbacks.first().click();
+  await expect(page.getByRole('table').first()).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
+test('administration exposes every area without a placeholder', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto('/administration');
+  const rail = page.getByRole('navigation', { name: 'Administration areas' });
+
+  for (const area of [
+    'General',
+    'Voice runtime',
+    'AI infrastructure',
+    'Business integrations',
+    'Users and roles',
+    'Security and privacy',
+    'Audit',
+    'Retention',
+    'Feature flags',
+    'Production readiness',
+    'Release administration',
+  ]) {
+    await rail.getByRole('link', { name: area, exact: true }).click();
+    await expect(page.locator('main h1')).toBeVisible();
+    // The placeholder always rendered this exact string.
+    await expect(page.getByText('0 governed records')).toHaveCount(0);
+  }
+});
+
+test('the audit log is presented as a verifiable chain', async ({ page }) => {
+  await page.goto('/administration/audit');
+  await expect(page.getByText('Chain intact')).toBeVisible();
+  await expect(page.getByText(/cannot be edited or removed/)).toBeVisible();
+});
+
+test('access administration surfaces separation-of-duty conflicts', async ({ page }) => {
+  await page.goto('/administration/users');
+  await expect(page.getByRole('columnheader', { name: 'Separation of duties' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Roles', exact: true })).toBeVisible();
+});
+
+test('AIOS is not presented to operators as a product name', async ({ page }) => {
+  // "AI infrastructure" is the operator-facing name; AIOS is internal architecture.
+  await page.goto('/');
+  await expect(page.getByText('AI infrastructure')).toBeVisible();
+  await expect(page.locator('main').getByText(/\bAIOS\b/)).toHaveCount(0);
+
+  await page.goto('/administration/ai');
+  await expect(page.getByRole('heading', { name: 'AI infrastructure' })).toBeVisible();
+});
+
+test('the environment is labelled honestly as a simulator', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('This environment uses the deterministic simulator')).toBeVisible();
+  await expect(page.getByText(/No production traffic is routed/)).toBeVisible();
+});
+
+test('no provider secret reaches the browser', async ({ page }) => {
+  for (const path of ['/administration/voice-runtime', '/administration/ai']) {
+    await page.goto(path);
+    const body = (await page.locator('body').textContent()) ?? '';
+    expect(body).not.toContain('sk_');
+    expect(body).not.toContain('sk-');
+    expect(body).not.toContain('xi-api-key');
+  }
+});
+
+test('operations queues surface overdue work first', async ({ page }) => {
+  await page.goto('/operations/sla');
+  await expect(page.getByRole('heading', { name: 'Breached commitments' })).toBeVisible();
+
+  await page.goto('/operations/callbacks?due=overdue');
+  await expect(page.getByRole('heading', { name: /\d+ items?/ })).toBeVisible();
+});
+
+test('mobile navigation reaches every domain', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await page.locator('summary[aria-label="Open navigation"]').click();
   const mobileNavigation = page.getByRole('navigation', { name: 'Mobile primary navigation' });
   await expect(mobileNavigation).toBeVisible();
-  await mobileNavigation.getByRole('link', { name: 'Test Studio' }).click();
-  await expect(page.getByRole('heading', { name: 'Test Studio' })).toBeVisible();
-  await expect(page.getByText('Create versioned test case')).toBeVisible();
+  await mobileNavigation.getByRole('link', { name: 'Quality', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Test cases' })).toBeVisible();
 });
 
-test('Administration exposes AI Intelligence through the governed settings hierarchy', async ({
-  page,
-}) => {
-  await page.goto('/administration/settings/ai-intelligence');
-  await expect(page.getByRole('heading', { name: 'AI Intelligence', exact: true })).toBeVisible();
-  await expect(
-    page.getByRole('navigation', { name: 'AI Intelligence sections' }).getByRole('link'),
-  ).toHaveCount(6);
-  await expect(page.getByText('What AI Intelligence powers')).toBeVisible();
-  await expect(
-    page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', {
-      name: 'AI Intelligence',
-    }),
-  ).toHaveCount(0);
-  await expect(page.getByText('Production routing')).toBeVisible();
-  await page.getByRole('link', { name: 'Capabilities', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'AI Capabilities' })).toBeVisible();
-  await page.getByRole('link', { name: 'Providers', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
-  await expect(page.getByText('Adapter not installed.').first()).toBeVisible();
-  await expect(
-    page
-      .getByText('Synthetic — non-production only')
-      .or(page.getByText('No verified provider connection')),
-  ).toBeVisible();
-  await expect(page.locator('body')).not.toContainText(/sk-[A-Za-z0-9]/);
-  const results = await new AxeBuilder({ page }).analyze();
-  expect(results.violations).toEqual([]);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('navigation', { name: 'AI Intelligence sections' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeVisible();
-});
+test('a domain workspace is reachable by keyboard alone', async ({ page }) => {
+  await page.goto('/');
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await navigation.getByRole('link', { name: 'Knowledge', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
 
-test('legacy AI Intelligence route redirects to Settings', async ({ page }) => {
-  await page.goto('/administration/ai-intelligence');
-  await expect(page).toHaveURL(/\/administration\/settings\/ai-intelligence$/);
-});
-
-test('administrator securely validates, connects, manages, and disconnects ElevenLabs', async ({
-  page,
-}) => {
-  await page.goto('/administration/settings/voice-runtime');
-  const integration = page.getByRole('heading', { name: 'ElevenLabs' });
-  await expect(integration).toBeVisible();
-  const existingManage = page.getByRole('button', { name: 'Manage' });
-  if (await existingManage.isVisible()) {
-    await existingManage.click();
-    await page.getByRole('button', { name: 'Disconnect' }).click();
-    await page.getByRole('button', { name: 'Confirm disconnect' }).click();
-    await page.getByRole('button', { name: 'Close dialog' }).click();
-  }
-  await page.getByRole('button', { name: 'Connect' }).click();
-  await page.getByLabel('Connection label').fill('Quantum Parks simulator');
-  await page.getByLabel('Environment').selectOption('SANDBOX');
-  await page.getByPlaceholder('Enter API key').fill('synthetic-api-key');
-  await page.getByRole('button', { name: 'Test connection' }).click();
-  await expect(page.getByText(/Verified workspace access/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save connection' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Save connection' }).click();
-  await expect(page.getByText('Connection saved securely.')).toBeVisible();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
-  await expect(page.getByText('CONNECTED')).toBeVisible();
-  await expect(page.getByText(/EL-[A-F0-9]{8}/)).toBeVisible();
-  await expect(page.locator('body')).not.toContainText('synthetic-api-key');
-
-  await page.getByRole('button', { name: 'Manage' }).click();
-  await page.getByRole('button', { name: 'Test stored connection' }).click();
-  await expect(page.getByText('The stored credential is healthy.')).toBeVisible();
-  await page.getByRole('button', { name: 'Disconnect' }).click();
-  await page.getByRole('button', { name: 'Confirm disconnect' }).click();
-  await expect(
-    page.getByText(/Local agents, transcripts, releases, and audit history were preserved/),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
-  await expect(page.getByText('DISCONNECTED')).toBeVisible();
+  // The sub-navigation is reachable from the same keyboard path.
+  await page
+    .getByRole('navigation', { name: 'Knowledge areas' })
+    .getByRole('link', { name: 'Knowledge gaps' })
+    .focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Knowledge gaps' })).toBeVisible();
 });

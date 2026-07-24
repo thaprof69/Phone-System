@@ -210,6 +210,31 @@ export class ControlPlaneController {
   readiness() {
     return this.platform.readiness();
   }
+  @RequirePermission('test:write')
+  @Get('quality-reviews')
+  qualityReviews() {
+    return this.platform.listQualityReviews();
+  }
+  @RequirePermission('knowledge:write')
+  @Get('knowledge-releases')
+  knowledgeReleases() {
+    return this.platform.listKnowledgeReleases();
+  }
+  @RequirePermission('knowledge:write')
+  @Get('knowledge-gaps')
+  knowledgeGaps() {
+    return this.platform.listKnowledgeGaps();
+  }
+  @RequirePermission('corrections:write', 'QUALITY_REVIEW')
+  @Get('corrections')
+  allCorrections() {
+    return this.platform.listAllCorrections();
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Get('calls-reconciliation')
+  reconciliation() {
+    return this.platform.listReconciliation();
+  }
   /**
    * The operator cockpit. Read-only and aggregated server-side; `calls:read` rather
    * than `provider:manage` because this is an operations view, not a provider control.
@@ -264,6 +289,14 @@ export class ControlPlaneController {
   @Get('analytics/summary')
   analytics() {
     return this.platform.analyticsSummary();
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Get('analytics/series')
+  analyticsSeries(@Query('days') days?: string) {
+    const parsed = Number(days ?? 30);
+    return this.platform.analyticsSeries(
+      Number.isFinite(parsed) ? Math.min(Math.max(Math.trunc(parsed), 1), 90) : 30,
+    );
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('reports')

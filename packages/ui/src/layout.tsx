@@ -91,12 +91,6 @@ export function SplitView({
   );
 }
 
-export function CardGrid({
-  children,
-  columns = 3,
-}: {
-  children: ReactNode;
-  columns?: 2 | 3 | 4;
-}) {
+export function CardGrid({ children, columns = 3 }: { children: ReactNode; columns?: 2 | 3 | 4 }) {
   return <div className={`card-grid card-grid-${columns}`}>{children}</div>;
 }

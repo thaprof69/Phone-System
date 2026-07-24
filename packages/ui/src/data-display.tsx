@@ -204,11 +204,7 @@ export function JsonInspector({ value, label }: { value: unknown; label: string 
 
 /* ------------------------------------------------------------- breadcrumbs */
 
-export function Breadcrumbs({
-  trail,
-}: {
-  trail: ReadonlyArray<{ label: string; href?: string }>;
-}) {
+export function Breadcrumbs({ trail }: { trail: ReadonlyArray<{ label: string; href?: string }> }) {
   return (
     <nav className="breadcrumbs" aria-label="Breadcrumb">
       <ol>

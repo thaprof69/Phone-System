@@ -27,7 +27,12 @@ export function readSort(
   defaultDirection: SortDirection = 'desc',
 ): TableSort {
   const key = readParam(params, 'sort') ?? defaultKey;
-  const direction = readParam(params, 'dir') === 'asc' ? 'asc' : readParam(params, 'dir') === 'desc' ? 'desc' : defaultDirection;
+  const direction =
+    readParam(params, 'dir') === 'asc'
+      ? 'asc'
+      : readParam(params, 'dir') === 'desc'
+        ? 'desc'
+        : defaultDirection;
   return { key, direction };
 }
 

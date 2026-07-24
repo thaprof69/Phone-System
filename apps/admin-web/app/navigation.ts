@@ -34,7 +34,11 @@ export const DOMAINS = [
     icon: 'Gauge',
     description: 'What is happening right now and what needs attention.',
     areas: [
-      { href: '/', label: 'Overview', description: 'Live state, today’s activity and the attention queue.' },
+      {
+        href: '/',
+        label: 'Overview',
+        description: 'Live state, today’s activity and the attention queue.',
+      },
       {
         href: '/alerts',
         label: 'Alerts',
@@ -52,7 +56,8 @@ export const DOMAINS = [
     href: '/receptionist/agents',
     label: 'Receptionist',
     icon: 'Bot',
-    description: 'The agent that answers the telephone: configuration, voices, versions and releases.',
+    description:
+      'The agent that answers the telephone: configuration, voices, versions and releases.',
     areas: [
       {
         href: '/receptionist/agents',
@@ -146,7 +151,11 @@ export const DOMAINS = [
     icon: 'Activity',
     description: 'Canonical call history, investigation and reconciliation.',
     areas: [
-      { href: '/calls', label: 'All calls', description: 'Every call the platform holds a record of.' },
+      {
+        href: '/calls',
+        label: 'All calls',
+        description: 'Every call the platform holds a record of.',
+      },
       {
         href: '/calls/partial',
         label: 'Partial processing',

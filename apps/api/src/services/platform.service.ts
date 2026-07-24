@@ -8,6 +8,7 @@ import {
   agentDeployments,
   agentDriftFindings,
   agentTests,
+  aggregateFacts,
   agentTestVersions,
   auditEvents,
   callbackRequests,
@@ -15,6 +16,7 @@ import {
   callEntities,
   callOutcomes,
   callSummaries,
+  conversationProcessingRuns,
   conversations,
   correctionHistory,
   corrections,
@@ -30,6 +32,7 @@ import {
   providerConversations,
   providerTestMappings,
   providerWorkspaces,
+  qualityEvaluations,
   permissions,
   reportDefinitions,
   reportRuns,
@@ -43,10 +46,12 @@ import {
   toolInvocations,
   transcriptRevisions,
   transcriptTurns,
+  trends,
   userRoles,
   voiceAssignments,
   voiceAgents,
   voiceProfiles,
+  webhookInboxEntries,
 } from '@quantum-parks/db';
 import {
   HttpElevenLabsAdapter,
@@ -328,6 +333,51 @@ export class PlatformService {
       .leftJoin(knowledgeVersions, eq(knowledgeVersions.assetId, knowledgeAssets.id))
       .orderBy(desc(knowledgeAssets.createdAt));
     return { items, nextCursor: null };
+  }
+
+  /**
+   * Knowledge publication state: how each approved version stands against the copy
+   * held by the voice runtime. Local and remote are reported separately — the remote
+   * object is a runtime copy, and divergence is drift rather than a new source of truth.
+   */
+  async listKnowledgeReleases() {
+    const rows = await this.database.db
+      .select({ sync: knowledgeSyncs, version: knowledgeVersions, asset: knowledgeAssets })
+      .from(knowledgeSyncs)
+      .innerJoin(knowledgeVersions, eq(knowledgeSyncs.knowledgeVersionId, knowledgeVersions.id))
+      .innerJoin(knowledgeAssets, eq(knowledgeVersions.assetId, knowledgeAssets.id))
+      .orderBy(desc(knowledgeSyncs.updatedAt));
+
+    return {
+      items: rows.map((row) => ({
+        id: row.sync.id,
+        assetId: row.asset.id,
+        title: row.asset.title,
+        category: row.asset.category,
+        language: row.asset.language,
+        riskClass: row.asset.riskClass,
+        version: row.version.version,
+        versionState: row.version.state,
+        syncState: row.sync.syncState,
+        providerDocumentId: row.sync.providerDocumentId,
+        localChecksum: row.sync.localChecksum,
+        remoteChecksum: row.sync.remoteChecksum,
+        checksumsMatch:
+          row.sync.remoteChecksum !== null && row.sync.remoteChecksum === row.sync.localChecksum,
+        lastAttemptAt: row.sync.lastAttemptAt,
+        lastSuccessAt: row.sync.lastSuccessAt,
+        lastError: row.sync.lastError,
+      })),
+    };
+  }
+
+  async listKnowledgeGaps() {
+    return {
+      items: await this.database.db
+        .select()
+        .from(knowledgeGaps)
+        .orderBy(desc(knowledgeGaps.frequency)),
+    };
   }
 
   async createKnowledgeDraft(input: {
@@ -635,6 +685,122 @@ export class PlatformService {
     return { items };
   }
 
+  /**
+   * Corrections across every call, for the review queue. The per-call list above
+   * answers "what was corrected on this call"; this answers "what is waiting for a
+   * decision", which is the question the queue exists for.
+   */
+  async listAllCorrections() {
+    const rows = await this.database.db
+      .select({ correction: corrections, conversation: conversations })
+      .from(corrections)
+      .innerJoin(conversations, eq(corrections.conversationId, conversations.id))
+      .orderBy(desc(corrections.createdAt))
+      .limit(200);
+    const history = await this.database.db
+      .select()
+      .from(correctionHistory)
+      .orderBy(desc(correctionHistory.createdAt));
+    return {
+      items: rows.map((row) => ({
+        ...row.correction,
+        park: row.conversation.park,
+        language: row.conversation.language,
+        callStartedAt: row.conversation.startedAt,
+        historyCount: history.filter((entry) => entry.correctionId === row.correction.id).length,
+      })),
+    };
+  }
+
+  /**
+   * Reconciliation subjects: calls whose processing did not complete, plus the
+   * per-attempt run log that explains why. Grouping them here keeps the operator
+   * flow in one request rather than one per call.
+   */
+  async listReconciliation() {
+    const [stalled, runs, inbox] = await Promise.all([
+      this.database.db
+        .select({ conversation: conversations, provider: providerConversations })
+        .from(conversations)
+        .innerJoin(
+          providerConversations,
+          eq(conversations.providerConversationId, providerConversations.id),
+        )
+        .where(
+          inArray(conversations.processingState, [
+            'PARTIAL',
+            'FAILED_RETRYABLE',
+            'FAILED_FINAL',
+            'SUMMARIZING',
+            'CLASSIFYING',
+            'NORMALIZING',
+          ]),
+        )
+        .orderBy(desc(conversations.startedAt))
+        .limit(100),
+      this.database.db
+        .select()
+        .from(conversationProcessingRuns)
+        .orderBy(desc(conversationProcessingRuns.startedAt))
+        .limit(300),
+      this.database.db
+        .select()
+        .from(webhookInboxEntries)
+        .orderBy(desc(webhookInboxEntries.createdAt))
+        .limit(100),
+    ]);
+
+    return {
+      items: stalled.map((row) => ({
+        id: row.conversation.id,
+        providerConversationId: row.provider.providerConversationId,
+        processingState: row.conversation.processingState,
+        park: row.conversation.park,
+        language: row.conversation.language,
+        startedAt: row.conversation.startedAt,
+        attempts: runs.filter((run) => run.conversationId === row.conversation.id).length,
+        lastError:
+          runs.find((run) => run.conversationId === row.conversation.id && run.error)?.error ??
+          null,
+      })),
+      inbox: inbox.map((entry) => ({
+        id: entry.id,
+        state: entry.state,
+        attempts: entry.attempts,
+        workflowId: entry.workflowId,
+        nextAttemptAt: entry.nextAttemptAt,
+        lastError: entry.lastError,
+        createdAt: entry.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * Human quality reviews. Distinct from test evidence: a test asserts a rule, a
+   * review records a person's judgement against the rubric.
+   */
+  async listQualityReviews() {
+    const rows = await this.database.db
+      .select({ evaluation: qualityEvaluations, conversation: conversations })
+      .from(qualityEvaluations)
+      .innerJoin(conversations, eq(qualityEvaluations.conversationId, conversations.id))
+      .orderBy(desc(qualityEvaluations.createdAt))
+      .limit(200);
+    return {
+      items: rows.map((row) => ({
+        id: row.evaluation.id,
+        conversationId: row.evaluation.conversationId,
+        rubricVersion: row.evaluation.rubricVersion,
+        scores: row.evaluation.scores,
+        reviewerId: row.evaluation.reviewerId,
+        createdAt: row.evaluation.createdAt,
+        park: row.conversation.park,
+        language: row.conversation.language,
+        callStartedAt: row.conversation.startedAt,
+      })),
+    };
+  }
+
   async listTestsAndRuns() {
     const [tests, runs] = await Promise.all([
       this.database.db.select().from(agentTests).orderBy(desc(agentTests.createdAt)),
@@ -925,6 +1091,91 @@ export class PlatformService {
     };
   }
 
+  /**
+   * Analytics series built from `aggregate_facts` rather than by counting rows in
+   * `conversations`. The facts table is the aggregation boundary: reading from it
+   * keeps a chart and a scheduled report answering with the same numbers.
+   */
+  async analyticsSeries(days: number) {
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    since.setDate(since.getDate() - (days - 1));
+
+    const [facts, trendRows] = await Promise.all([
+      this.database.db.select().from(aggregateFacts).where(gte(aggregateFacts.date, since)),
+      this.database.db.select().from(trends).orderBy(desc(trends.periodEnd)),
+    ]);
+
+    const dayKey = (date: Date) => date.toISOString().slice(0, 10);
+    const dayKeys: string[] = [];
+    for (let offset = 0; offset < days; offset += 1) {
+      const date = new Date(since);
+      date.setDate(date.getDate() + offset);
+      dayKeys.push(dayKey(date));
+    }
+
+    const pick = (dimensionKey: string, metric: string) =>
+      facts.filter((fact) => fact.dimensionKey === dimensionKey && fact.metric === metric);
+
+    // Demand per day, with absent days rendered as zero rather than omitted, so the
+    // x-axis stays continuous and a quiet day is visible as a quiet day.
+    const received = pick('total', 'calls_received');
+    const completed = pick('total', 'calls_completed');
+    const demand = dayKeys.map((key) => ({
+      label: key,
+      received: received.find((fact) => dayKey(fact.date) === key)?.count ?? 0,
+      completed: completed.find((fact) => dayKey(fact.date) === key)?.count ?? 0,
+    }));
+
+    const totalsFor = (dimensionKey: string) => {
+      const totals = new Map<string, number>();
+      for (const fact of pick(dimensionKey, 'calls_received')) {
+        totals.set(fact.dimensionValue, (totals.get(fact.dimensionValue) ?? 0) + fact.count);
+      }
+      return [...totals.entries()]
+        .map(([label, value]) => ({ label, value }))
+        .sort((left, right) => right.value - left.value);
+    };
+
+    const durationFacts = pick('total', 'call_duration_seconds');
+    const durationTotal = durationFacts.reduce((sum, fact) => sum + Number(fact.sum), 0);
+    const durationCount = durationFacts.reduce((sum, fact) => sum + fact.count, 0);
+
+    const totalReceived = received.reduce((sum, fact) => sum + fact.count, 0);
+    const totalCompleted = completed.reduce((sum, fact) => sum + fact.count, 0);
+    const outcomes = totalsFor('outcome');
+    const resolved = outcomes.find((entry) => entry.label === 'RESOLVED_BY_AGENT')?.value ?? 0;
+
+    return {
+      windowDays: days,
+      from: since.toISOString(),
+      generatedAt: new Date().toISOString(),
+      totals: {
+        received: totalReceived,
+        completed: totalCompleted,
+        // Null rather than zero when there is nothing to divide by: a containment
+        // rate with no calls behind it is unknown, not zero percent.
+        containment: totalReceived > 0 ? resolved / totalReceived : null,
+        averageDurationSeconds: durationCount > 0 ? durationTotal / durationCount : null,
+      },
+      demand,
+      byIntent: totalsFor('intent'),
+      byPark: totalsFor('park'),
+      byLanguage: totalsFor('language'),
+      byOutcome: outcomes,
+      trends: trendRows.map((trend) => ({
+        id: trend.id,
+        trendType: trend.trendType,
+        dimensions: trend.dimensions,
+        metric: Number(trend.metric),
+        confidence: trend.confidence === null ? null : Number(trend.confidence),
+        periodStart: trend.periodStart,
+        periodEnd: trend.periodEnd,
+        evidence: trend.evidence,
+      })),
+    };
+  }
+
   async listReports() {
     const [definitions, runs] = await Promise.all([
       this.database.db.select().from(reportDefinitions).orderBy(desc(reportDefinitions.createdAt)),
@@ -975,7 +1226,9 @@ export class PlatformService {
     ]);
 
     const rolesById = new Map(roleRows.map((role) => [role.id, role]));
-    const permissionsById = new Map(permissionRows.map((permission) => [permission.id, permission]));
+    const permissionsById = new Map(
+      permissionRows.map((permission) => [permission.id, permission]),
+    );
 
     // Separation of duties: authoring and approving the same artefact class is the
     // combination the release gates exist to prevent, so it is surfaced explicitly.
@@ -1238,11 +1491,20 @@ export class PlatformService {
       this.database.db.select().from(voiceAgents),
       this.database.db.select().from(agentConfigVersions),
       this.database.db.select().from(agentDeployments),
-      this.database.db.select().from(agentDriftFindings).where(isNull(agentDriftFindings.resolvedAt)),
+      this.database.db
+        .select()
+        .from(agentDriftFindings)
+        .where(isNull(agentDriftFindings.resolvedAt)),
       this.database.db.select().from(voiceAssignments),
       this.database.db.select().from(voiceProfiles),
-      this.database.db.select().from(conversations).where(gte(conversations.startedAt, startOfToday)),
-      this.database.db.select().from(conversations).where(gte(conversations.startedAt, sevenDaysAgo)),
+      this.database.db
+        .select()
+        .from(conversations)
+        .where(gte(conversations.startedAt, startOfToday)),
+      this.database.db
+        .select()
+        .from(conversations)
+        .where(gte(conversations.startedAt, sevenDaysAgo)),
       this.database.db.select().from(callOutcomes),
       this.database.db.select().from(callbackRequests),
       this.database.db.select().from(staffTasks),
@@ -1371,7 +1633,8 @@ export class PlatformService {
       id: 'drift',
       severity: 'critical',
       title: 'Unresolved provider drift',
-      detail: 'The live agent in the provider console no longer matches the approved configuration.',
+      detail:
+        'The live agent in the provider console no longer matches the approved configuration.',
       href: '/receptionist/releases',
       count: drift.length,
     });
@@ -1379,7 +1642,8 @@ export class PlatformService {
       id: 'failed-sync',
       severity: 'critical',
       title: 'Knowledge failed to publish',
-      detail: 'Approved knowledge did not reach the voice runtime and callers may get stale answers.',
+      detail:
+        'Approved knowledge did not reach the voice runtime and callers may get stale answers.',
       href: '/knowledge/releases',
       count: failedSyncs.length,
     });

@@ -94,7 +94,13 @@ function ChartFrame({
         </ul>
       ) : null}
 
-      <div className="chart-plot" style={{ height }} aria-hidden="true">
+      {/*
+        `inert` rather than `aria-hidden`: the chart library renders its own focusable
+        surface, and an aria-hidden subtree containing focusable elements is itself a
+        WCAG failure. `inert` removes the subtree from the accessibility tree *and*
+        from the tab order, leaving the table below as the accessible representation.
+      */}
+      <div className="chart-plot" style={{ height }} inert>
         <ResponsiveContainer width="100%" height="100%">
           {children as React.ReactElement}
         </ResponsiveContainer>
@@ -185,7 +191,10 @@ export function LineChart({
       {...(valueFormatter ? { valueFormatter } : {})}
       {...(height ? { height } : {})}
     >
-      <RechartsLineChart data={data as ChartDatum[]} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+      <RechartsLineChart
+        data={data as ChartDatum[]}
+        margin={{ top: 8, right: 12, bottom: 4, left: 0 }}
+      >
         <CartesianGrid stroke={CHART_GRID} vertical={false} />
         <XAxis dataKey="label" {...axisProps} {...(xLabel ? { name: xLabel } : {})} />
         <YAxis {...axisProps} width={56} />
@@ -261,7 +270,11 @@ export function BarChart({
             dataKey={entry.key}
             name={entry.label}
             fill={entry.color ?? seriesColor(index)}
-            radius={horizontal ? [0, MARK.barRadius, MARK.barRadius, 0] : [MARK.barRadius, MARK.barRadius, 0, 0]}
+            radius={
+              horizontal
+                ? [0, MARK.barRadius, MARK.barRadius, 0]
+                : [MARK.barRadius, MARK.barRadius, 0, 0]
+            }
             isAnimationActive={false}
           />
         ))}
@@ -298,7 +311,10 @@ export function StackedBarChart({
       {...(valueFormatter ? { valueFormatter } : {})}
       {...(height ? { height } : {})}
     >
-      <RechartsBarChart data={data as ChartDatum[]} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+      <RechartsBarChart
+        data={data as ChartDatum[]}
+        margin={{ top: 8, right: 12, bottom: 4, left: 0 }}
+      >
         <CartesianGrid stroke={CHART_GRID} vertical={false} />
         <XAxis dataKey="label" {...axisProps} />
         <YAxis {...axisProps} width={56} />
@@ -315,7 +331,14 @@ export function StackedBarChart({
             stroke={CHART_SURFACE}
             strokeWidth={MARK.segmentGap}
             {...(entry.key === lastKey
-              ? { radius: [MARK.barRadius, MARK.barRadius, 0, 0] as [number, number, number, number] }
+              ? {
+                  radius: [MARK.barRadius, MARK.barRadius, 0, 0] as [
+                    number,
+                    number,
+                    number,
+                    number,
+                  ],
+                }
               : {})}
             isAnimationActive={false}
           />
@@ -354,7 +377,10 @@ export function AreaChart({
       {...(valueFormatter ? { valueFormatter } : {})}
       {...(height ? { height } : {})}
     >
-      <RechartsAreaChart data={data as ChartDatum[]} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+      <RechartsAreaChart
+        data={data as ChartDatum[]}
+        margin={{ top: 8, right: 12, bottom: 4, left: 0 }}
+      >
         <CartesianGrid stroke={CHART_GRID} vertical={false} />
         <XAxis dataKey="label" {...axisProps} />
         <YAxis {...axisProps} width={56} />
@@ -582,7 +608,9 @@ export function TrendChart({
       {headline ? (
         <p className="trend-headline">
           <strong>{headline}</strong>
-          {change ? <span className={`trend-change tone-${change.tone}`}>{change.value}</span> : null}
+          {change ? (
+            <span className={`trend-change tone-${change.tone}`}>{change.value}</span>
+          ) : null}
         </p>
       ) : null}
       <AreaChart

@@ -44,11 +44,7 @@ const PROCESSING_STATES = [
   'FAILED_FINAL',
 ];
 
-export default async function CallsPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function CallsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const response = await apiGet<{ items: CallRow[] }>('/calls?limit=100', {
     purpose: 'OPERATIONS',
@@ -96,7 +92,9 @@ export default async function CallsPage({
   const page = readNumber(params, 'page', 1);
   const rows = paginate(sorted, page, DEFAULT_PAGE_SIZE);
 
-  const parks = [...new Set(all.map((row) => row.park).filter((value): value is string => Boolean(value)))].sort();
+  const parks = [
+    ...new Set(all.map((row) => row.park).filter((value): value is string => Boolean(value))),
+  ].sort();
   const languages = [
     ...new Set(all.map((row) => row.language).filter((value): value is string => Boolean(value))),
   ].sort();

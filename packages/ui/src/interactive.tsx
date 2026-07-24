@@ -31,9 +31,7 @@ export function Tabs({
         {panels.map((panel) => (
           <RadixTabs.Trigger className="tabs-trigger" key={panel.value} value={panel.value}>
             {panel.label}
-            {panel.badge !== undefined ? (
-              <span className="tabs-badge">{panel.badge}</span>
-            ) : null}
+            {panel.badge !== undefined ? <span className="tabs-badge">{panel.badge}</span> : null}
           </RadixTabs.Trigger>
         ))}
       </RadixTabs.List>
@@ -65,8 +63,7 @@ export function Dialog({
   onOpenChange?: (open: boolean) => void;
   wide?: boolean;
 }) {
-  const controlled =
-    open !== undefined && onOpenChange !== undefined ? { open, onOpenChange } : {};
+  const controlled = open !== undefined && onOpenChange !== undefined ? { open, onOpenChange } : {};
   return (
     <RadixDialog.Root {...controlled}>
       {trigger ? <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger> : null}
@@ -208,8 +205,7 @@ export function Drawer({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const controlled =
-    open !== undefined && onOpenChange !== undefined ? { open, onOpenChange } : {};
+  const controlled = open !== undefined && onOpenChange !== undefined ? { open, onOpenChange } : {};
   return (
     <RadixDialog.Root {...controlled}>
       {trigger ? <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger> : null}

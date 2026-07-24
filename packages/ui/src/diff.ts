@@ -45,7 +45,9 @@ function longestCommonSubsequence(before: readonly string[], after: readonly str
     if (!row || !rowNext) continue;
     for (let j = after.length - 1; j >= 0; j -= 1) {
       row[j] =
-        before[i] === after[j] ? (rowNext[j + 1] ?? 0) + 1 : Math.max(rowNext[j] ?? 0, row[j + 1] ?? 0);
+        before[i] === after[j]
+          ? (rowNext[j + 1] ?? 0) + 1
+          : Math.max(rowNext[j] ?? 0, row[j + 1] ?? 0);
     }
   }
   return table;
@@ -62,7 +64,12 @@ export function diffLines(beforeText: string, afterText: string): DiffLine[] {
 
   while (i < before.length && j < after.length) {
     if (before[i] === after[j]) {
-      lines.push({ type: 'context', beforeLine: i + 1, afterLine: j + 1, content: before[i] ?? '' });
+      lines.push({
+        type: 'context',
+        beforeLine: i + 1,
+        afterLine: j + 1,
+        content: before[i] ?? '',
+      });
       i += 1;
       j += 1;
       continue;

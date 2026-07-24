@@ -192,9 +192,17 @@ const ROLE_CATALOGUE = [
     'Handles customer follow-up within purpose limits',
   ],
   ['ANALYST_EXECUTIVE', 'Analyst', 'Reads analytics and reports'],
-  ['PRIVACY_SECURITY_AUDITOR', 'Privacy and security auditor', 'Reads audit, retention and privacy'],
+  [
+    'PRIVACY_SECURITY_AUDITOR',
+    'Privacy and security auditor',
+    'Reads audit, retention and privacy',
+  ],
   ['RESTRICTED_VENDOR_ADMIN', 'Vendor administrator', 'Manages provider integrations only'],
-  ['AI_INTELLIGENCE_ADMIN', 'AI infrastructure administrator', 'Manages providers, routes, prompts'],
+  [
+    'AI_INTELLIGENCE_ADMIN',
+    'AI infrastructure administrator',
+    'Manages providers, routes, prompts',
+  ],
   ['AI_GOVERNANCE_APPROVER', 'AI governance approver', 'Approves models, prompts and schemas'],
 ] as const;
 
@@ -273,87 +281,171 @@ type TurnScript = { speaker: 'agent' | 'caller'; content: string };
  */
 const TRANSCRIPTS: Record<string, TurnScript[]> = {
   opening_hours: [
-    { speaker: 'agent', content: 'Good morning, Quantum Parks. This call is handled by an automated assistant. How can I help?' },
+    {
+      speaker: 'agent',
+      content:
+        'Good morning, Quantum Parks. This call is handled by an automated assistant. How can I help?',
+    },
     { speaker: 'caller', content: 'Hi, what time do you open on Saturday?' },
-    { speaker: 'agent', content: 'On Saturday the park opens at nine and last entry is at five thirty.' },
+    {
+      speaker: 'agent',
+      content: 'On Saturday the park opens at nine and last entry is at five thirty.',
+    },
     { speaker: 'caller', content: 'And the water area?' },
     { speaker: 'agent', content: 'The water area opens at ten and closes at six on Saturdays.' },
     { speaker: 'caller', content: 'Perfect, thank you.' },
     { speaker: 'agent', content: 'You are welcome. Have a good visit.' },
   ],
   ticket_pricing: [
-    { speaker: 'agent', content: 'Good afternoon, Quantum Parks. You are speaking with an automated assistant.' },
+    {
+      speaker: 'agent',
+      content: 'Good afternoon, Quantum Parks. You are speaking with an automated assistant.',
+    },
     { speaker: 'caller', content: 'How much is a family ticket?' },
-    { speaker: 'agent', content: 'The family ticket covers two adults and two children and is priced at eighty nine euros online.' },
+    {
+      speaker: 'agent',
+      content:
+        'The family ticket covers two adults and two children and is priced at eighty nine euros online.',
+    },
     { speaker: 'caller', content: 'Is it cheaper at the gate?' },
-    { speaker: 'agent', content: 'Gate prices are higher than online prices. Booking ahead is the lower price.' },
+    {
+      speaker: 'agent',
+      content: 'Gate prices are higher than online prices. Booking ahead is the lower price.',
+    },
     { speaker: 'caller', content: 'Understood, I will book online.' },
   ],
   booking_enquiry: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant speaking. How can I help?' },
-    { speaker: 'caller', content: 'I want to change my booking for next weekend. My reference is QP-4471 and my number is 07700 900123.' },
-    { speaker: 'agent', content: 'I can pass this to the bookings team. I am not able to change a booking on this call.' },
+    {
+      speaker: 'caller',
+      content:
+        'I want to change my booking for next weekend. My reference is QP-4471 and my number is 07700 900123.',
+    },
+    {
+      speaker: 'agent',
+      content:
+        'I can pass this to the bookings team. I am not able to change a booking on this call.',
+    },
     { speaker: 'caller', content: 'Alright, can someone call me back?' },
-    { speaker: 'agent', content: 'I have created a callback request for the bookings team. They will contact you within one working day.' },
+    {
+      speaker: 'agent',
+      content:
+        'I have created a callback request for the bookings team. They will contact you within one working day.',
+    },
   ],
   group_booking: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant. How can I help?' },
-    { speaker: 'caller', content: 'We are a school group of forty two students, do you do group rates?' },
-    { speaker: 'agent', content: 'Group rates apply from twenty visitors. Education groups have a dedicated rate and a risk assessment pack.' },
+    {
+      speaker: 'caller',
+      content: 'We are a school group of forty two students, do you do group rates?',
+    },
+    {
+      speaker: 'agent',
+      content:
+        'Group rates apply from twenty visitors. Education groups have a dedicated rate and a risk assessment pack.',
+    },
     { speaker: 'caller', content: 'Can you email me the pack?' },
-    { speaker: 'agent', content: 'I will send a secure link to complete your details so the education team can respond.' },
+    {
+      speaker: 'agent',
+      content:
+        'I will send a secure link to complete your details so the education team can respond.',
+    },
   ],
   accessibility_support: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant. How can I help?' },
     { speaker: 'caller', content: 'My son uses a wheelchair. Which rides can he access?' },
-    { speaker: 'agent', content: 'Nine of the fourteen main attractions have step-free access, and the accessibility guide lists transfer requirements per ride.' },
+    {
+      speaker: 'agent',
+      content:
+        'Nine of the fourteen main attractions have step-free access, and the accessibility guide lists transfer requirements per ride.',
+    },
     { speaker: 'caller', content: 'Do I need to book assistance?' },
-    { speaker: 'agent', content: 'Assistance does not need booking, but registering on arrival at guest services speeds it up.' },
+    {
+      speaker: 'agent',
+      content:
+        'Assistance does not need booking, but registering on arrival at guest services speeds it up.',
+    },
   ],
   lost_property: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'I left a blue rucksack near the lake yesterday.' },
-    { speaker: 'agent', content: 'I have logged a lost property enquiry for the Lisboa park dated yesterday.' },
+    {
+      speaker: 'agent',
+      content: 'I have logged a lost property enquiry for the Lisboa park dated yesterday.',
+    },
     { speaker: 'caller', content: 'Great, thanks.' },
     { speaker: 'agent', content: 'Guest services will review found items and contact you.' },
   ],
   complaint: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
-    { speaker: 'caller', content: 'We queued ninety minutes for a ride that then closed. That is unacceptable.' },
-    { speaker: 'agent', content: 'I am sorry about that experience. I am recording the detail and passing it to the guest relations team.' },
+    {
+      speaker: 'caller',
+      content: 'We queued ninety minutes for a ride that then closed. That is unacceptable.',
+    },
+    {
+      speaker: 'agent',
+      content:
+        'I am sorry about that experience. I am recording the detail and passing it to the guest relations team.',
+    },
     { speaker: 'caller', content: 'I want compensation.' },
-    { speaker: 'agent', content: 'I am not able to decide compensation. Guest relations will review and respond directly.' },
+    {
+      speaker: 'agent',
+      content:
+        'I am not able to decide compensation. Guest relations will review and respond directly.',
+    },
   ],
   refund_request: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'I need a refund, my card ending 4471 was charged twice.' },
-    { speaker: 'agent', content: 'I cannot take or confirm card details on this call. I am transferring you to the payments team.' },
+    {
+      speaker: 'agent',
+      content:
+        'I cannot take or confirm card details on this call. I am transferring you to the payments team.',
+    },
     { speaker: 'caller', content: 'Fine, put me through.' },
   ],
   directions_and_parking: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'Where do I park for the main entrance?' },
-    { speaker: 'agent', content: 'Car park B serves the main entrance and is signposted from the motorway exit.' },
+    {
+      speaker: 'agent',
+      content: 'Car park B serves the main entrance and is signposted from the motorway exit.',
+    },
     { speaker: 'caller', content: 'Is it free?' },
-    { speaker: 'agent', content: 'Parking is twelve euros per day and can be pre-paid with your ticket.' },
+    {
+      speaker: 'agent',
+      content: 'Parking is twelve euros per day and can be pre-paid with your ticket.',
+    },
   ],
   event_schedule: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'What is on during the half term week?' },
-    { speaker: 'agent', content: 'The half term programme runs the lantern parade each evening and a daytime performance at one and four.' },
+    {
+      speaker: 'agent',
+      content:
+        'The half term programme runs the lantern parade each evening and a daytime performance at one and four.',
+    },
     { speaker: 'caller', content: 'Do I need separate tickets?' },
     { speaker: 'agent', content: 'Both are included with park entry.' },
   ],
   membership_enquiry: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'Does the annual pass cover all three parks?' },
-    { speaker: 'agent', content: 'The multi-park annual pass covers Lisboa, Porto and Sintra. The single-park pass covers one.' },
+    {
+      speaker: 'agent',
+      content:
+        'The multi-park annual pass covers Lisboa, Porto and Sintra. The single-park pass covers one.',
+    },
     { speaker: 'caller', content: 'Thanks.' },
   ],
   technical_issue: [
     { speaker: 'agent', content: 'Quantum Parks, automated assistant.' },
     { speaker: 'caller', content: 'Your website will not load my tickets.' },
-    { speaker: 'agent', content: 'I have logged a technical issue with your booking reference so the digital team can investigate.' },
+    {
+      speaker: 'agent',
+      content:
+        'I have logged a technical issue with your booking reference so the digital team can investigate.',
+    },
     { speaker: 'caller', content: 'Okay.' },
   ],
 };
@@ -362,10 +454,17 @@ const TRANSCRIPTS: Record<string, TurnScript[]> = {
 const REDACTION_PATTERNS: Array<{ pattern: RegExp; type: string; replacement: string }> = [
   { pattern: /\b0\d{4}\s?\d{6}\b/g, type: 'PHONE_NUMBER', replacement: '[redacted phone]' },
   { pattern: /\bQP-\d{4}\b/g, type: 'BOOKING_REFERENCE', replacement: '[redacted reference]' },
-  { pattern: /\bending \d{4}\b/g, type: 'PAYMENT_FRAGMENT', replacement: '[redacted card fragment]' },
+  {
+    pattern: /\bending \d{4}\b/g,
+    type: 'PAYMENT_FRAGMENT',
+    replacement: '[redacted card fragment]',
+  },
 ];
 
-function redact(content: string): { content: string; redactions: Array<{ type: string; start: number }> } {
+function redact(content: string): {
+  content: string;
+  redactions: Array<{ type: string; start: number }>;
+} {
   let output = content;
   const found: Array<{ type: string; start: number }> = [];
   for (const { pattern, type, replacement } of REDACTION_PATTERNS) {
@@ -486,11 +585,36 @@ export async function seedSyntheticBusinessData(
   /* ------------------------------------------------- agent versions */
 
   const agentVersionPlan = [
-    { version: 1, state: 'SUPERSEDED' as const, day: 120, reason: 'Initial receptionist configuration' },
-    { version: 2, state: 'SUPERSEDED' as const, day: 74, reason: 'Added accessibility guidance and transfer routing' },
-    { version: 3, state: 'ACTIVE' as const, day: 31, reason: 'Refined disclosure wording and after-hours behaviour' },
-    { version: 4, state: 'TEST_PASSED' as const, day: 6, reason: 'Added group booking flow and lost property tool' },
-    { version: 5, state: 'DRAFT' as const, day: 1, reason: 'Draft: seasonal opening variations and winter events' },
+    {
+      version: 1,
+      state: 'SUPERSEDED' as const,
+      day: 120,
+      reason: 'Initial receptionist configuration',
+    },
+    {
+      version: 2,
+      state: 'SUPERSEDED' as const,
+      day: 74,
+      reason: 'Added accessibility guidance and transfer routing',
+    },
+    {
+      version: 3,
+      state: 'ACTIVE' as const,
+      day: 31,
+      reason: 'Refined disclosure wording and after-hours behaviour',
+    },
+    {
+      version: 4,
+      state: 'TEST_PASSED' as const,
+      day: 6,
+      reason: 'Added group booking flow and lost property tool',
+    },
+    {
+      version: 5,
+      state: 'DRAFT' as const,
+      day: 1,
+      reason: 'Draft: seasonal opening variations and winter events',
+    },
   ];
 
   const agentVersionIds = new Map<number, string>();
@@ -501,18 +625,26 @@ export async function seedSyntheticBusinessData(
         'Always disclose that you are an automated assistant on the first turn.',
         'Answer only from approved knowledge. If the answer is not in approved knowledge, say so and offer a callback.',
         'Never take payment details. Never confirm a booking change yourself.',
-        plan.version >= 2 ? 'Offer accessibility guidance proactively when a caller mentions mobility.' : '',
-        plan.version >= 4 ? 'For groups of twenty or more, route to the education and groups team.' : '',
-        plan.version >= 5 ? 'Announce seasonal opening variations when the visit date falls in a variation window.' : '',
+        plan.version >= 2
+          ? 'Offer accessibility guidance proactively when a caller mentions mobility.'
+          : '',
+        plan.version >= 4
+          ? 'For groups of twenty or more, route to the education and groups team.'
+          : '',
+        plan.version >= 5
+          ? 'Announce seasonal opening variations when the visit date falls in a variation window.'
+          : '',
       ]
         .filter(Boolean)
         .join('\n'),
-      firstMessage: 'Good day, Quantum Parks. This call is handled by an automated assistant. How can I help?',
+      firstMessage:
+        'Good day, Quantum Parks. This call is handled by an automated assistant. How can I help?',
       disclosure: 'This call is handled by an automated assistant and is recorded as a transcript.',
       closure: 'Thank you for calling Quantum Parks.',
       afterHours: {
         enabled: true,
-        message: 'Our contact centre is closed. I can take a callback request for the next working day.',
+        message:
+          'Our contact centre is closed. I can take a callback request for the next working day.',
       },
       turnSettings: { silenceTimeoutMs: 4500, maximumTurnMs: 30_000, interruptible: true },
       languages: plan.version >= 2 ? ['en', 'pt', 'es'] : ['en', 'pt'],
@@ -523,8 +655,18 @@ export async function seedSyntheticBusinessData(
         ...(plan.version >= 4 ? ['create_lost_property_report', 'create_group_enquiry'] : []),
       ],
       transfers: [
-        { routeKey: 'payments', intent: 'refund_request', target: 'payments_queue', fallback: 'callback' },
-        { routeKey: 'guest_relations', intent: 'complaint', target: 'guest_relations_queue', fallback: 'callback' },
+        {
+          routeKey: 'payments',
+          intent: 'refund_request',
+          target: 'payments_queue',
+          fallback: 'callback',
+        },
+        {
+          routeKey: 'guest_relations',
+          intent: 'complaint',
+          target: 'guest_relations_queue',
+          fallback: 'callback',
+        },
       ],
     };
 
@@ -791,11 +933,18 @@ export async function seedSyntheticBusinessData(
         providerDocumentId: failed ? null : `doc_synthetic_${index}`,
         syncState: failed ? 'PUBLISH_FAILED' : index % 19 === 0 ? 'DRIFTED' : 'IN_SYNC',
         localChecksum,
-        remoteChecksum: failed ? null : index % 19 === 0 ? sha256(`${localChecksum}:remote`) : localChecksum,
+        remoteChecksum: failed
+          ? null
+          : index % 19 === 0
+            ? sha256(`${localChecksum}:remote`)
+            : localChecksum,
         lastAttemptAt: daysAgo(between(0, 12), 3, 0),
         lastSuccessAt: failed ? null : daysAgo(between(1, 14), 3, 0),
         lastError: failed
-          ? { code: 'PROVIDER_DOCUMENT_REJECTED', message: 'Document exceeded the provider size limit' }
+          ? {
+              code: 'PROVIDER_DOCUMENT_REJECTED',
+              message: 'Document exceeded the provider size limit',
+            }
           : null,
       });
 
@@ -821,7 +970,8 @@ export async function seedSyntheticBusinessData(
       rightVersionId: conflictRight,
       conflictType: 'CONTRADICTORY_HOURS',
       evidence: {
-        summary: 'Lisboa opening hours differ between the park document and the seasonal variations document.',
+        summary:
+          'Lisboa opening hours differ between the park document and the seasonal variations document.',
         left: 'Opens 09:00 on Saturday',
         right: 'Opens 10:00 on Saturday during seasonal variation windows',
       },
@@ -947,7 +1097,10 @@ export async function seedSyntheticBusinessData(
         testVersionId,
         providerEvidenceObjectKey: `qp-raw-evidence/tests/${plan.key}/${index}.json`,
         internalEvaluation: passed
-          ? { verdict: 'PASS', checks: { factsPresent: true, sourcesCited: true, prohibitedClaims: false } }
+          ? {
+              verdict: 'PASS',
+              checks: { factsPresent: true, sourcesCited: true, prohibitedClaims: false },
+            }
           : {
               verdict: 'FAIL',
               checks: { factsPresent: false, sourcesCited: false, prohibitedClaims: false },
@@ -1136,7 +1289,8 @@ export async function seedSyntheticBusinessData(
       const summaryBody = {
         purpose: `Caller asked about ${intent.replaceAll('_', ' ')} at the ${park} park.`,
         caller_requests: [`Information about ${intent.replaceAll('_', ' ')}`],
-        unresolved_items: intent === 'complaint' || intent === 'refund_request' ? ['Awaiting team response'] : [],
+        unresolved_items:
+          intent === 'complaint' || intent === 'refund_request' ? ['Awaiting team response'] : [],
         commitments: intent === 'booking_enquiry' ? ['Callback within one working day'] : [],
         evidence_ids: [`ev_${sha256(`${conversationId}:transcript`).slice(0, 24)}`],
       };
@@ -1225,7 +1379,11 @@ export async function seedSyntheticBusinessData(
     if (complete && random() < 0.6) {
       await db.insert(toolInvocations).values({
         conversationId,
-        registryKey: pick(['lookup_opening_hours', 'lookup_ticket_pricing', 'create_callback_request']),
+        registryKey: pick([
+          'lookup_opening_hours',
+          'lookup_ticket_pricing',
+          'create_callback_request',
+        ]),
         registryVersion: 1,
         providerRequestId: `tool_req_${index}_${between(1000, 9999)}`,
         request: { park, language },
@@ -1422,7 +1580,13 @@ export async function seedSyntheticBusinessData(
 
   for (const [dayKey, entries] of byDay) {
     const date = new Date(dayKey);
-    const push = (dimensionKey: string, dimensionValue: string, metric: string, count: number, sum = 0) => {
+    const push = (
+      dimensionKey: string,
+      dimensionValue: string,
+      metric: string,
+      count: number,
+      sum = 0,
+    ) => {
       factRows.push({
         date,
         dimensionKey,
@@ -1454,7 +1618,8 @@ export async function seedSyntheticBusinessData(
     }
     for (const language of LANGUAGES) {
       const languageEntries = entries.filter((entry) => entry.language === language);
-      if (languageEntries.length > 0) push('language', language, 'calls_received', languageEntries.length);
+      if (languageEntries.length > 0)
+        push('language', language, 'calls_received', languageEntries.length);
     }
     for (const intent of INTENTS) {
       const intentEntries = entries.filter((entry) => entry.intent === intent);
@@ -1462,12 +1627,20 @@ export async function seedSyntheticBusinessData(
     }
     const outcomes = new Set(entries.map((entry) => entry.outcome));
     for (const outcome of outcomes) {
-      push('outcome', outcome, 'calls_received', entries.filter((entry) => entry.outcome === outcome).length);
+      push(
+        'outcome',
+        outcome,
+        'calls_received',
+        entries.filter((entry) => entry.outcome === outcome).length,
+      );
     }
   }
   // Chunked to stay well inside the parameter limit for a single statement.
   for (let offset = 0; offset < factRows.length; offset += 200) {
-    await db.insert(aggregateFacts).values(factRows.slice(offset, offset + 200)).onConflictDoNothing();
+    await db
+      .insert(aggregateFacts)
+      .values(factRows.slice(offset, offset + 200))
+      .onConflictDoNothing();
   }
   summary.aggregateFacts = factRows.length;
 
@@ -1548,22 +1721,77 @@ export async function seedSyntheticBusinessData(
   await db
     .insert(retentionPolicies)
     .values([
-      { environment: 'development', dataType: 'RAW_PROVIDER_EVIDENCE', classification: 'RESTRICTED', retentionDays: 30, active: true },
-      { environment: 'development', dataType: 'CANONICAL_TRANSCRIPT', classification: 'CONFIDENTIAL', retentionDays: 365, active: true },
-      { environment: 'development', dataType: 'REDACTED_TRANSCRIPT', classification: 'INTERNAL', retentionDays: 730, active: true },
-      { environment: 'development', dataType: 'AUDIT_EVENTS', classification: 'INTERNAL', retentionDays: 2555, active: true },
-      { environment: 'production', dataType: 'RAW_PROVIDER_EVIDENCE', classification: 'RESTRICTED', retentionDays: 30, active: false },
+      {
+        environment: 'development',
+        dataType: 'RAW_PROVIDER_EVIDENCE',
+        classification: 'RESTRICTED',
+        retentionDays: 30,
+        active: true,
+      },
+      {
+        environment: 'development',
+        dataType: 'CANONICAL_TRANSCRIPT',
+        classification: 'CONFIDENTIAL',
+        retentionDays: 365,
+        active: true,
+      },
+      {
+        environment: 'development',
+        dataType: 'REDACTED_TRANSCRIPT',
+        classification: 'INTERNAL',
+        retentionDays: 730,
+        active: true,
+      },
+      {
+        environment: 'development',
+        dataType: 'AUDIT_EVENTS',
+        classification: 'INTERNAL',
+        retentionDays: 2555,
+        active: true,
+      },
+      {
+        environment: 'production',
+        dataType: 'RAW_PROVIDER_EVIDENCE',
+        classification: 'RESTRICTED',
+        retentionDays: 30,
+        active: false,
+      },
     ])
     .onConflictDoNothing();
 
   await db
     .insert(featureFlags)
     .values([
-      { key: 'AUDIO_INGESTION_ENABLED', environment: 'development', enabled: false, configuration: { reason: 'Transcript-only launch (ADR-0005)' } },
-      { key: 'CUSTOM_VOICE_ENABLED', environment: 'development', enabled: false, configuration: { reason: 'Requires separate consent approval' } },
-      { key: 'BOOKING_WRITES_ENABLED', environment: 'development', enabled: false, configuration: { reason: 'No capacity-affecting action by default' } },
-      { key: 'GROUP_ENQUIRY_FLOW', environment: 'development', enabled: true, configuration: { minimumGroupSize: 20 } },
-      { key: 'SEASONAL_VARIATIONS', environment: 'development', enabled: false, configuration: { pendingVersion: 5 } },
+      {
+        key: 'AUDIO_INGESTION_ENABLED',
+        environment: 'development',
+        enabled: false,
+        configuration: { reason: 'Transcript-only launch (ADR-0005)' },
+      },
+      {
+        key: 'CUSTOM_VOICE_ENABLED',
+        environment: 'development',
+        enabled: false,
+        configuration: { reason: 'Requires separate consent approval' },
+      },
+      {
+        key: 'BOOKING_WRITES_ENABLED',
+        environment: 'development',
+        enabled: false,
+        configuration: { reason: 'No capacity-affecting action by default' },
+      },
+      {
+        key: 'GROUP_ENQUIRY_FLOW',
+        environment: 'development',
+        enabled: true,
+        configuration: { minimumGroupSize: 20 },
+      },
+      {
+        key: 'SEASONAL_VARIATIONS',
+        environment: 'development',
+        enabled: false,
+        configuration: { pendingVersion: 5 },
+      },
     ])
     .onConflictDoNothing();
 
@@ -1572,17 +1800,52 @@ export async function seedSyntheticBusinessData(
   // Matches the hash-chain construction in AuditService so the seeded chain
   // verifies alongside events appended by the running application.
   const auditSeed = [
-    ['USER', 'ana.ferreira', 'AGENT_VERSION_APPROVED', 'AgentConfigVersion', 3, 'RELEASE_MANAGEMENT'],
-    ['USER', 'ana.ferreira', 'AGENT_VERSION_PUBLISHED', 'AgentConfigVersion', 3, 'RELEASE_MANAGEMENT'],
+    [
+      'USER',
+      'ana.ferreira',
+      'AGENT_VERSION_APPROVED',
+      'AgentConfigVersion',
+      3,
+      'RELEASE_MANAGEMENT',
+    ],
+    [
+      'USER',
+      'ana.ferreira',
+      'AGENT_VERSION_PUBLISHED',
+      'AgentConfigVersion',
+      3,
+      'RELEASE_MANAGEMENT',
+    ],
     ['SYSTEM', null, 'PROVIDER_READBACK_COMPLETED', 'AgentDeployment', 3, 'RELEASE_MANAGEMENT'],
     ['SYSTEM', null, 'DRIFT_DETECTED', 'AgentDeployment', 3, 'RELEASE_MANAGEMENT'],
-    ['USER', 'diogo.melo', 'KNOWLEDGE_VERSION_APPROVED', 'KnowledgeVersion', 1, 'RELEASE_MANAGEMENT'],
-    ['USER', 'carla.dias', 'KNOWLEDGE_VERSION_CREATED', 'KnowledgeVersion', 2, 'RELEASE_MANAGEMENT'],
+    [
+      'USER',
+      'diogo.melo',
+      'KNOWLEDGE_VERSION_APPROVED',
+      'KnowledgeVersion',
+      1,
+      'RELEASE_MANAGEMENT',
+    ],
+    [
+      'USER',
+      'carla.dias',
+      'KNOWLEDGE_VERSION_CREATED',
+      'KnowledgeVersion',
+      2,
+      'RELEASE_MANAGEMENT',
+    ],
     ['USER', 'bruno.castro', 'TEST_RUN_STARTED', 'TestRun', 1, 'RELEASE_MANAGEMENT'],
     ['SYSTEM', null, 'TEST_RUN_COMPLETED', 'TestRun', 1, 'RELEASE_MANAGEMENT'],
     ['USER', 'filipe.sousa', 'CORRECTION_APPROVED', 'Correction', 1, 'QUALITY_REVIEW'],
     ['USER', 'elena.rocha', 'CALLBACK_ASSIGNED', 'CallbackRequest', 1, 'OPERATIONS'],
-    ['USER', 'ana.ferreira', 'AI_PROVIDER_CONNECTED', 'AiProviderConnection', 1, 'RELEASE_MANAGEMENT'],
+    [
+      'USER',
+      'ana.ferreira',
+      'AI_PROVIDER_CONNECTED',
+      'AiProviderConnection',
+      1,
+      'RELEASE_MANAGEMENT',
+    ],
     ['USER', 'diogo.melo', 'AI_MODEL_APPROVED', 'AiModel', 1, 'RELEASE_MANAGEMENT'],
     ['USER', 'filipe.sousa', 'RETENTION_POLICY_VIEWED', 'RetentionPolicy', 1, 'PRIVACY_AUDIT'],
     ['SYSTEM', null, 'READINESS_EVALUATED', 'ReadinessEvaluation', 1, 'RELEASE_MANAGEMENT'],
@@ -1595,7 +1858,10 @@ export async function seedSyntheticBusinessData(
     .limit(1);
   let previousHash: string | null = latest?.eventHash ?? null;
 
-  for (const [index, [actorType, actorKey, action, aggregateType, aggregateSuffix, purpose]] of auditSeed.entries()) {
+  for (const [
+    index,
+    [actorType, actorKey, action, aggregateType, aggregateSuffix, purpose],
+  ] of auditSeed.entries()) {
     const eventId = stableUuid(`audit:${index}`);
     const occurredAt = daysAgo(auditSeed.length - index, 11, index);
     const actorId = actorKey ? personId(actorKey) : null;

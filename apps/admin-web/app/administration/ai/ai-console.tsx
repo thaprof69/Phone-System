@@ -229,8 +229,8 @@ export function AIIntelligenceConsole({
               key={section.key}
               href={
                 section.key === 'overview'
-                  ? '/administration/settings/ai-intelligence'
-                  : `/administration/settings/ai-intelligence/${section.key}`
+                  ? '/administration/ai'
+                  : `/administration/ai?area=${section.key}`
               }
               className={section.key === active ? 'active' : undefined}
               aria-current={section.key === active ? 'page' : undefined}

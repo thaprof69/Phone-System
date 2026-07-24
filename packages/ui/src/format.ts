@@ -42,7 +42,8 @@ export function formatPercent(value: number | null | undefined, fractionDigits =
 
 /** `ratio(3, 4)` → 0.75. Returns null when the denominator carries no evidence. */
 export function ratio(numerator: number, denominator: number): number | null {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0)
+    return null;
   return numerator / denominator;
 }
 
