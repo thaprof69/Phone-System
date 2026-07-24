@@ -93,3 +93,58 @@ Real command output, test results, browser screenshots, traces, security scans, 
 - Browser inspection exposed locale-dependent server/client timestamp formatting in the Voice Runtime card. The timestamp now uses a fixed locale and UTC timezone; a fresh navigation rendered without a hydration issue.
 - Focused validation passed: Prettier, API/Admin strict TypeScript, architecture fitness, traceability, 26 unit tests, API/Admin production builds, and 2/2 Playwright AI Intelligence tests including legacy redirect, axe accessibility, and a 390 × 844 responsive viewport.
 - The wider six-journey Admin suite passed every journey across two runs. A repeated stored-credential health check then hit the intentional provider-validation retry limiter; this is recorded as test-environment throttling rather than a false application success.
+
+## 2026-07-25 — Operator control plane remediation (breadth pass)
+
+Branch `feature/product-remediation`. Readiness remains `EXTERNALLY_BLOCKED`; nothing below
+changes that, and no simulator evidence is presented as production evidence.
+
+**Removed**
+
+- `apps/admin-web/app/[section]/page.tsx`, the single renderer that served eight product
+  domains through one flattened record shape with thirty-two inert `<span>` tabs.
+- `ConfigurationPlaceholder` and the `administration/settings` tree it lived in, which
+  rendered eight routes whose record count was always the literal `0`.
+
+**Built**
+
+- `packages/ui` expanded from five className wrappers to a full primitive set: `DataTable`
+  with URL-backed sort and pagination, Radix dialog/drawer/tabs/menu, no-JavaScript form
+  fields, an LCS line diff, and Recharts wrappers. Categorical palette validated, not
+  eyeballed: worst adjacent CVD ΔE 8.7 (protan), normal-vision ΔE 17.7, all six slots
+  ≥ 3:1 against the chart surface.
+- A deterministic synthetic dataset across ~60 tables — 220 conversations with provider,
+  canonical and redacted transcript revisions, knowledge with approvals and sync failures,
+  voices, tests with evidence, operations queues, 90 days of aggregate facts, and a valid
+  hash-chained audit sequence. Every row carries `synthetic: true` where the column exists
+  and the module refuses to run in production.
+- 45 admin routes across ten domains, replacing the generic renderer.
+- Nine API endpoints, each added because a workflow required one: `mission-control`,
+  `knowledge-releases`, `knowledge-gaps`, `corrections`, `calls-reconciliation`,
+  `quality-reviews`, `administration/access`, `administration/feature-flags`,
+  `analytics/series`, plus `agent-versions/compare`.
+- Access administration now reads `admin_users`, `roles`, `permissions` and their join
+  tables, which had existed since migration `0000` without ever being queried.
+
+**Verification**
+
+| Command | Result |
+|---|---|
+| `pnpm check` | format, lint, architecture, typecheck, test and build all green |
+| `pnpm traceability:check` | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.` |
+| `pnpm test:unit` | 9 files, 62 tests passed (was 8 files / 26) |
+| `npx playwright test --project=admin-chromium` | 19 passed across two consecutive runs |
+| `npx playwright test --project=customer-chromium` | 2 passed |
+| HTTP probe | all 45 admin routes return `200` |
+
+Three axe scans (Mission Control, call workspace, analytics) report zero violations.
+
+**Defect found and fixed in this work**: chart containers were marked `aria-hidden` while
+the charting library rendered its own focusable surface inside them — 163 axe violations.
+Replaced with `inert`, which removes the subtree from both the accessibility tree and the
+tab order. The table fallback remains the accessible representation.
+
+**Still outstanding** — recorded honestly rather than implied complete: authoring and
+approval actions across Agent Studio, Knowledge and Test Studio; the visual capability
+route editor and the count-only Execution, Governance and Monitoring sections of the AI
+console; work-item status transitions in Operations; report scheduling actions.
