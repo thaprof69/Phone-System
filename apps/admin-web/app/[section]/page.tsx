@@ -1,13 +1,9 @@
 import Link from 'next/link';
-import { Clock3, RefreshCcw, ShieldAlert } from 'lucide-react';
+import { RefreshCcw } from 'lucide-react';
 import { EmptyState, Panel, StatusPill } from '@quantum-parks/ui';
 import { apiGet } from '../../lib/api';
 import { AppShell, PageHeading } from '../shell';
 import { RecordActions, SectionActions } from '../section-actions';
-import {
-  ElevenLabsIntegrationCard,
-  type ElevenLabsIntegrationStatus,
-} from '../elevenlabs-integration';
 
 const sections = {
   'agent-studio': {
@@ -103,18 +99,6 @@ const sections = {
     empty: 'No reports have run',
     detail: 'Exports require purpose, masking, authorization, lineage, and audited delivery.',
   },
-  administration: {
-    active: 'Administration',
-    eyebrow: 'Security & readiness',
-    title: 'Administration',
-    description:
-      'Manage identity, provider capability, integrations, policies, audit, retention, and activation.',
-    action: 'Run readiness checks',
-    tabs: ['Readiness', 'Provider', 'Integrations', 'Access & audit'],
-    empty: 'Production onboarding is incomplete',
-    detail:
-      'Engineering can continue locally. Live credentials, routing, content, legal approval, operator setup, and language validation remain external.',
-  },
 } as const;
 
 export default async function SectionPage({
@@ -169,26 +153,14 @@ export default async function SectionPage({
       <SectionActions section={key} />
       <div className="section-toolbar">
         <div className="tabs" aria-label={`${section.title} record categories`}>
-          {section.tabs.map((tab, index) =>
-            key === 'administration' && ['Readiness', 'Integrations'].includes(tab) ? (
-              <a
-                key={tab}
-                className={index === 0 ? 'active' : undefined}
-                href={tab === 'Integrations' ? '#integrations' : '#readiness'}
-              >
-                {tab}
-              </a>
-            ) : (
-              <span key={tab} className={index === 0 ? 'active' : undefined}>
-                {tab}
-              </span>
-            ),
-          )}
+          {section.tabs.map((tab, index) => (
+            <span key={tab} className={index === 0 ? 'active' : undefined}>
+              {tab}
+            </span>
+          ))}
         </div>
       </div>
-      {key === 'administration' ? (
-        <ReadinessContent />
-      ) : records && records.length > 0 ? (
+      {records && records.length > 0 ? (
         <Panel title={section.tabs[0]} eyebrow="Authoritative local records">
           <div className="record-list">
             {records.map((record) => (
@@ -424,71 +396,4 @@ async function loadSectionRecords(key: string): Promise<RecordRow[] | null> {
       : null;
   }
   return null;
-}
-
-async function ReadinessContent() {
-  const [response, integration] = await Promise.all([
-    apiGet<{ state: string; blockers: string[] }>('/readiness'),
-    apiGet<ElevenLabsIntegrationStatus>('/admin/integrations/elevenlabs/status'),
-  ]);
-  const gates = response.ok
-    ? response.data.blockers.map(
-        (blocker) => [blocker, 'Blocked', 'danger', 'Server-computed production gate'] as const,
-      )
-    : [
-        [
-          'Authoritative readiness service',
-          'Unavailable',
-          'warning',
-          'No readiness claim can be made while the API is unavailable',
-        ] as const,
-      ];
-  const readinessState = response.ok ? response.data.state : 'EXTERNALLY_BLOCKED';
-  const initialIntegration: ElevenLabsIntegrationStatus = integration.ok
-    ? integration.data
-    : {
-        provider: 'ELEVENLABS',
-        status: 'ERROR',
-        productionRoutingEnabled: false,
-      };
-  return (
-    <>
-      <div className="admin-grid" id="readiness">
-        <Panel
-          title="Production activation gates"
-          eyebrow="No false completion"
-          className="wide-panel"
-        >
-          <div className="gate-list">
-            {gates.map(([name, state, tone, detail]) => (
-              <div className="gate" key={name}>
-                <div className={`gate-icon ${tone}`}>
-                  {tone === 'warning' ? <Clock3 /> : <ShieldAlert />}
-                </div>
-                <div>
-                  <strong>{name}</strong>
-                  <p>{detail}</p>
-                </div>
-                <StatusPill tone={tone}>{state}</StatusPill>
-              </div>
-            ))}
-          </div>
-        </Panel>
-        <Panel title="Current decision" eyebrow="Readiness state">
-          <div className="decision-card">
-            <StatusPill tone="warning">{readinessState}</StatusPill>
-            <h3>Do not route production calls</h3>
-            <p>
-              Local validation proves engineering behaviour only. It does not approve real
-              customers, content, telephony, or regulated processing.
-            </p>
-            <Link className="button secondary" href="/reports">
-              Open release evidence
-            </Link>
-          </div>
-        </Panel>
-      </div>
-      <ElevenLabsIntegrationCard initialStatus={initialIntegration} authorized={integration.ok} />
-    </>
-  );
 }

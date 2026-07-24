@@ -43,6 +43,13 @@
       "when": 1784800420097,
       "tag": "0005_huge_captain_america",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784806147236,
+      "tag": "0006_abandoned_glorian",
+      "breakpoints": true
     }
   ]
 }

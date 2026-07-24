@@ -32,6 +32,8 @@ Implement the approved PRD v2.0 and Architecture Pack v2.0 as a complete local, 
 - [x] Implement local infrastructure, CI/CD, Terraform, security, and operations docs.
 - [x] Run buildable validation and acceptance suites; record runtime/environment blockers.
 - [x] Add secure in-application ElevenLabs credential connection, rotation, health, and disconnect.
+- [x] Establish AIOS as a provider-neutral internal platform service with gateway, registries, orchestration, governed context/evidence, events, readiness, and Administration UI.
+- [x] Remediate Administration and AI Intelligence information architecture around operator tasks, capability-first governance, provider truth, and progressive disclosure.
 
 ## Command record
 
@@ -47,6 +49,8 @@ Implement the approved PRD v2.0 and Architecture Pack v2.0 as a complete local, 
 - `pnpm compose:up` / `pnpm db:migrate` — not executable on this host because Docker, Podman, PostgreSQL, and compatible container runtimes are absent. This is recorded as missing runtime evidence, not success.
 - Docker was installed on 2026-07-23; the complete Compose stack, migrations, services, and browser suite subsequently passed.
 - ElevenLabs integration unit tests — adapter discovery and credential vault encryption/proof tests passed.
+- AIOS migration `0006`, package type checks, architecture fitness, simulator execution, Administration browser inspection, and full validation are recorded in release evidence.
+- Administration IA remediation: focused formatting, API/Admin strict type checks, architecture and traceability checks, 26 unit tests, API/Admin production builds, and focused Playwright navigation/accessibility/responsive tests passed.
 
 ## Corrections made during execution
 
@@ -57,6 +61,8 @@ Implement the approved PRD v2.0 and Architecture Pack v2.0 as a complete local, 
 - Added Cognito authentication at the admin ALB rule and propagation/verification of the Cognito access token at the API.
 - Added a server-only encrypted provider credential vault and test-before-save proof after the Administration integration requirement was supplied.
 - A final Docker image unpack failed when the host data volume reached 100%. Only reproducible `.turbo` and `.next` caches were removed; Docker Desktop was restarted, persisted volumes and the encrypted connection remained intact, and all services returned healthy.
+- The first standalone Next.js startup change omitted the separately served static bundle, so fresh browsers received unstyled HTML while an existing browser cache hid the defect. The web services were reverted to the asset-complete `next start` command; fresh CSS and JavaScript requests now return `200`.
+- The architecture scanner followed a generated Terraform cache link and crashed when the local provider target was absent. `.terraform` is now excluded alongside other generated dependency/build directories.
 
 ## External gates
 

@@ -2,7 +2,15 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 const root = process.cwd();
-const excluded = new Set(['node_modules', '.git', '.next', 'dist', 'coverage', '.turbo']);
+const excluded = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  '.terraform',
+  'dist',
+  'coverage',
+  '.turbo',
+]);
 const sourceExtensions = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const violations: string[] = [];
 
@@ -44,6 +52,33 @@ for (const absolute of await files(root)) {
   if (/packages\/domain\//.test(path) && /(elevenlabs|convai|provider-dto)/i.test(content)) {
     violations.push(`${path}: domain package leaks provider terminology or DTOs`);
   }
+
+  const isAiosAdapter = path.startsWith('packages/aios-adapters/');
+  const isFitnessRule = path === 'scripts/architecture-check.ts';
+  const isHostedAiosImplementation =
+    path === 'apps/api/src/services/aios-platform.service.ts' || path.startsWith('packages/aios/');
+  if (!isAiosAdapter && !isFitnessRule) {
+    if (/api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com/.test(content))
+      violations.push(`${path}: direct AI provider HTTP use is forbidden outside AIOS adapters`);
+    if (
+      /from ['"](?:openai|@anthropic-ai\/sdk|@google\/generative-ai|@aws-sdk\/client-bedrock-runtime)['"]/.test(
+        content,
+      )
+    )
+      violations.push(`${path}: AI provider SDK import is forbidden outside AIOS adapters`);
+  }
+  if (
+    !isHostedAiosImplementation &&
+    !isFitnessRule &&
+    content.includes("from '@quantum-parks/aios-adapters'")
+  )
+    violations.push(`${path}: application code may not depend directly on AIOS provider adapters`);
+  if (
+    !isAiosAdapter &&
+    !isFitnessRule &&
+    /(OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY)/.test(content)
+  )
+    violations.push(`${path}: AI provider credentials may only be resolved inside AIOS adapters`);
 
   if (/\.(skip|only)\(|describe\.skip|test\.todo|it\.todo/.test(content)) {
     violations.push(`${path}: skipped, exclusive, or pending test is forbidden`);

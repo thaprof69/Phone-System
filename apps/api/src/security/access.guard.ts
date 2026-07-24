@@ -45,6 +45,8 @@ export class AccessGuard implements CanActivate {
           'QA_REVIEWER',
           'OPERATIONS_MANAGER',
           'PRIVACY_SECURITY_AUDITOR',
+          'AI_INTELLIGENCE_ADMIN',
+          'AI_GOVERNANCE_APPROVER',
         ],
         purposes: [
           'OPERATIONS',

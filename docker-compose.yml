@@ -27,7 +27,6 @@ x-application-environment: &application-environment
   LOCAL_TOOL_TOKEN: synthetic-tool-token
   METRICS_TOKEN: synthetic-metrics-token
   ELEVENLABS_CAPABILITY_MODE: simulator
-  ENRICHMENT_PROVIDER: deterministic-local
   AUDIO_INGESTION_ENABLED: 'false'
   CUSTOM_VOICE_ENABLED: 'false'
   BOOKING_WRITES_ENABLED: 'false'
@@ -56,7 +55,7 @@ services:
       POSTGRES_USER: quantum_parks
       POSTGRES_PASSWORD: local-development-only
       POSTGRES_DB: quantum_parks
-    ports: ['5432:5432']
+    ports: ['15432:5432']
     volumes: ['postgres-data:/var/lib/postgresql/data']
     healthcheck:
       {
@@ -70,7 +69,7 @@ services:
   redis:
     image: redis:8.2.1-bookworm
     command: ['redis-server', '--appendonly', 'yes']
-    ports: ['6379:6379']
+    ports: ['16379:6379']
     volumes: ['redis-data:/data']
     healthcheck: { test: ['CMD', 'redis-cli', 'ping'], interval: 5s, timeout: 3s, retries: 20 }
     security_opt: ['no-new-privileges:true']
@@ -79,7 +78,7 @@ services:
     image: quay.io/minio/minio:RELEASE.2025-06-13T11-33-47Z
     command: ['server', '/data', '--console-address', ':9001']
     environment: { MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: minio-development-secret }
-    ports: ['9000:9000', '9001:9001']
+    ports: ['19000:9000', '19001:9001']
     volumes: ['minio-data:/data']
     healthcheck:
       {
@@ -120,15 +119,9 @@ services:
     security_opt: ['no-new-privileges:true']
 
   provider-simulator:
-    build:
-      {
-        context: .,
-        args:
-          {
-            APP: '@quantum-parks/provider-simulator',
-            START_COMMAND: 'node apps/provider-simulator/dist/main.js',
-          },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
+    command: ['node', 'apps/provider-simulator/dist/main.js']
     environment: { PORT: 4100 }
     ports: ['4100:4100']
     healthcheck:
@@ -149,33 +142,28 @@ services:
     security_opt: ['no-new-privileges:true']
 
   migrate:
-    build:
-      {
-        context: .,
-        args: { APP: '@quantum-parks/api', START_COMMAND: 'node packages/db/dist/migrate.js' },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
+    build: { context: . }
+    command: ['node', 'packages/db/dist/migrate.js']
     environment: *application-environment
     depends_on: { postgres: { condition: service_healthy } }
     restart: 'no'
     security_opt: ['no-new-privileges:true']
 
   seed:
-    build:
-      {
-        context: .,
-        args: { APP: '@quantum-parks/api', START_COMMAND: 'node packages/db/dist/seed.js' },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
+    command: ['node', 'packages/db/dist/seed.js']
     environment: *application-environment
     depends_on: { migrate: { condition: service_completed_successfully } }
     restart: 'no'
     security_opt: ['no-new-privileges:true']
 
   api:
-    build:
-      {
-        context: .,
-        args: { APP: '@quantum-parks/api', START_COMMAND: 'node apps/api/dist/main.js' },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
+    command: ['node', 'apps/api/dist/main.js']
     environment: { <<: *application-environment, PORT: 4000 }
     depends_on:
       provider-credential-key-init: { condition: service_completed_successfully }
@@ -203,12 +191,10 @@ services:
     security_opt: ['no-new-privileges:true']
 
   worker:
-    build:
-      {
-        context: .,
-        args: { APP: '@quantum-parks/worker', START_COMMAND: 'node apps/worker/dist/main.js' },
-      }
-    environment: *application-environment
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
+    command: ['node', 'apps/worker/dist/main.js']
+    environment: { <<: *application-environment, AIOS_INTERNAL_URL: http://api:4000 }
     depends_on:
       api: { condition: service_healthy }
       temporal: { condition: service_healthy }
@@ -218,20 +204,13 @@ services:
     security_opt: ['no-new-privileges:true']
 
   admin-web:
-    build:
-      {
-        context: .,
-        args:
-          {
-            APP: '@quantum-parks/admin-web',
-            START_COMMAND: 'HOSTNAME=0.0.0.0 PORT=3000 node apps/admin-web/.next/standalone/apps/admin-web/server.js',
-          },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
     command:
       [
         '/bin/sh',
         '-c',
-        'HOSTNAME=0.0.0.0 PORT=3000 node apps/admin-web/.next/standalone/apps/admin-web/server.js',
+        'node apps/admin-web/node_modules/next/dist/bin/next start apps/admin-web --hostname 0.0.0.0 --port 3000',
       ]
     environment:
       { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production, QP_ENVIRONMENT: development }
@@ -242,20 +221,13 @@ services:
     security_opt: ['no-new-privileges:true']
 
   customer-web:
-    build:
-      {
-        context: .,
-        args:
-          {
-            APP: '@quantum-parks/customer-web',
-            START_COMMAND: 'HOSTNAME=0.0.0.0 PORT=3001 node apps/customer-web/.next/standalone/apps/customer-web/server.js',
-          },
-      }
+    image: quantum-parks-voice-platform-runtime:local
+    pull_policy: never
     command:
       [
         '/bin/sh',
         '-c',
-        'HOSTNAME=0.0.0.0 PORT=3001 node apps/customer-web/.next/standalone/apps/customer-web/server.js',
+        'node apps/customer-web/node_modules/next/dist/bin/next start apps/customer-web --hostname 0.0.0.0 --port 3001',
       ]
     environment: { API_INTERNAL_URL: http://api:4000/v1, NODE_ENV: production }
     depends_on: { api: { condition: service_healthy } }

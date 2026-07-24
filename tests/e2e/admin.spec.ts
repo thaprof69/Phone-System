@@ -31,10 +31,48 @@ test('mobile navigation exposes every daily operations area', async ({ page }) =
   await expect(page.getByText('Create versioned test case')).toBeVisible();
 });
 
+test('Administration exposes AI Intelligence through the governed settings hierarchy', async ({
+  page,
+}) => {
+  await page.goto('/administration/settings/ai-intelligence');
+  await expect(page.getByRole('heading', { name: 'AI Intelligence', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'AI Intelligence sections' }).getByRole('link'),
+  ).toHaveCount(6);
+  await expect(page.getByText('What AI Intelligence powers')).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', {
+      name: 'AI Intelligence',
+    }),
+  ).toHaveCount(0);
+  await expect(page.getByText('Production routing')).toBeVisible();
+  await page.getByRole('link', { name: 'Capabilities', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'AI Capabilities' })).toBeVisible();
+  await page.getByRole('link', { name: 'Providers', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
+  await expect(page.getByText('Adapter not installed.').first()).toBeVisible();
+  await expect(
+    page
+      .getByText('Synthetic — non-production only')
+      .or(page.getByText('No verified provider connection')),
+  ).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/sk-[A-Za-z0-9]/);
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('navigation', { name: 'AI Intelligence sections' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect OpenAI' })).toBeVisible();
+});
+
+test('legacy AI Intelligence route redirects to Settings', async ({ page }) => {
+  await page.goto('/administration/ai-intelligence');
+  await expect(page).toHaveURL(/\/administration\/settings\/ai-intelligence$/);
+});
+
 test('administrator securely validates, connects, manages, and disconnects ElevenLabs', async ({
   page,
 }) => {
-  await page.goto('/administration');
+  await page.goto('/administration/settings/voice-runtime');
   const integration = page.getByRole('heading', { name: 'ElevenLabs' });
   await expect(integration).toBeVisible();
   const existingManage = page.getByRole('button', { name: 'Manage' });

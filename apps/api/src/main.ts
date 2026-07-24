@@ -6,7 +6,6 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { loadConfiguration, runtimeSecret } from '@quantum-parks/config';
-import { OpenAIResponsesProvider } from '@quantum-parks/intelligence';
 import { AppModule } from './app.module.js';
 
 const configuration = loadConfiguration();
@@ -14,26 +13,6 @@ runtimeSecret('LOCAL_ELEVENLABS_API_KEY', 'synthetic-api-key');
 runtimeSecret('LOCAL_ELEVENLABS_WEBHOOK_SECRET', 'synthetic-webhook-secret');
 runtimeSecret('LOCAL_TOOL_TOKEN', 'synthetic-tool-token');
 runtimeSecret('METRICS_TOKEN', 'synthetic-metrics-token');
-if (configuration.ENRICHMENT_PROVIDER === 'openai-responses') {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || !configuration.OPENAI_MODEL) {
-    console.warn(
-      'OpenAI enrichment is configured but its runtime secret or model is unavailable; call ingestion will continue and readiness will remain degraded.',
-    );
-  } else {
-    const health = await new OpenAIResponsesProvider({
-      apiKey,
-      model: configuration.OPENAI_MODEL,
-      ...(process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
-    }).health();
-    if (health.status !== 'SUCCESS' || !health.data.structuredOutputs) {
-      console.warn(
-        'Configured OpenAI enrichment model did not pass the startup capability check; call ingestion remains available.',
-      );
-    }
-  }
-}
-
 const adapter = new FastifyAdapter({
   logger: true,
   bodyLimit: 1_048_576,

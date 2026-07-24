@@ -18,6 +18,9 @@ import { AuditService } from './services/audit.service.js';
 import { ElevenLabsIntegrationController } from './controllers/elevenlabs-integration.controller.js';
 import { ElevenLabsIntegrationService } from './services/elevenlabs-integration.service.js';
 import { ProviderCredentialVaultService } from './services/provider-credential-vault.service.js';
+import { AiosAdminController } from './controllers/aios-admin.controller.js';
+import { AiosInternalController } from './controllers/aios-internal.controller.js';
+import { AiosPlatformService } from './services/aios-platform.service.js';
 
 @Module({
   controllers: [
@@ -29,6 +32,8 @@ import { ProviderCredentialVaultService } from './services/provider-credential-v
     ControlPlaneController,
     PublicHandoffController,
     ElevenLabsIntegrationController,
+    AiosAdminController,
+    AiosInternalController,
   ],
   providers: [
     PlatformService,
@@ -39,6 +44,7 @@ import { ProviderCredentialVaultService } from './services/provider-credential-v
     AuditService,
     ElevenLabsIntegrationService,
     ProviderCredentialVaultService,
+    AiosPlatformService,
     { provide: APP_GUARD, useClass: AccessGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],

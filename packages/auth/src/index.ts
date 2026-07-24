@@ -11,6 +11,8 @@ export const roles = [
   'ANALYST_EXECUTIVE',
   'PRIVACY_SECURITY_AUDITOR',
   'RESTRICTED_VENDOR_ADMIN',
+  'AI_INTELLIGENCE_ADMIN',
+  'AI_GOVERNANCE_APPROVER',
 ] as const;
 export type Role = (typeof roles)[number];
 export type Purpose =
@@ -30,6 +32,39 @@ export interface Principal {
 const permissionMatrix: Record<string, Role[]> = {
   'provider:manage': ['PLATFORM_OWNER'],
   'administration.integrations.manage': ['PLATFORM_OWNER', 'RESTRICTED_VENDOR_ADMIN'],
+  'administration.ai.view': [
+    'PLATFORM_OWNER',
+    'AI_INTELLIGENCE_ADMIN',
+    'AI_GOVERNANCE_APPROVER',
+    'PRIVACY_SECURITY_AUDITOR',
+  ],
+  'administration.ai.providers.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.credentials.rotate': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.models.approve': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER'],
+  'administration.ai.routing.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.capabilities.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.services.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.context.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.pipelines.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.prompts.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.prompts.approve': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER'],
+  'administration.ai.schemas.manage': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER'],
+  'administration.ai.taxonomy.manage': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER'],
+  'administration.ai.evaluation.run': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER', 'QA_REVIEWER'],
+  'administration.ai.usage.view': [
+    'PLATFORM_OWNER',
+    'AI_INTELLIGENCE_ADMIN',
+    'AI_GOVERNANCE_APPROVER',
+  ],
+  'administration.ai.health.manage': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.audit.view': [
+    'PLATFORM_OWNER',
+    'AI_GOVERNANCE_APPROVER',
+    'PRIVACY_SECURITY_AUDITOR',
+  ],
+  'administration.ai.replay': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN'],
+  'administration.ai.production.approve': ['PLATFORM_OWNER', 'AI_GOVERNANCE_APPROVER'],
+  'aios.execute': ['PLATFORM_OWNER', 'AI_INTELLIGENCE_ADMIN', 'OPERATIONS_MANAGER'],
   'agent:write': ['AGENT_ADMIN'],
   'agent:publish': ['PLATFORM_OWNER'],
   'knowledge:write': ['KNOWLEDGE_EDITOR'],

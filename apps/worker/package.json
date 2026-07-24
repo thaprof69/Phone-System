@@ -12,6 +12,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@quantum-parks/aios": "workspace:*",
+    "@quantum-parks/aios-contracts": "workspace:*",
     "@quantum-parks/config": "workspace:*",
     "@quantum-parks/db": "workspace:*",
     "@quantum-parks/domain": "workspace:*",

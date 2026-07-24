@@ -47,10 +47,10 @@ import {
 } from '@quantum-parks/elevenlabs';
 import { runtimeSecret } from '@quantum-parks/config';
 import { evaluateReleaseGate, type ReleaseDependency } from '@quantum-parks/domain';
-import { DeterministicLocalProvider, OpenAIResponsesProvider } from '@quantum-parks/intelligence';
 import { DatabaseService } from './database.service.js';
 import { WorkflowDispatchService } from './workflow-dispatch.service.js';
 import { ElevenLabsIntegrationService } from './elevenlabs-integration.service.js';
+import { AiosPlatformService } from './aios-platform.service.js';
 
 const developmentActorId = '00000000-0000-4000-8000-000000000001';
 
@@ -60,6 +60,7 @@ export class PlatformService {
     private readonly database: DatabaseService,
     private readonly workflows: WorkflowDispatchService,
     private readonly elevenLabsIntegration: ElevenLabsIntegrationService,
+    private readonly aios: AiosPlatformService,
   ) {}
 
   private async providerAdapter(): Promise<ElevenLabsPort> {
@@ -1113,23 +1114,11 @@ export class PlatformService {
     const environment =
       (process.env.QP_ENVIRONMENT as 'development' | 'staging' | 'production' | undefined) ??
       'development';
-    const enrichmentProvider =
-      process.env.ENRICHMENT_PROVIDER === 'openai-responses' &&
-      process.env.OPENAI_API_KEY &&
-      process.env.OPENAI_MODEL
-        ? new OpenAIResponsesProvider({
-            apiKey: process.env.OPENAI_API_KEY,
-            model: process.env.OPENAI_MODEL,
-            ...(process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
-          })
-        : process.env.ENRICHMENT_PROVIDER === 'openai-responses'
-          ? undefined
-          : new DeterministicLocalProvider();
     const provider = await this.providerAdapter();
-    const [capabilities, enrichmentHealth, agentVersions, knowledge, deployments, drift, tests] =
+    const [capabilities, aiosReadiness, agentVersions, knowledge, deployments, drift, tests] =
       await Promise.all([
         provider.getCapabilities(),
-        enrichmentProvider?.health(),
+        this.aios.evaluateReadiness(),
         this.database.db.select().from(agentConfigVersions),
         this.database.db
           .select({ asset: knowledgeAssets, version: knowledgeVersions })
@@ -1181,15 +1170,12 @@ export class PlatformService {
       fakeAdapters:
         (process.env.ELEVENLABS_CAPABILITY_MODE ?? 'simulator') === 'live'
           ? []
-          : ['elevenlabs-simulator', 'business-sandbox', 'deterministic-enrichment'],
+          : ['elevenlabs-simulator', 'business-sandbox'],
       securityHighOrCriticalFindings: Number(process.env.OPEN_SECURITY_HIGH_CRITICAL ?? 0),
     });
     if (drift.some((finding) => !finding.resolvedAt))
       result.blockers.push('Unresolved provider drift exists');
-    if (!enrichmentProvider)
-      result.blockers.push('Configured enrichment provider is missing its runtime model or secret');
-    else if (enrichmentHealth?.status !== 'SUCCESS' || !enrichmentHealth.data.structuredOutputs)
-      result.blockers.push('Configured enrichment model capability check failed');
+    result.blockers.push(...aiosReadiness.blockers.map((blocker) => `AIOS: ${blocker}`));
     if (environment === 'production' && !process.env.NATIVE_LANGUAGE_APPROVALS?.trim())
       result.blockers.push('No native-speaker language approval evidence is configured');
     if (environment === 'production' && process.env.ACTIVE_OPERATOR_QUEUES !== 'true')
@@ -1200,6 +1186,15 @@ export class PlatformService {
       ...result,
       state: result.readiness,
       allowed: result.allowed && result.blockers.length === 0,
+      domains: {
+        voiceRuntime: Object.values(capabilities).some((state) => state === 'SUPPORTED')
+          ? 'CONFIGURED_WITH_BLOCKERS'
+          : 'NOT_CONFIGURED',
+        aios: aiosReadiness.status,
+        platform: result.readiness,
+        productionRouting:
+          result.allowed && result.blockers.length === 0 ? 'ELIGIBLE_FOR_APPROVAL' : 'BLOCKED',
+      },
     };
   }
 }

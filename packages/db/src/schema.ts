@@ -41,6 +41,51 @@ export const providerIntegrationStatusEnum = pgEnum('provider_integration_status
   'DISCONNECTED',
   'ERROR',
 ]);
+export const aiosLifecycleStateEnum = pgEnum('aios_lifecycle_state', [
+  'DRAFT',
+  'IN_REVIEW',
+  'APPROVED',
+  'ACTIVE',
+  'SUPERSEDED',
+  'ROLLED_BACK',
+  'ARCHIVED',
+]);
+export const aiosProviderStatusEnum = pgEnum('aios_provider_status', [
+  'NOT_CONFIGURED',
+  'VALIDATING',
+  'CONNECTED',
+  'DEGRADED',
+  'INVALID_CREDENTIALS',
+  'DISABLED',
+  'DISCONNECTED',
+  'ERROR',
+]);
+export const aiosResultStateEnum = pgEnum('aios_result_state', [
+  'SUCCESS',
+  'PARTIAL',
+  'VALIDATION_FAILED',
+  'SCHEMA_REJECTED',
+  'EVIDENCE_INSUFFICIENT',
+  'POLICY_REJECTED',
+  'MODEL_NOT_CONFIGURED',
+  'PROVIDER_NOT_CONFIGURED',
+  'MODEL_NOT_AVAILABLE',
+  'RATE_LIMITED',
+  'TIMEOUT',
+  'UNAVAILABLE',
+  'COST_LIMIT_REACHED',
+  'FALLBACK_USED',
+  'UNKNOWN_FAILURE',
+]);
+export const aiosReadinessStateEnum = pgEnum('aios_readiness_state', [
+  'NOT_CONFIGURED',
+  'SANDBOX_CONFIGURED',
+  'CONFIGURED_WITH_BLOCKERS',
+  'STAGING_VALIDATED',
+  'PRODUCTION_DEPLOYMENT_READY',
+  'EXTERNALLY_BLOCKED',
+  'PRODUCTION_APPROVED',
+]);
 export const syncStateEnum = pgEnum('sync_state', [
   'LOCAL_DRAFT',
   'LOCAL_APPROVED',
@@ -879,6 +924,9 @@ export const callSummaries = pgTable(
     modelVersion: text('model_version'),
     promptVersion: text('prompt_version').notNull(),
     schemaVersion: text('schema_version').notNull(),
+    // The physical FK is added in the AIOS migration because the authoritative
+    // artifact table is declared later in this module. The projection remains optional.
+    aiArtifactId: uuid('ai_artifact_id'),
     evidenceCoverage: numeric('evidence_coverage', { precision: 5, scale: 4 }).notNull(),
     correctedBy: uuid('corrected_by'),
     correctionReason: text('correction_reason'),
@@ -903,6 +951,7 @@ export const callClassifications = pgTable('call_classifications', {
   model: text('model').notNull(),
   promptVersion: text('prompt_version').notNull(),
   schemaVersion: text('schema_version').notNull(),
+  aiArtifactId: uuid('ai_artifact_id'),
   confidence: numeric('confidence', { precision: 5, scale: 4 }).notNull(),
   evidenceIds: text('evidence_ids').array().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -1287,6 +1336,644 @@ export const systemConfigurations = pgTable(
     ...timestamps,
   },
   (table) => [uniqueIndex('system_configuration_scope').on(table.key, table.environment)],
+);
+
+export const aiProviderCredentialReferences = pgTable('ai_provider_credential_references', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  providerKey: text('provider_key').notNull(),
+  secretReference: text('secret_reference').notNull().unique(),
+  keyVersion: text('key_version').notNull(),
+  active: boolean('active').default(true).notNull(),
+  rotatedAt: timestamp('rotated_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  ...timestamps,
+});
+
+export const aiProviderConnections = pgTable(
+  'ai_provider_connections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    providerKey: text('provider_key').notNull(),
+    connectionLabel: text('connection_label').notNull(),
+    environment: environmentEnum('environment').notNull(),
+    credentialReferenceId: uuid('credential_reference_id').references(
+      () => aiProviderCredentialReferences.id,
+    ),
+    status: aiosProviderStatusEnum('status').default('NOT_CONFIGURED').notNull(),
+    enabled: boolean('enabled').default(false).notNull(),
+    region: text('region'),
+    approvedDataRegion: text('approved_data_region'),
+    organizationReference: text('organization_reference'),
+    safeConfiguration: jsonb('safe_configuration')
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    capabilitySnapshot: jsonb('capability_snapshot')
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    modelCount: integer('model_count').default(0).notNull(),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+    lastSuccessfulRequestAt: timestamp('last_successful_request_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
+    synthetic: boolean('synthetic').default(false).notNull(),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_provider_connection_scope').on(
+      table.providerKey,
+      table.environment,
+      table.connectionLabel,
+    ),
+    index('ai_provider_connection_status').on(table.environment, table.status, table.enabled),
+  ],
+);
+
+export const aiProviderHealthChecks = pgTable('ai_provider_health_checks', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  connectionId: uuid('connection_id')
+    .references(() => aiProviderConnections.id)
+    .notNull(),
+  status: aiosProviderStatusEnum('status').notNull(),
+  normalizedErrorCode: text('normalized_error_code'),
+  latencyMs: integer('latency_ms'),
+  checkedAt: timestamp('checked_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiModels = pgTable(
+  'ai_models',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    connectionId: uuid('connection_id')
+      .references(() => aiProviderConnections.id)
+      .notNull(),
+    providerModelId: text('provider_model_id').notNull(),
+    displayName: text('display_name').notNull(),
+    capabilities: jsonb('capabilities').$type<Record<string, unknown>>().default({}).notNull(),
+    structuredOutput: text('structured_output').default('UNVERIFIED').notNull(),
+    jsonSchemaSupport: text('json_schema_support').default('UNVERIFIED').notNull(),
+    embeddingSupport: text('embedding_support').default('UNVERIFIED').notNull(),
+    contextLimit: integer('context_limit'),
+    outputLimit: integer('output_limit'),
+    regionRestrictions: text('region_restrictions').array().default([]).notNull(),
+    available: boolean('available').default(true).notNull(),
+    deprecated: boolean('deprecated').default(false).notNull(),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    providerMetadata: jsonb('provider_metadata')
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_model_provider_identity').on(table.connectionId, table.providerModelId),
+  ],
+);
+
+export const aiModelApprovals = pgTable(
+  'ai_model_approvals',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    modelId: uuid('model_id')
+      .references(() => aiModels.id)
+      .notNull(),
+    environment: environmentEnum('environment').notNull(),
+    approved: boolean('approved').notNull(),
+    approvedBy: text('approved_by').notNull(),
+    reason: text('reason').notNull(),
+    approvedAt: timestamp('approved_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('ai_model_approval_scope').on(table.modelId, table.environment)],
+);
+
+export const aiModelPrices = pgTable(
+  'ai_model_prices',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    modelId: uuid('model_id')
+      .references(() => aiModels.id)
+      .notNull(),
+    currency: text('currency').notNull(),
+    inputMicrosPerMillion: bigint('input_micros_per_million', { mode: 'number' }),
+    outputMicrosPerMillion: bigint('output_micros_per_million', { mode: 'number' }),
+    sourceUrl: text('source_url').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    approvedBy: text('approved_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('ai_model_price_effective').on(table.modelId, table.effectiveAt)],
+);
+
+export const aiCapabilities = pgTable('ai_capabilities', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  owningProduct: text('owning_product').notNull(),
+  boundedContext: text('bounded_context').notNull(),
+  purpose: text('purpose').notNull(),
+  inputContractKey: text('input_contract_key').notNull(),
+  outputContractKey: text('output_contract_key').notNull(),
+  createdBy: text('created_by').notNull(),
+  ...timestamps,
+});
+
+export const aiServices = pgTable('ai_services', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  purpose: text('purpose').notNull(),
+  createdBy: text('created_by').notNull(),
+  ...timestamps,
+});
+
+export const aiPipelines = pgTable('ai_pipelines', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  purpose: text('purpose').notNull(),
+  ...timestamps,
+});
+
+export const aiPipelineVersions = pgTable(
+  'ai_pipeline_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    pipelineId: uuid('pipeline_id')
+      .references(() => aiPipelines.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    stages: jsonb('stages').$type<unknown[]>().notNull(),
+    checksum: text('checksum').notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_pipeline_version_unique').on(table.pipelineId, table.version),
+    index('ai_pipeline_active').on(table.pipelineId, table.state),
+  ],
+);
+
+export const aiContextPolicies = pgTable('ai_context_policies', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  displayName: text('display_name').notNull(),
+  ...timestamps,
+});
+
+export const aiContextPolicyVersions = pgTable(
+  'ai_context_policy_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    policyId: uuid('policy_id')
+      .references(() => aiContextPolicies.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    sourceRules: jsonb('source_rules').$type<unknown[]>().notNull(),
+    maximumTokens: integer('maximum_tokens').notNull(),
+    allowedClassifications: dataClassificationEnum('allowed_classifications').array().notNull(),
+    checksum: text('checksum').notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_context_policy_version_unique').on(table.policyId, table.version)],
+);
+
+export const aiPrompts = pgTable('ai_prompts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  purpose: text('purpose').notNull(),
+  ...timestamps,
+});
+
+export const aiPromptVersions = pgTable(
+  'ai_prompt_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    promptId: uuid('prompt_id')
+      .references(() => aiPrompts.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    content: text('content').notNull(),
+    checksum: text('checksum').notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_prompt_version_unique').on(table.promptId, table.version)],
+);
+
+export const aiOutputSchemas = pgTable('ai_output_schemas', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  purpose: text('purpose').notNull(),
+  ...timestamps,
+});
+
+export const aiOutputSchemaVersions = pgTable(
+  'ai_output_schema_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    schemaId: uuid('schema_id')
+      .references(() => aiOutputSchemas.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    jsonSchema: jsonb('json_schema').$type<Record<string, unknown>>().notNull(),
+    checksum: text('checksum').notNull(),
+    codeOwned: boolean('code_owned').default(true).notNull(),
+    registeredByBuild: text('registered_by_build').notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_output_schema_version_unique').on(table.schemaId, table.version)],
+);
+
+export const aiTaxonomies = pgTable('ai_taxonomies', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  purpose: text('purpose').notNull(),
+  ...timestamps,
+});
+
+export const aiTaxonomyVersions = pgTable(
+  'ai_taxonomy_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    taxonomyId: uuid('taxonomy_id')
+      .references(() => aiTaxonomies.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    values: jsonb('values').$type<unknown[]>().notNull(),
+    checksum: text('checksum').notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_taxonomy_version_unique').on(table.taxonomyId, table.version)],
+);
+
+export const aiRoutes = pgTable('ai_routes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  purpose: text('purpose').notNull(),
+  ...timestamps,
+});
+
+export const aiRouteVersions = pgTable(
+  'ai_route_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    routeId: uuid('route_id')
+      .references(() => aiRoutes.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    environment: environmentEnum('environment').notNull(),
+    providerConnectionId: uuid('provider_connection_id')
+      .references(() => aiProviderConnections.id)
+      .notNull(),
+    modelId: uuid('model_id')
+      .references(() => aiModels.id)
+      .notNull(),
+    fallbackProviderConnectionId: uuid('fallback_provider_connection_id').references(
+      () => aiProviderConnections.id,
+    ),
+    fallbackModelId: uuid('fallback_model_id').references(() => aiModels.id),
+    timeoutMs: integer('timeout_ms').notNull(),
+    maximumRetries: integer('maximum_retries').default(0).notNull(),
+    confidenceThreshold: numeric('confidence_threshold', { precision: 5, scale: 4 }).notNull(),
+    maximumCostMicros: bigint('maximum_cost_micros', { mode: 'number' }),
+    layers: jsonb('layers').$type<unknown[]>().default([]).notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_route_version_unique').on(table.routeId, table.version)],
+);
+
+export const aiServiceVersions = pgTable(
+  'ai_service_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    serviceId: uuid('service_id')
+      .references(() => aiServices.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    pipelineVersionId: uuid('pipeline_version_id')
+      .references(() => aiPipelineVersions.id)
+      .notNull(),
+    routeVersionId: uuid('route_version_id')
+      .references(() => aiRouteVersions.id)
+      .notNull(),
+    promptVersionId: uuid('prompt_version_id')
+      .references(() => aiPromptVersions.id)
+      .notNull(),
+    schemaVersionId: uuid('schema_version_id')
+      .references(() => aiOutputSchemaVersions.id)
+      .notNull(),
+    taxonomyVersionId: uuid('taxonomy_version_id').references(() => aiTaxonomyVersions.id),
+    policyProfile: jsonb('policy_profile').$type<Record<string, unknown>>().default({}).notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('ai_service_version_unique').on(table.serviceId, table.version)],
+);
+
+export const aiCapabilityVersions = pgTable(
+  'ai_capability_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    capabilityId: uuid('capability_id')
+      .references(() => aiCapabilities.id)
+      .notNull(),
+    version: integer('version').notNull(),
+    state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+    serviceVersionId: uuid('service_version_id')
+      .references(() => aiServiceVersions.id)
+      .notNull(),
+    contextPolicyVersionId: uuid('context_policy_version_id')
+      .references(() => aiContextPolicyVersions.id)
+      .notNull(),
+    allowedCallers: text('allowed_callers').array().notNull(),
+    allowedPurposes: text('allowed_purposes').array().notNull(),
+    allowedClassifications: dataClassificationEnum('allowed_classifications').array().notNull(),
+    maximumContextTokens: integer('maximum_context_tokens').notNull(),
+    confidenceThreshold: numeric('confidence_threshold', { precision: 5, scale: 4 }).notNull(),
+    critical: boolean('critical').default(false).notNull(),
+    productionApproved: boolean('production_approved').default(false).notNull(),
+    emergencyDisabled: boolean('emergency_disabled').default(false).notNull(),
+    authorId: text('author_id').notNull(),
+    approvedBy: text('approved_by'),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_capability_version_unique').on(table.capabilityId, table.version),
+    index('ai_capability_active').on(table.capabilityId, table.state),
+  ],
+);
+
+export const aiCapabilityDependencies = pgTable(
+  'ai_capability_dependencies',
+  {
+    capabilityVersionId: uuid('capability_version_id')
+      .references(() => aiCapabilityVersions.id)
+      .notNull(),
+    dependencyCapabilityId: uuid('dependency_capability_id')
+      .references(() => aiCapabilities.id)
+      .notNull(),
+    required: boolean('required').default(true).notNull(),
+    minimumVersion: integer('minimum_version'),
+    maximumStalenessSeconds: integer('maximum_staleness_seconds'),
+    parallelizable: boolean('parallelizable').default(true).notNull(),
+    reusePolicy: text('reuse_policy').default('EXACT_PROVENANCE').notNull(),
+    failurePolicy: text('failure_policy').default('PROPAGATE').notNull(),
+    inputMapping: jsonb('input_mapping').$type<Record<string, unknown>>().default({}).notNull(),
+    maximumCostMicros: bigint('maximum_cost_micros', { mode: 'number' }),
+  },
+  (table) => [primaryKey({ columns: [table.capabilityVersionId, table.dependencyCapabilityId] })],
+);
+
+export const aiProcessingRuns = pgTable('ai_processing_runs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  capabilityVersionId: uuid('capability_version_id')
+    .references(() => aiCapabilityVersions.id)
+    .notNull(),
+  sourceRecordId: text('source_record_id').notNull(),
+  sourceRevisionId: text('source_revision_id').notNull(),
+  correlationId: text('correlation_id').notNull(),
+  causationId: text('causation_id'),
+  state: aiosResultStateEnum('state').notNull(),
+  attempt: integer('attempt').default(1).notNull(),
+  replayOfRunId: uuid('replay_of_run_id'),
+  errorCode: text('error_code'),
+  safeError: text('safe_error'),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+});
+
+export const aiContextManifests = pgTable('ai_context_manifests', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  processingRunId: uuid('processing_run_id')
+    .references(() => aiProcessingRuns.id)
+    .notNull(),
+  policyVersionId: uuid('policy_version_id')
+    .references(() => aiContextPolicyVersions.id)
+    .notNull(),
+  version: integer('version').default(1).notNull(),
+  items: jsonb('items').$type<unknown[]>().notNull(),
+  excluded: jsonb('excluded').$type<unknown[]>().default([]).notNull(),
+  totalTokenEstimate: integer('total_token_estimate').notNull(),
+  checksum: text('checksum').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiArtifacts = pgTable('ai_artifacts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  processingRunId: uuid('processing_run_id')
+    .references(() => aiProcessingRuns.id)
+    .notNull(),
+  capabilityVersionId: uuid('capability_version_id')
+    .references(() => aiCapabilityVersions.id)
+    .notNull(),
+  serviceVersionId: uuid('service_version_id')
+    .references(() => aiServiceVersions.id)
+    .notNull(),
+  contextManifestId: uuid('context_manifest_id')
+    .references(() => aiContextManifests.id)
+    .notNull(),
+  pipelineVersionId: uuid('pipeline_version_id')
+    .references(() => aiPipelineVersions.id)
+    .notNull(),
+  routeVersionId: uuid('route_version_id')
+    .references(() => aiRouteVersions.id)
+    .notNull(),
+  promptVersionId: uuid('prompt_version_id')
+    .references(() => aiPromptVersions.id)
+    .notNull(),
+  schemaVersionId: uuid('schema_version_id')
+    .references(() => aiOutputSchemaVersions.id)
+    .notNull(),
+  taxonomyVersionId: uuid('taxonomy_version_id').references(() => aiTaxonomyVersions.id),
+  providerKey: text('provider_key').notNull(),
+  providerRequestId: text('provider_request_id'),
+  modelId: uuid('model_id')
+    .references(() => aiModels.id)
+    .notNull(),
+  providerModelVersion: text('provider_model_version'),
+  resultState: aiosResultStateEnum('result_state').notNull(),
+  result: jsonb('result').$type<Record<string, unknown>>().notNull(),
+  confidence: numeric('confidence', { precision: 5, scale: 4 }),
+  qualityFlags: text('quality_flags').array().default([]).notNull(),
+  fallbackUsed: boolean('fallback_used').default(false).notNull(),
+  generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiEvidenceReferences = pgTable('ai_evidence_references', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  artifactId: uuid('artifact_id')
+    .references(() => aiArtifacts.id)
+    .notNull(),
+  evidenceId: text('evidence_id').notNull(),
+  sourceType: text('source_type').notNull(),
+  sourceId: text('source_id').notNull(),
+  sourceVersion: text('source_version').notNull(),
+  checksum: text('checksum').notNull(),
+  classification: dataClassificationEnum('classification').notNull(),
+});
+
+export const aiMemoryReferences = pgTable('ai_memory_references', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  memoryClass: text('memory_class').notNull(),
+  sourceType: text('source_type').notNull(),
+  sourceId: text('source_id').notNull(),
+  sourceVersion: text('source_version').notNull(),
+  classification: dataClassificationEnum('classification').notNull(),
+  status: text('status').notNull(),
+  approvedBy: text('approved_by'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  ...timestamps,
+});
+
+export const aiEvaluationSuites = pgTable('ai_evaluation_suites', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  key: text('key').notNull().unique(),
+  version: integer('version').notNull(),
+  state: aiosLifecycleStateEnum('state').default('DRAFT').notNull(),
+  definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+  checksum: text('checksum').notNull(),
+  requiredForProduction: boolean('required_for_production').default(false).notNull(),
+  createdBy: text('created_by').notNull(),
+  approvedBy: text('approved_by'),
+  ...timestamps,
+});
+
+export const aiEvaluationRuns = pgTable('ai_evaluation_runs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  suiteId: uuid('suite_id')
+    .references(() => aiEvaluationSuites.id)
+    .notNull(),
+  status: text('status').notNull(),
+  requestedBy: text('requested_by').notNull(),
+  providerComparison: boolean('provider_comparison').default(false).notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+});
+
+export const aiEvaluationResults = pgTable('ai_evaluation_results', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  runId: uuid('run_id')
+    .references(() => aiEvaluationRuns.id)
+    .notNull(),
+  caseKey: text('case_key').notNull(),
+  passed: boolean('passed').notNull(),
+  scores: jsonb('scores').$type<Record<string, number>>().default({}).notNull(),
+  evidence: jsonb('evidence').$type<Record<string, unknown>>().default({}).notNull(),
+});
+
+export const aiUsageRecords = pgTable('ai_usage_records', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  processingRunId: uuid('processing_run_id')
+    .references(() => aiProcessingRuns.id)
+    .notNull(),
+  artifactId: uuid('artifact_id').references(() => aiArtifacts.id),
+  providerConnectionId: uuid('provider_connection_id')
+    .references(() => aiProviderConnections.id)
+    .notNull(),
+  modelId: uuid('model_id')
+    .references(() => aiModels.id)
+    .notNull(),
+  capabilityKey: text('capability_key').notNull(),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  cachedInputTokens: integer('cached_input_tokens'),
+  latencyMs: integer('latency_ms').notNull(),
+  costMicros: bigint('cost_micros', { mode: 'number' }),
+  currency: text('currency'),
+  synthetic: boolean('synthetic').default(false).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiBudgetPolicies = pgTable(
+  'ai_budget_policies',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    key: text('key').notNull(),
+    environment: environmentEnum('environment').notNull(),
+    scopeType: text('scope_type').notNull(),
+    scopeId: text('scope_id'),
+    dailyLimitMicros: bigint('daily_limit_micros', { mode: 'number' }),
+    monthlyLimitMicros: bigint('monthly_limit_micros', { mode: 'number' }),
+    perRequestLimitMicros: bigint('per_request_limit_micros', { mode: 'number' }),
+    currency: text('currency').notNull(),
+    active: boolean('active').default(false).notNull(),
+    approvedBy: text('approved_by'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_budget_policy_scope').on(
+      table.key,
+      table.environment,
+      table.scopeType,
+      table.scopeId,
+    ),
+  ],
+);
+
+export const aiReadinessEvaluations = pgTable('ai_readiness_evaluations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  environment: environmentEnum('environment').notNull(),
+  status: aiosReadinessStateEnum('status').notNull(),
+  checks: jsonb('checks').$type<unknown[]>().notNull(),
+  blockers: text('blockers').array().notNull(),
+  evidenceIds: text('evidence_ids').array().notNull(),
+  evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const aiEventSubscriptions = pgTable(
+  'ai_event_subscriptions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    consumerKey: text('consumer_key').notNull(),
+    eventType: text('event_type').notNull(),
+    active: boolean('active').default(true).notNull(),
+    classificationCeiling: dataClassificationEnum('classification_ceiling').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('ai_event_subscription_unique').on(table.consumerKey, table.eventType)],
+);
+
+export const aiEventDeliveries = pgTable(
+  'ai_event_deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    subscriptionId: uuid('subscription_id')
+      .references(() => aiEventSubscriptions.id)
+      .notNull(),
+    sourceEventId: uuid('source_event_id').notNull(),
+    status: text('status').notNull(),
+    attempts: integer('attempts').default(0).notNull(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('ai_event_delivery_idempotency').on(table.subscriptionId, table.sourceEventId),
+  ],
 );
 
 export const readinessEvaluations = pgTable('readiness_evaluations', {

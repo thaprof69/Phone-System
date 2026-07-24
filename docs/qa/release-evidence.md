@@ -64,5 +64,32 @@ Real command output, test results, browser screenshots, traces, security scans, 
 - Live browser evidence passed against the simulator: Save was disabled before validation, provider discovery returned 0 agents and 2 voices, encrypted save returned a safe `EL-XXXXXXXX` reference, stored-credential re-test passed, and readiness remained `EXTERNALLY_BLOCKED`.
 - Database inspection found one encrypted credential record and confirmed the synthetic plaintext was absent from its ciphertext. Safe audit events were recorded for test, connect, and stored health verification.
 - A deterministic Playwright journey for connect/manage/disconnect was added. The equivalent live journey was exercised through the in-app browser; standalone Playwright execution was unavailable in this turn because the desktop approval service exhausted its execution credits.
-- A subsequent targeted image unpack exposed host disk exhaustion and forced Docker's internal store read-only. Clearing only reproducible repository build caches recovered space; Docker restarted cleanly, preserved the PostgreSQL and credential-key volumes, and every service returned healthy. Both Next.js applications now start through their standalone production entrypoints without the prior startup warning.
+- A subsequent targeted image unpack exposed host disk exhaustion and forced Docker's internal store read-only. Clearing only reproducible repository build caches recovered space; Docker restarted cleanly, preserved the PostgreSQL and credential-key volumes, and every service returned healthy.
+- A standalone-server optimization was reverted after a fresh Safari load exposed missing CSS. The asset-complete startup path was restored and direct probes confirmed the rendered stylesheet and JavaScript chunk both return `200` with the correct content types.
 - A successful provider connection does not change readiness, telephone routing, or production activation.
+
+## 2026-07-23 AIOS platform implementation
+
+- Added extraction-ready `aios-contracts`, `aios`, and `aios-adapters` packages and hosted the initial AIOS platform service inside the API.
+- Replaced worker/API environment-selected OpenAI construction with the AIOS gateway and server-owned registry resolution.
+- Added governed transcript context assembly, stable evidence manifests, code-owned schema validation, deterministic false-completion rejection, immutable runs/artifacts/evidence/usage, and versioned outbox events.
+- Added encrypted, test-before-save OpenAI provider administration separate from ElevenLabs, provider model discovery, safe references, RBAC, audit, and independent AIOS readiness.
+- Added migration `0006_abandoned_glorian.sql` with AIOS governance, context, provider/model, execution, evaluation, cost, event, and readiness entities. Simulator seed records are development-only and not production-approved.
+- Superseded the component-oriented AI console with Administration → Settings → AI Intelligence:
+  Overview, Providers, Capabilities, Execution, Governance, and Monitoring. Models are nested under
+  providers; AIOS internals are progressively disclosed; simulator state is explicitly
+  non-production.
+- Added architecture fitness enforcement for provider HTTP/SDK/credential use outside AIOS adapters and direct application-to-adapter dependencies.
+- Live OpenAI credentials, data-processing/region/retention approval, real context-source contracts, provider/model/capability/service/pipeline approvals, pricing, budgets, required evaluation baselines, and native-language validation remain `EXTERNALLY_BLOCKED`.
+
+## 2026-07-23 Administration and AI Intelligence IA remediation
+
+- Removed AI Intelligence from the global sidebar and made Administration the single entry point.
+- Added the Administration hierarchy: Settings, Readiness, Security, Integrations, Audit, and Release. Settings contains General, Voice Runtime, AI Intelligence, Knowledge, Policies, and Feature Flags.
+- Replaced the component-oriented AIOS navigation with exactly six operator sections: Overview, Providers, Capabilities, Execution, Governance, and Monitoring.
+- Added a purpose-built `/v1/admin/ai/workspace` read model. Models are grouped beneath provider connections; unsupported adapters expose truthful unavailable states; synthetic providers are excluded from verified production counts.
+- Removed the obsolete competing AIOS console and added a server redirect from `/administration/ai-intelligence` to `/administration/settings/ai-intelligence`.
+- In-app browser inspection verified Overview, Providers, and Capabilities with live server data. The simulator is visibly synthetic and production-blocked, and readiness domains remain separate.
+- Browser inspection exposed locale-dependent server/client timestamp formatting in the Voice Runtime card. The timestamp now uses a fixed locale and UTC timezone; a fresh navigation rendered without a hydration issue.
+- Focused validation passed: Prettier, API/Admin strict TypeScript, architecture fitness, traceability, 26 unit tests, API/Admin production builds, and 2/2 Playwright AI Intelligence tests including legacy redirect, axe accessibility, and a 390 × 844 responsive viewport.
+- The wider six-journey Admin suite passed every journey across two runs. A repeated stored-credential health check then hit the intentional provider-validation retry limiter; this is recorded as test-environment throttling rather than a false application success.

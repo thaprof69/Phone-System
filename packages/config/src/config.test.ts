@@ -33,12 +33,17 @@ describe('runtime configuration gates', () => {
     expect(result.success).toBe(false);
   });
 
-  it('requires a configuration-driven model for OpenAI enrichment', () => {
+  it('does not accept environment-selected AI routes as configuration', () => {
     const result = ConfigurationSchema.safeParse({
       ...validEnvironment,
       ENRICHMENT_PROVIDER: 'openai-responses',
+      OPENAI_MODEL: 'environment-model',
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('ENRICHMENT_PROVIDER' in result.data).toBe(false);
+      expect('OPENAI_MODEL' in result.data).toBe(false);
+    }
   });
 
   it('never falls back to synthetic secrets in production', () => {

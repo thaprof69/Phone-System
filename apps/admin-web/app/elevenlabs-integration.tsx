@@ -37,6 +37,11 @@ type TestResult = {
 };
 
 const endpoint = '/api/admin/integrations/elevenlabs';
+const verifiedAtFormatter = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'UTC',
+});
 
 function tone(status: ElevenLabsIntegrationStatus['status']) {
   if (status === 'CONNECTED') return 'good';
@@ -269,10 +274,7 @@ export function ElevenLabsIntegrationCard({
                 <dt>Last verified</dt>
                 <dd>
                   {status.lastVerifiedAt
-                    ? new Intl.DateTimeFormat(undefined, {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      }).format(new Date(status.lastVerifiedAt))
+                    ? verifiedAtFormatter.format(new Date(status.lastVerifiedAt))
                     : 'Not verified'}
                 </dd>
               </div>

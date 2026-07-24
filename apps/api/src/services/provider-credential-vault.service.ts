@@ -20,7 +20,7 @@ export type EncryptedCredential = {
 
 type ValidationProofPayload = {
   v: 1;
-  provider: 'ELEVENLABS';
+  provider: string;
   keyHash: string;
   environment: 'SANDBOX' | 'PRODUCTION';
   label: string;
@@ -54,7 +54,7 @@ export class ProviderCredentialVaultService {
     }
   }
 
-  encrypt(provider: 'ELEVENLABS', plaintext: string): EncryptedCredential {
+  encrypt(provider: string, plaintext: string): EncryptedCredential {
     const secretReference = `qp/provider/${provider.toLowerCase()}/${randomUUID()}`;
     const initializationVector = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, initializationVector);
@@ -70,7 +70,7 @@ export class ProviderCredentialVaultService {
   }
 
   decrypt(
-    provider: 'ELEVENLABS',
+    provider: string,
     encrypted: Pick<
       EncryptedCredential,
       'secretReference' | 'ciphertext' | 'initializationVector' | 'authenticationTag' | 'keyVersion'
@@ -96,9 +96,20 @@ export class ProviderCredentialVaultService {
     environment: 'SANDBOX' | 'PRODUCTION';
     label: string;
   }): string {
+    return this.createProviderValidationProof('ELEVENLABS', input);
+  }
+
+  createProviderValidationProof(
+    provider: string,
+    input: {
+      apiKey: string;
+      environment: 'SANDBOX' | 'PRODUCTION';
+      label: string;
+    },
+  ): string {
     const payload: ValidationProofPayload = {
       v: 1,
-      provider: 'ELEVENLABS',
+      provider,
       keyHash: createHash('sha256').update(input.apiKey).digest('hex'),
       environment: input.environment,
       label: input.label,
@@ -110,6 +121,18 @@ export class ProviderCredentialVaultService {
   }
 
   verifyValidationProof(
+    proof: string,
+    input: {
+      apiKey: string;
+      environment: 'SANDBOX' | 'PRODUCTION';
+      label: string;
+    },
+  ): boolean {
+    return this.verifyProviderValidationProof('ELEVENLABS', proof, input);
+  }
+
+  verifyProviderValidationProof(
+    provider: string,
     proof: string,
     input: {
       apiKey: string;
@@ -129,7 +152,7 @@ export class ProviderCredentialVaultService {
       const keyHash = createHash('sha256').update(input.apiKey).digest('hex');
       return (
         payload.v === 1 &&
-        payload.provider === 'ELEVENLABS' &&
+        payload.provider === provider &&
         payload.environment === input.environment &&
         payload.label === input.label &&
         payload.keyHash === keyHash &&

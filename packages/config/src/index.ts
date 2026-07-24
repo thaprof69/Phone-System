@@ -25,11 +25,6 @@ export const ConfigurationSchema = z
     ELEVENLABS_WEBHOOK_SECRET_REF: z.string().min(1),
     ELEVENLABS_WORKSPACE_ID: z.string().min(1),
     ELEVENLABS_CAPABILITY_MODE: z.enum(['simulator', 'live']).default('simulator'),
-    ENRICHMENT_PROVIDER: z
-      .enum(['deterministic-local', 'openai-responses'])
-      .default('deterministic-local'),
-    OPENAI_SECRET_REF: z.string().optional(),
-    OPENAI_MODEL: z.string().optional(),
     AUDIO_INGESTION_ENABLED: booleanString.default(false),
     CUSTOM_VOICE_ENABLED: booleanString.default(false),
     BOOKING_WRITES_ENABLED: booleanString.default(false),
@@ -53,13 +48,6 @@ export const ConfigurationSchema = z
         code: 'custom',
         path: ['S3_ENDPOINT'],
         message: 'Local S3-compatible storage requires an endpoint',
-      });
-    }
-    if (configuration.ENRICHMENT_PROVIDER === 'openai-responses' && !configuration.OPENAI_MODEL) {
-      context.addIssue({
-        code: 'custom',
-        path: ['OPENAI_MODEL'],
-        message: 'A configured model is required for OpenAI enrichment',
       });
     }
     if (configuration.QP_ENVIRONMENT === 'production') {

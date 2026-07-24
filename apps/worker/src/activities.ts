@@ -2,8 +2,6 @@ import { createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { and, eq, isNull } from 'drizzle-orm';
 import {
-  callClassifications,
-  callEntities,
   callOutcomes,
   callSummaries,
   callbackRequests,
@@ -35,12 +33,8 @@ import {
   redactPaymentData,
   type TrustedEvent,
 } from '@quantum-parks/domain';
-import {
-  DeterministicLocalProvider,
-  OpenAIResponsesProvider,
-  enrichNonBlocking,
-  type EnrichmentProvider,
-} from '@quantum-parks/intelligence';
+import { HttpAIOSServiceGateway } from '@quantum-parks/aios';
+import { SummarySchema } from '@quantum-parks/intelligence';
 import type { PostCallActivities } from '@quantum-parks/workflows';
 import { HttpElevenLabsAdapter, canonicalProviderChecksum } from '@quantum-parks/elevenlabs';
 import { runtimeSecret } from '@quantum-parks/config';
@@ -144,18 +138,15 @@ function normalizeTurns(
   });
 }
 
-function enrichmentProvider(): EnrichmentProvider | undefined {
-  const selected = process.env.ENRICHMENT_PROVIDER ?? 'deterministic-local';
-  if (selected === 'deterministic-local') return new DeterministicLocalProvider();
-  if (selected === 'openai-responses' && process.env.OPENAI_API_KEY && process.env.OPENAI_MODEL) {
-    return new OpenAIResponsesProvider({
-      apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL,
-      ...(process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
-    });
-  }
-  return undefined;
-}
+const aiosGateway = new HttpAIOSServiceGateway({
+  baseUrl: process.env.AIOS_INTERNAL_URL ?? 'http://localhost:4000',
+  resolveServiceToken: async () => {
+    const token = process.env.AIOS_SERVICE_TOKEN;
+    if ((process.env.QP_ENVIRONMENT ?? 'development') === 'production' && !token)
+      throw new Error('AIOS workload identity token is required');
+    return token ?? 'development-service-identity';
+  },
+});
 
 async function recordDrift(
   deploymentId: string,
@@ -312,8 +303,6 @@ export const activities: PostCallActivities = {
       where: eq(callSummaries.conversationId, input.conversationId),
     });
     if (alreadyEnriched) return { state: 'COMPLETED' };
-    const provider = enrichmentProvider();
-    if (!provider) return { state: 'PARTIAL' };
     const turns = await db
       .select({
         id: transcriptTurns.id,
@@ -327,55 +316,52 @@ export const activities: PostCallActivities = {
       .update(conversations)
       .set({ processingState: 'SUMMARIZING', updatedAt: new Date() })
       .where(eq(conversations.id, input.conversationId));
-    const enriched = await enrichNonBlocking(provider, { turns });
-    if (enriched.state === 'PARTIAL') return { state: 'PARTIAL' };
+    const conversation = await db.query.conversations.findFirst({
+      where: eq(conversations.id, input.conversationId),
+    });
+    const enriched = await aiosGateway.executeCapability({
+      capabilityKey: 'CALL_SUMMARY',
+      executionContext: {
+        environment:
+          (process.env.QP_ENVIRONMENT as 'development' | 'staging' | 'production' | undefined) ??
+          'development',
+        callerService: 'worker',
+        actorId: 'post-call-workflow',
+        purpose: 'OPERATIONS',
+        correlationId: `conversation:${input.conversationId}`,
+        sourceRecordId: input.conversationId,
+        sourceRevisionId: input.transcriptRevisionId,
+        ...(conversation?.language ? { language: conversation.language } : {}),
+        ...(conversation?.park ? { park: conversation.park } : {}),
+        ...(conversation?.agentVersionId ? { agentVersionId: conversation.agentVersionId } : {}),
+      },
+      contextSources: turns.map((turn) => ({
+        sourceType: 'TRANSCRIPT' as const,
+        sourceId: turn.id,
+      })),
+    });
+    if (enriched.state !== 'SUCCESS' && enriched.state !== 'FALLBACK_USED')
+      return { state: 'PARTIAL' };
+    const summary = SummarySchema.safeParse(enriched.data.result);
+    if (!summary.success) return { state: 'PARTIAL' };
 
     await db.transaction(async (tx) => {
       await tx.insert(callSummaries).values({
         conversationId: input.conversationId,
         transcriptRevisionId: input.transcriptRevisionId,
         revision: 1,
-        summary: enriched.output.summary,
-        provider: enriched.output.provider,
-        model: enriched.output.model,
-        ...(enriched.output.modelVersion ? { modelVersion: enriched.output.modelVersion } : {}),
-        promptVersion: enriched.output.promptVersion,
-        schemaVersion: enriched.output.schemaVersion,
-        evidenceCoverage: String(enriched.output.summary.evidence_coverage),
+        summary: summary.data,
+        provider: enriched.data.providerKey,
+        model: enriched.data.modelId,
+        promptVersion: enriched.data.promptVersionId,
+        schemaVersion: enriched.data.schemaVersionId,
+        aiArtifactId: enriched.data.artifactId ?? null,
+        evidenceCoverage: String(summary.data.evidence_coverage),
       });
-      const [classification] = await tx
-        .insert(callClassifications)
-        .values({
-          conversationId: input.conversationId,
-          transcriptRevisionId: input.transcriptRevisionId,
-          revision: 1,
-          primaryIntent: enriched.output.classification.primary_intent,
-          secondaryIntents: enriched.output.classification.secondary_intents,
-          taxonomyVersion: 'qp-intent-taxonomy-v1',
-          provider: enriched.output.provider,
-          model: enriched.output.model,
-          promptVersion: enriched.output.promptVersion,
-          schemaVersion: enriched.output.schemaVersion,
-          confidence: '1',
-          evidenceIds: enriched.output.classification.evidence_ids,
-        })
-        .returning({ id: callClassifications.id });
-      if (classification && enriched.output.classification.park) {
-        await tx.insert(callEntities).values({
-          classificationId: classification.id,
-          entityType: 'PARK',
-          value: enriched.output.classification.park,
-          confidence: '1',
-          evidenceIds: enriched.output.classification.evidence_ids,
-        });
-      }
       await tx
         .update(conversations)
         .set({
           processingState: 'CLASSIFYING',
-          language: enriched.output.classification.language,
-          park: enriched.output.classification.park,
-          ...(enriched.output.classification.sensitive ? { sensitive: true } : {}),
           updatedAt: new Date(),
         })
         .where(eq(conversations.id, input.conversationId));
