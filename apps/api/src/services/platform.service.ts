@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull } from 'drizzle-orm';
 import {
+  adminUsers,
   agentApprovals,
   agentConfigVersions,
   agentDeployments,
@@ -18,24 +19,31 @@ import {
   correctionHistory,
   corrections,
   customerLinks,
+  featureFlags,
   handoffs,
   knowledgeAssets,
   knowledgeApprovals,
+  knowledgeGaps,
   knowledgeSyncs,
   knowledgeVersions,
   messageDeliveries,
   providerConversations,
   providerTestMappings,
   providerWorkspaces,
+  permissions,
   reportDefinitions,
   reportRuns,
   retentionPolicies,
+  rolePermissions,
+  roles,
   staffTasks,
+  systemConfigurations,
   testRuns,
   testEvidence,
   toolInvocations,
   transcriptRevisions,
   transcriptTurns,
+  userRoles,
   voiceAssignments,
   voiceAgents,
   voiceProfiles,
@@ -951,6 +959,83 @@ export class PlatformService {
     };
   }
 
+  /**
+   * Access administration. The `admin_users`, `roles`, `permissions` and join tables
+   * have existed since the first migration but were never read: authorisation is
+   * evaluated from the code-owned permission matrix. This exposes the registry so an
+   * administrator can see who holds which role, and where duties are not separated.
+   */
+  async listAccessAdministration() {
+    const [users, roleRows, permissionRows, assignments, grants] = await Promise.all([
+      this.database.db.select().from(adminUsers).orderBy(adminUsers.displayName),
+      this.database.db.select().from(roles).orderBy(roles.key),
+      this.database.db.select().from(permissions).orderBy(permissions.key),
+      this.database.db.select().from(userRoles),
+      this.database.db.select().from(rolePermissions),
+    ]);
+
+    const rolesById = new Map(roleRows.map((role) => [role.id, role]));
+    const permissionsById = new Map(permissionRows.map((permission) => [permission.id, permission]));
+
+    // Separation of duties: authoring and approving the same artefact class is the
+    // combination the release gates exist to prevent, so it is surfaced explicitly.
+    const conflictingPairs: Array<[string, string, string]> = [
+      ['KNOWLEDGE_EDITOR', 'KNOWLEDGE_APPROVER', 'Can author and approve the same knowledge'],
+      ['AGENT_ADMIN', 'PLATFORM_OWNER', 'Can author agent configuration and publish it'],
+      ['AI_INTELLIGENCE_ADMIN', 'AI_GOVERNANCE_APPROVER', 'Can change AI routing and approve it'],
+    ];
+
+    return {
+      users: users.map((user) => {
+        const held = assignments
+          .filter((assignment) => assignment.userId === user.id)
+          .map((assignment) => rolesById.get(assignment.roleId)?.key)
+          .filter((key): key is string => Boolean(key))
+          .sort();
+        return {
+          id: user.id,
+          displayName: user.displayName,
+          email: user.email,
+          oidcSubject: user.oidcSubject,
+          active: user.active,
+          sensitiveClearance: user.sensitiveClearance,
+          roles: held,
+          separationOfDutyWarnings: conflictingPairs
+            .filter(([left, right]) => held.includes(left) && held.includes(right))
+            .map(([, , reason]) => reason),
+        };
+      }),
+      roles: roleRows.map((role) => ({
+        id: role.id,
+        key: role.key,
+        name: role.name,
+        description: role.description,
+        memberCount: assignments.filter((assignment) => assignment.roleId === role.id).length,
+        permissions: grants
+          .filter((grant) => grant.roleId === role.id)
+          .map((grant) => permissionsById.get(grant.permissionId)?.key)
+          .filter((key): key is string => Boolean(key))
+          .sort(),
+      })),
+      permissions: permissionRows,
+    };
+  }
+
+  async listFeatureFlags() {
+    return {
+      items: await this.database.db.select().from(featureFlags).orderBy(featureFlags.key),
+    };
+  }
+
+  async listSystemConfiguration() {
+    return {
+      items: await this.database.db
+        .select()
+        .from(systemConfigurations)
+        .orderBy(systemConfigurations.key),
+    };
+  }
+
   async listRetentionPolicies() {
     return {
       items: await this.database.db
@@ -1108,6 +1193,392 @@ export class PlatformService {
       )
       .limit(1);
     return entity.length > 0;
+  }
+
+  /**
+   * The operator cockpit payload.
+   *
+   * Computed server-side and in one round trip because the alternative — the browser
+   * pulling whole collections and counting them — would be both slow and wrong: the
+   * list endpoints cap at 100 records, so any client-side total would silently
+   * under-report. Every figure here is derived from an authoritative record; nothing
+   * is estimated.
+   */
+  async missionControl() {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = new Date(startOfToday.getTime() - 7 * 86_400_000);
+    const now = new Date();
+
+    const [
+      readiness,
+      integration,
+      agents,
+      versions,
+      deployments,
+      drift,
+      assignments,
+      voices,
+      todaysCalls,
+      weeksCalls,
+      outcomes,
+      callbacks,
+      tasks,
+      handoffRows,
+      deliveries,
+      knowledgeRows,
+      syncRows,
+      gapRows,
+      runs,
+      recent,
+      classifications,
+    ] = await Promise.all([
+      this.readiness(),
+      this.elevenLabsIntegration.status(),
+      this.database.db.select().from(voiceAgents),
+      this.database.db.select().from(agentConfigVersions),
+      this.database.db.select().from(agentDeployments),
+      this.database.db.select().from(agentDriftFindings).where(isNull(agentDriftFindings.resolvedAt)),
+      this.database.db.select().from(voiceAssignments),
+      this.database.db.select().from(voiceProfiles),
+      this.database.db.select().from(conversations).where(gte(conversations.startedAt, startOfToday)),
+      this.database.db.select().from(conversations).where(gte(conversations.startedAt, sevenDaysAgo)),
+      this.database.db.select().from(callOutcomes),
+      this.database.db.select().from(callbackRequests),
+      this.database.db.select().from(staffTasks),
+      this.database.db.select().from(handoffs),
+      this.database.db.select().from(messageDeliveries),
+      this.database.db
+        .select({ asset: knowledgeAssets, version: knowledgeVersions })
+        .from(knowledgeVersions)
+        .innerJoin(knowledgeAssets, eq(knowledgeVersions.assetId, knowledgeAssets.id)),
+      this.database.db.select().from(knowledgeSyncs),
+      this.database.db.select().from(knowledgeGaps),
+      this.database.db.select().from(testRuns).orderBy(desc(testRuns.startedAt)),
+      this.database.db
+        .select({ conversation: conversations, provider: providerConversations })
+        .from(conversations)
+        .innerJoin(
+          providerConversations,
+          eq(conversations.providerConversationId, providerConversations.id),
+        )
+        .orderBy(desc(conversations.startedAt))
+        .limit(12),
+      this.database.db.select().from(callClassifications),
+    ]);
+
+    const agent = agents[0];
+    const activeVersion = versions.find((version) => version.state === 'ACTIVE');
+    const draftVersion = versions.find((version) => version.state === 'DRAFT');
+    const testedVersion = versions.find((version) => version.state === 'TEST_PASSED');
+    const activeDeployment = activeVersion
+      ? deployments.find((deployment) => deployment.agentVersionId === activeVersion.id)
+      : undefined;
+
+    const configuredLanguages = Array.isArray(
+      (activeVersion?.configuration as { languages?: unknown } | undefined)?.languages,
+    )
+      ? ((activeVersion?.configuration as { languages: string[] }).languages ?? [])
+      : [];
+
+    const activeAssignments = activeVersion
+      ? assignments.filter((assignment) => assignment.agentVersionId === activeVersion.id)
+      : [];
+
+    const conversationIdsToday = new Set(todaysCalls.map((call) => call.id));
+    const outcomesToday = outcomes.filter((outcome) =>
+      conversationIdsToday.has(outcome.conversationId),
+    );
+
+    const completedToday = todaysCalls.filter(
+      (call) => call.processingState === 'COMPLETED',
+    ).length;
+    const failedProcessing = todaysCalls.filter((call) =>
+      ['FAILED_RETRYABLE', 'FAILED_FINAL'].includes(call.processingState),
+    ).length;
+    const partialProcessing = todaysCalls.filter(
+      (call) => call.processingState === 'PARTIAL',
+    ).length;
+
+    const transfersToday = outcomesToday.filter((outcome) =>
+      ['TRANSFER_COMPLETED', 'TRANSFER_FAILED_CALLBACK_CREATED'].includes(outcome.outcome),
+    ).length;
+    const unresolvedToday = outcomesToday.filter((outcome) =>
+      ['UNRESOLVED_KNOWLEDGE_GAP', 'CUSTOMER_DISCONNECTED', 'TECHNICAL_FAILURE'].includes(
+        outcome.outcome,
+      ),
+    ).length;
+    const resolvedToday = outcomesToday.filter(
+      (outcome) => outcome.outcome === 'RESOLVED_BY_AGENT',
+    ).length;
+
+    const openCallbacks = callbacks.filter((item) =>
+      ['OPEN', 'ASSIGNED', 'IN_PROGRESS'].includes(item.status),
+    );
+    const overdueCallbacks = openCallbacks.filter((item) => item.dueAt && item.dueAt < now);
+    const openTasks = tasks.filter((item) =>
+      ['OPEN', 'ASSIGNED', 'IN_PROGRESS'].includes(item.status),
+    );
+    const overdueTasks = openTasks.filter((item) => item.dueAt && item.dueAt < now);
+    const failedHandoffs = handoffRows.filter((item) => item.status !== 'COMPLETED');
+    const failedMessages = deliveries.filter((item) => item.status === 'FAILED');
+
+    const activeKnowledge = knowledgeRows.filter((row) => row.version.state === 'ACTIVE');
+    const expiringKnowledge = activeKnowledge.filter(
+      (row) =>
+        row.version.expiresAt &&
+        row.version.expiresAt > now &&
+        row.version.expiresAt.getTime() - now.getTime() < 30 * 86_400_000,
+    );
+    const expiredKnowledge = activeKnowledge.filter(
+      (row) => row.version.expiresAt && row.version.expiresAt <= now,
+    );
+    const knowledgeAwaitingReview = knowledgeRows.filter(
+      (row) => row.version.state === 'IN_REVIEW',
+    );
+    const failedSyncs = syncRows.filter((row) =>
+      ['PUBLISH_FAILED', 'DRIFTED', 'REMOTE_MISSING'].includes(row.syncState),
+    );
+    const openGaps = gapRows.filter((row) => ['OPEN', 'ASSIGNED'].includes(row.status));
+
+    const unavailableVoices = voices.filter((voice) => !voice.available);
+    const latestRun = runs[0];
+    const lastCompletedRun = runs.find((run) => run.status !== 'RUNNING');
+
+    // The share of today's calls the receptionist answered outright, which is the
+    // closest honest proxy for "approved knowledge covered the question". Null when
+    // no call carries an outcome yet — a rate with no evidence must not read as 0%.
+    const knowledgeAnswerRate =
+      outcomesToday.length > 0 ? resolvedToday / outcomesToday.length : null;
+    const transferRate = outcomesToday.length > 0 ? transfersToday / outcomesToday.length : null;
+
+    /* ------------------------------------------------ attention queue */
+
+    type Attention = {
+      id: string;
+      severity: 'critical' | 'high' | 'medium';
+      title: string;
+      detail: string;
+      href: string;
+      count: number;
+    };
+    const attention: Attention[] = [];
+    const add = (item: Attention) => {
+      if (item.count > 0) attention.push(item);
+    };
+
+    add({
+      id: 'drift',
+      severity: 'critical',
+      title: 'Unresolved provider drift',
+      detail: 'The live agent in the provider console no longer matches the approved configuration.',
+      href: '/receptionist/releases',
+      count: drift.length,
+    });
+    add({
+      id: 'failed-sync',
+      severity: 'critical',
+      title: 'Knowledge failed to publish',
+      detail: 'Approved knowledge did not reach the voice runtime and callers may get stale answers.',
+      href: '/knowledge/releases',
+      count: failedSyncs.length,
+    });
+    add({
+      id: 'failed-processing',
+      severity: 'high',
+      title: 'Calls failed to process',
+      detail: 'These calls have no summary, classification or outcome and need replay.',
+      href: '/calls/failed',
+      count: failedProcessing,
+    });
+    add({
+      id: 'expired-knowledge',
+      severity: 'high',
+      title: 'Knowledge past its expiry date',
+      detail: 'Content is still assigned to the agent after the date it should have been reviewed.',
+      href: '/knowledge/library?state=expired',
+      count: expiredKnowledge.length,
+    });
+    add({
+      id: 'failed-tests',
+      severity: 'high',
+      title: 'Failing tests on the current release',
+      detail: 'Mandatory checks did not pass, so this version cannot be published.',
+      href: '/quality/runs',
+      count: lastCompletedRun?.failCount ?? 0,
+    });
+    add({
+      id: 'failed-handoffs',
+      severity: 'high',
+      title: 'Transfers that were not answered',
+      detail: 'A caller was transferred and nobody picked up.',
+      href: '/operations/handoffs',
+      count: failedHandoffs.length,
+    });
+    add({
+      id: 'overdue-callbacks',
+      severity: 'high',
+      title: 'Callbacks past their due time',
+      detail: 'Customers were promised a call back and have not received one.',
+      href: '/operations/callbacks?due=overdue',
+      count: overdueCallbacks.length,
+    });
+    add({
+      id: 'failed-messages',
+      severity: 'medium',
+      title: 'Messages that failed to deliver',
+      detail: 'An outbound message did not reach the customer.',
+      href: '/operations/messages?status=FAILED',
+      count: failedMessages.length,
+    });
+    add({
+      id: 'unavailable-voices',
+      severity: 'medium',
+      title: 'Assigned voices that are unavailable',
+      detail: 'The provider no longer offers a voice this agent references.',
+      href: '/receptionist/voices',
+      count: unavailableVoices.length,
+    });
+    add({
+      id: 'overdue-tasks',
+      severity: 'medium',
+      title: 'Staff tasks past their due date',
+      detail: 'Work raised from a call has not been completed in time.',
+      href: '/operations/tasks',
+      count: overdueTasks.length,
+    });
+    add({
+      id: 'knowledge-review',
+      severity: 'medium',
+      title: 'Knowledge waiting for approval',
+      detail: 'Changes are drafted but not yet approved by an independent reviewer.',
+      href: '/knowledge/review',
+      count: knowledgeAwaitingReview.length,
+    });
+    add({
+      id: 'expiring-knowledge',
+      severity: 'medium',
+      title: 'Knowledge expiring within 30 days',
+      detail: 'Review these before they lapse and stop being usable.',
+      href: '/knowledge/library?state=expiring',
+      count: expiringKnowledge.length,
+    });
+    add({
+      id: 'partial-processing',
+      severity: 'medium',
+      title: 'Calls only partly processed',
+      detail: 'Enrichment did not finish; transcripts exist but intelligence is incomplete.',
+      href: '/calls/partial',
+      count: partialProcessing,
+    });
+
+    const severityOrder = { critical: 0, high: 1, medium: 2 };
+    attention.sort(
+      (left, right) =>
+        severityOrder[left.severity] - severityOrder[right.severity] || right.count - left.count,
+    );
+
+    /* ------------------------------------------------------- insight */
+
+    const weekIds = new Set(weeksCalls.map((call) => call.id));
+    const weekClassifications = classifications.filter((row) => weekIds.has(row.conversationId));
+    const intentTotals = weekClassifications.reduce<Record<string, number>>((totals, row) => {
+      totals[row.primaryIntent] = (totals[row.primaryIntent] ?? 0) + 1;
+      return totals;
+    }, {});
+    const topIntents = Object.entries(intentTotals)
+      .map(([intent, count]) => ({ intent, count }))
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 5);
+    const topGap = [...openGaps].sort((left, right) => right.frequency - left.frequency)[0];
+
+    // Withheld rather than shown thin: a "top intent" drawn from a handful of calls
+    // is noise presented as insight.
+    const insight =
+      weekClassifications.length >= 20
+        ? {
+            evidenceCalls: weekClassifications.length,
+            topIntents,
+            knowledgeGap: topGap
+              ? { title: topGap.title, frequency: topGap.frequency, language: topGap.language }
+              : null,
+          }
+        : null;
+
+    return {
+      generatedAt: now.toISOString(),
+      receptionist: {
+        agentId: agent?.id ?? null,
+        name: agent?.name ?? 'No receptionist configured',
+        synthetic: agent?.synthetic ?? false,
+        activeVersion: activeVersion
+          ? { id: activeVersion.id, version: activeVersion.version, state: activeVersion.state }
+          : null,
+        draftVersion: draftVersion
+          ? { id: draftVersion.id, version: draftVersion.version, state: draftVersion.state }
+          : null,
+        awaitingPublication: testedVersion
+          ? { id: testedVersion.id, version: testedVersion.version, state: testedVersion.state }
+          : null,
+        languages: configuredLanguages,
+        syncState: activeDeployment?.syncState ?? 'REMOTE_MISSING',
+        publishedAt: activeDeployment?.publishedAt ?? null,
+        verifiedAt: activeDeployment?.verifiedAt ?? null,
+        voiceAssignments: activeAssignments.map((assignment) => ({
+          language: assignment.language,
+          fallback: assignment.fallback,
+          voiceName: voices.find((voice) => voice.id === assignment.voiceProfileId)?.name ?? null,
+          available:
+            voices.find((voice) => voice.id === assignment.voiceProfileId)?.available ?? false,
+        })),
+      },
+      runtime: {
+        provider: 'ELEVENLABS',
+        status: integration.status,
+        capabilityMode: process.env.ELEVENLABS_CAPABILITY_MODE ?? 'simulator',
+        productionRoutingEnabled: integration.productionRoutingEnabled,
+        environment: process.env.QP_ENVIRONMENT ?? 'development',
+      },
+      today: {
+        callsReceived: todaysCalls.length,
+        callsCompleted: completedToday,
+        failedProcessing,
+        partialProcessing,
+        transfers: transfersToday,
+        transferRate,
+        unresolved: unresolvedToday,
+        knowledgeAnswerRate,
+        callbacksDue: overdueCallbacks.length,
+        callbacksOpen: openCallbacks.length,
+        openTasks: openTasks.length,
+        testStatus: latestRun?.status ?? 'NOT_RUN',
+        testFailures: lastCompletedRun?.failCount ?? 0,
+      },
+      attention,
+      recentCalls: recent.map((row) => ({
+        id: row.conversation.id,
+        startedAt: row.conversation.startedAt,
+        park: row.conversation.park,
+        language: row.conversation.language,
+        processingState: row.conversation.processingState,
+        durationSeconds:
+          (row.provider.providerMetadata as { call_duration_secs?: number } | null)
+            ?.call_duration_secs ?? null,
+        intent:
+          classifications.find((item) => item.conversationId === row.conversation.id)
+            ?.primaryIntent ?? null,
+        outcome:
+          outcomes.find((item) => item.conversationId === row.conversation.id)?.outcome ?? null,
+        synthetic: row.conversation.synthetic,
+      })),
+      insight,
+      readiness: {
+        state: readiness.state,
+        allowed: readiness.allowed,
+        domains: readiness.domains,
+        blockers: readiness.blockers,
+      },
+    };
   }
 
   async readiness() {

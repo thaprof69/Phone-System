@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import './components.css';
 
 export const metadata: Metadata = {
   title: { default: 'Quantum Parks Operations', template: '%s · Quantum Parks' },

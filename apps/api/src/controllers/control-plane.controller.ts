@@ -210,6 +210,15 @@ export class ControlPlaneController {
   readiness() {
     return this.platform.readiness();
   }
+  /**
+   * The operator cockpit. Read-only and aggregated server-side; `calls:read` rather
+   * than `provider:manage` because this is an operations view, not a provider control.
+   */
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Get('mission-control')
+  missionControl() {
+    return this.platform.missionControl();
+  }
   @RequirePermission('test:write')
   @Get('test-suites')
   tests() {
@@ -270,6 +279,21 @@ export class ControlPlaneController {
   @Get('audit')
   audit(@Query('limit') limit?: string) {
     return this.platform.listAudit(Math.min(Number(limit ?? 100), 500));
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Get('administration/access')
+  accessAdministration() {
+    return this.platform.listAccessAdministration();
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Get('administration/feature-flags')
+  featureFlags() {
+    return this.platform.listFeatureFlags();
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Get('administration/system-configuration')
+  systemConfiguration() {
+    return this.platform.listSystemConfiguration();
   }
   @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
   @Get('retention-policies')

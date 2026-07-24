@@ -24,6 +24,7 @@ import {
   providerWorkspaces,
   voiceAgents,
 } from './index.js';
+import { seedSyntheticBusinessData } from './seed-synthetic.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
@@ -58,6 +59,10 @@ await db
     expiresAt: new Date('2099-01-01T00:00:00.000Z'),
   })
   .onConflictDoNothing();
+
+// Re-read rather than reusing the pre-insert lookups: on a first run both were absent.
+const seedWorkspace = await db.query.providerWorkspaces.findFirst();
+const seedAgent = await db.query.voiceAgents.findFirst();
 
 if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
   const canonical = (value: unknown) => JSON.stringify(value);
@@ -463,6 +468,26 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
         .onConflictDoNothing();
   }
 }
+// The business dataset the control plane is built and verified against. Guarded
+// on the environment for the same reason as the AIOS registry above: synthetic
+// records must never reach production.
+if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
+  if (!seedWorkspace || !seedAgent) {
+    throw new Error('Synthetic workspace and agent must exist before seeding business data');
+  }
+  const { created, summary } = await seedSyntheticBusinessData(db, {
+    workspaceId: seedWorkspace.id,
+    agentId: seedAgent.id,
+  });
+  console.log(
+    created
+      ? `Synthetic business dataset created: ${Object.entries(summary)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(', ')}.`
+      : 'Synthetic business dataset already present; left unchanged.',
+  );
+}
+
 await pool.end();
 console.log(
   `Synthetic seed complete (${createHash('sha256').update('quantum-parks-synthetic-v1').digest('hex')}); local handoff token: ${localHandoffToken}.`,

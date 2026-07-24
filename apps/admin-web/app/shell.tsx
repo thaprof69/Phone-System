@@ -1,40 +1,67 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   Activity,
-  BookOpenText,
   Bot,
   ChartNoAxesCombined,
   ClipboardCheck,
-  FileChartColumn,
   Gauge,
-  Headphones,
   Library,
   Menu,
   Settings,
   ShieldCheck,
   Workflow,
+  type LucideIcon,
 } from 'lucide-react';
+import { DOMAINS, areaForPath, domainForPath } from './navigation';
 
-const navigation = [
-  { href: '/', label: 'Overview', icon: Gauge },
-  { href: '/agent-studio', label: 'Agent Studio', icon: Bot },
-  { href: '/knowledge', label: 'Knowledge Hub', icon: Library },
-  { href: '/voices', label: 'Voice Library', icon: Headphones },
-  { href: '/tests', label: 'Test Studio', icon: ClipboardCheck },
-  { href: '/calls', label: 'Calls', icon: Activity },
-  { href: '/operations', label: 'Operations', icon: Workflow },
-  { href: '/analytics', label: 'Analytics', icon: ChartNoAxesCombined },
-  { href: '/reports', label: 'Reports', icon: FileChartColumn },
-  { href: '/administration', label: 'Administration', icon: Settings },
-] as const;
+const ICONS: Record<string, LucideIcon> = {
+  Gauge,
+  Bot,
+  Library,
+  ClipboardCheck,
+  Activity,
+  Workflow,
+  ChartNoAxesCombined,
+  Settings,
+};
 
+/**
+ * The application frame.
+ *
+ * Active state is derived from the current pathname rather than from a label string
+ * passed down by each page, so a page can never disagree with the navigation about
+ * where the user is.
+ */
 export function AppShell({
   children,
-  active = 'Overview',
+  environmentLabel = 'Development · simulator',
 }: {
   children: React.ReactNode;
-  active?: string;
+  environmentLabel?: string;
 }) {
+  const pathname = usePathname() ?? '/';
+  const activeDomain = domainForPath(pathname);
+  const activeArea = areaForPath(activeDomain, pathname);
+
+  const links = DOMAINS.map((domain) => {
+    const Icon = ICONS[domain.icon] ?? Gauge;
+    const active = domain.key === activeDomain.key;
+    return (
+      <Link
+        key={domain.key}
+        href={domain.href}
+        className={active ? 'nav-link active' : 'nav-link'}
+        {...(active ? { 'aria-current': 'page' as const } : {})}
+      >
+        <Icon size={18} aria-hidden="true" />
+        <span>{domain.label}</span>
+      </Link>
+    );
+  });
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main">
@@ -47,25 +74,14 @@ export function AppShell({
             Quantum Parks<small>Voice operations</small>
           </span>
         </Link>
-        <nav aria-label="Primary navigation">
-          {navigation.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={active === label ? 'nav-link active' : 'nav-link'}
-            >
-              <Icon size={18} aria-hidden="true" />
-              <span>{label}</span>
-            </Link>
-          ))}
-        </nav>
+        <nav aria-label="Primary navigation">{links}</nav>
         <div className="side-status">
           <div>
             <ShieldCheck size={17} aria-hidden="true" />
-            <strong>Control plane</strong>
+            <strong>Live voice runtime</strong>
           </div>
-          <p>Quantum Parks is authoritative</p>
-          <span>ElevenLabs runtime mapped</span>
+          <p>ElevenLabs answers the calls</p>
+          <span>Quantum Parks holds the approved configuration</span>
         </div>
       </aside>
       <div className="workspace">
@@ -75,23 +91,18 @@ export function AppShell({
               <Menu size={20} />
             </summary>
             <nav className="mobile-nav-panel" aria-label="Mobile primary navigation">
-              {navigation.map(({ href, label, icon: Icon }) => (
-                <Link key={href} href={href} className="nav-link">
-                  <Icon size={18} aria-hidden="true" />
-                  <span>{label}</span>
-                </Link>
-              ))}
+              {links}
             </nav>
           </details>
           <div className="environment">
-            <span aria-hidden="true" /> Governed control plane
+            <span aria-hidden="true" /> {environmentLabel}
           </div>
           <div className="top-actions">
             <div className="user">
               <span>QP</span>
               <div>
                 <strong>Authenticated user</strong>
-                <small>Role enforced by OIDC</small>
+                <small>{activeArea ? activeArea.label : activeDomain.label}</small>
               </div>
             </div>
           </div>
@@ -99,28 +110,5 @@ export function AppShell({
         <main id="main">{children}</main>
       </div>
     </div>
-  );
-}
-
-export function PageHeading({
-  eyebrow,
-  title,
-  description,
-  actions,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  actions?: React.ReactNode;
-}) {
-  return (
-    <header className="page-heading">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
-      {actions ? <div className="heading-actions">{actions}</div> : null}
-    </header>
   );
 }
