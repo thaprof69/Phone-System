@@ -1271,3 +1271,69 @@ test('a role can be granted to a user and then revoked', async ({ page }) => {
   await roleItem.getByRole('button', { name: 'Revoke' }).click();
   await expect(manage.getByText('Role revoked.')).toBeVisible();
 });
+
+test('a report can be run now and its lineage is real rather than a fabricated artefact', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/intelligence/reports');
+
+  const row = page.locator('tbody tr').filter({ hasText: 'Agent release quality' }).first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Manage');
+  await manage.getByRole('button', { name: 'Run now' }).click();
+
+  await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(manage.getByText(/last 7 days of aggregate data/)).toBeVisible();
+
+  // There is no report-rendering integration, so a manual run never claims to have
+  // produced a file it did not generate — the newest run at the top of run history
+  // reports its real lineage with an honestly empty artefact column.
+  const runsTable = page.locator('table').filter({ hasText: 'Report runs with the period' });
+  const latestRow = runsTable.locator('tbody tr').first();
+  await expect(latestRow).toContainText('Agent release quality');
+  await expect(latestRow).toContainText('No artefact');
+});
+
+test('a report schedule can be paused and resumed', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/intelligence/reports');
+
+  const row = page.locator('tbody tr').filter({ hasText: 'Monthly strategic' }).first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Manage');
+
+  // Reads the row's own current action rather than assuming a starting state, so
+  // the test is safe to run twice in a row against the same database.
+  const action = (
+    (await manage.getByRole('button', { name: /schedule$/ }).textContent()) ?? ''
+  ).trim();
+  expect(['Pause schedule', 'Resume schedule']).toContain(action);
+  await manage.getByRole('button', { name: action }).click();
+
+  await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(
+    row.getByText(action === 'Pause schedule' ? 'Paused' : 'Active', { exact: true }),
+  ).toBeVisible();
+});
+
+test('a failed report run can be retried without altering the original failure', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/intelligence/reports');
+
+  // Scoped to the run-history table specifically: the definitions table above it
+  // also shows "Failed" in a definition's "Last run" summary cell, which is a
+  // different row with no Retry control of its own.
+  const runsTable = page.locator('table').filter({ hasText: 'Report runs with the period' });
+  const failedRow = runsTable.locator('tbody tr').filter({ hasText: 'Failed' }).first();
+  await expect(failedRow).toBeVisible();
+  await failedRow.getByRole('button', { name: 'Retry' }).click();
+
+  await expect(failedRow.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(failedRow.getByText('Retried over the same period.')).toBeVisible();
+  // Retrying creates a new attempt; the original failed run is never rewritten, so
+  // the very row that was clicked still reports FAILED afterwards.
+  await expect(failedRow.getByText('Failed', { exact: true })).toBeVisible();
+});

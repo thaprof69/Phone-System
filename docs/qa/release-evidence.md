@@ -421,15 +421,15 @@ remaining four had a real, schema-backed gap and got one.
 
 **Workflows built**
 
-| Workflow                    | What it enforces                                                                                                          |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Feature-flag toggle         | Refuses a flag already in the requested state as a conflict; records the reason on an audited event                          |
-| Retention-policy approval   | One-way — approving twice is refused as already approved, matching how a recorded sign-off actually works                    |
-| Retention enforcement toggle| Refuses to activate enforcement on a policy with no recorded approval (`BLOCKED`)                                             |
-| Legal-hold placement        | Refuses a hold on a `scopeId` that is not an actual conversation or knowledge asset, rather than recording an unverifiable reference |
-| Legal-hold release          | A second release is refused as already released                                                                               |
-| Role grant                  | Refuses a grant that would create a separation-of-duty conflict the access page already showed as a read-only warning         |
-| Role revoke                 | Refuses to revoke a role the user does not hold                                                                                |
+| Workflow                     | What it enforces                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Feature-flag toggle          | Refuses a flag already in the requested state as a conflict; records the reason on an audited event                                  |
+| Retention-policy approval    | One-way — approving twice is refused as already approved, matching how a recorded sign-off actually works                            |
+| Retention enforcement toggle | Refuses to activate enforcement on a policy with no recorded approval (`BLOCKED`)                                                    |
+| Legal-hold placement         | Refuses a hold on a `scopeId` that is not an actual conversation or knowledge asset, rather than recording an unverifiable reference |
+| Legal-hold release           | A second release is refused as already released                                                                                      |
+| Role grant                   | Refuses a grant that would create a separation-of-duty conflict the access page already showed as a read-only warning                |
+| Role revoke                  | Refuses to revoke a role the user does not hold                                                                                      |
 
 **A defect class not repeated**: `ApproveRetentionPolicyForm` and
 `ReleaseLegalHoldForm` apply the always-mounted, local-state-wins pattern already
@@ -448,11 +448,50 @@ confirm.
 
 **Verification**
 
-| Command                                    | Result                                                                          |
-| ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `pnpm check`                                | 17 tasks successful                                                              |
-| `pnpm traceability:check`                   | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                            |
-| `playwright test --project=admin-chromium`  | **72 passed, twice consecutively** on one freshly reseeded database (3.6m, 2.7m) |
+| Command                                    | Result                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful                                                              |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium` | **72 passed, twice consecutively** on one freshly reseeded database (3.6m, 2.7m) |
 
 **Still outstanding** — recorded honestly rather than implied complete: report
 scheduling, run-now, retry, lineage and delivery (Analytics and Reports, 2.10).
+
+## 2026-07-25 — Analytics and Reports depth pass
+
+Analytics, Trends and Knowledge gaps were already real from an earlier pass in
+this session — date-range filtering, an explicit no-evidence banner, confidence-
+scored trends with a low-confidence caution panel, and outcome charts that
+already state plainly they are derived from persisted events rather than
+asserted by a model. Reports was the one genuinely read-only surface, and got
+three real mutations.
+
+**Workflows built**
+
+| Workflow              | What it enforces                                                                                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Schedule pause/resume | Refuses a toggle to the state a definition is already in                                                                                                                                                          |
+| Run now               | Computes real aggregate-fact lineage over the last 7 days; leaves `artifactObjectKey`/`checksum` null rather than fabricating a file that was never rendered — there is no rendering integration in this codebase |
+| Retry                 | Only accepts a `FAILED` run; recomputes lineage over the _same_ period and inserts a new run, never rewriting the original failure                                                                                |
+
+All three reuse the `reports:read`/`ANALYTICS` permission already gating the
+existing report routes — no new permission invented.
+
+**A test bug found and fixed**: a browser test's row locator matched the
+definitions table's "Last run: Failed" summary cell before the actual run row in
+the run-history table below it, since both tables share `<tbody>` and the
+locator wasn't scoped to either. Scoped it to the run-history table by caption
+text; reran three times to confirm.
+
+**Verification**
+
+| Command                                    | Result                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful                                                              |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium` | **75 passed, twice consecutively** on one freshly reseeded database (2.7m, 2.3m) |
+
+**Still outstanding**: every module in the fixed Phase 2 order is now complete.
+What remains is Phase 3 — a closing full-repo verification pass and a
+documentation review (traceability matrix, compliance matrix, README, admin user
+guide) against what actually exists, not a new module.

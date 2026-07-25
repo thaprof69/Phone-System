@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { Principal } from '@quantum-parks/auth';
-import { and, desc, eq, gte, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
 import {
   adminUsers,
   agentApprovals,
@@ -2661,6 +2661,126 @@ export class PlatformService {
     return definition
       ? { status: 'CREATED', definition }
       : { status: 'CONFLICT', message: 'A report definition with that key already exists' };
+  }
+
+  async setReportDefinitionActive(id: string, active: boolean, principal: Principal) {
+    const definition = await this.database.db.query.reportDefinitions.findFirst({
+      where: eq(reportDefinitions.id, id),
+    });
+    if (!definition) return { status: 'NOT_FOUND' as const };
+    if (definition.active === active) {
+      return { status: 'CONFLICT' as const, message: `Already ${active ? 'active' : 'paused'}` };
+    }
+    const [updated] = await this.database.db
+      .update(reportDefinitions)
+      .set({ active, updatedAt: new Date() })
+      .where(eq(reportDefinitions.id, id))
+      .returning();
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: active ? 'REPORT_SCHEDULE_RESUMED' : 'REPORT_SCHEDULE_PAUSED',
+      aggregateType: 'ReportDefinition',
+      aggregateId: id,
+      purpose: 'ANALYTICS',
+      payload: { key: definition.key },
+    });
+    return { status: active ? ('ACTIVATED' as const) : ('PAUSED' as const), definition: updated };
+  }
+
+  /**
+   * Computes the same lineage the analytics series query already produces —
+   * aggregate-fact row count and total received calls over the period — and
+   * records it against a new run. There is no report-rendering integration, so
+   * `artifactObjectKey` and `checksum` stay null: the run genuinely completed the
+   * aggregation it can prove, and does not claim to have produced a file it did
+   * not generate.
+   */
+  private async computeReportLineage(periodStart: Date, periodEnd: Date) {
+    const facts = await this.database.db
+      .select()
+      .from(aggregateFacts)
+      .where(and(gte(aggregateFacts.date, periodStart), lte(aggregateFacts.date, periodEnd)));
+    const conversationCount = facts
+      .filter((fact) => fact.dimensionKey === 'total' && fact.metric === 'calls_received')
+      .reduce((sum, fact) => sum + fact.count, 0);
+    return { aggregateFactRows: facts.length, conversationCount, generatedFrom: 'aggregate_facts' };
+  }
+
+  async runReportNow(definitionId: string, principal: Principal) {
+    const definition = await this.database.db.query.reportDefinitions.findFirst({
+      where: eq(reportDefinitions.id, definitionId),
+    });
+    if (!definition) return { status: 'NOT_FOUND' as const };
+
+    const periodEnd = new Date();
+    const periodStart = new Date(periodEnd);
+    periodStart.setDate(periodStart.getDate() - 7);
+
+    const lineage = await this.computeReportLineage(periodStart, periodEnd);
+    const [run] = await this.database.db
+      .insert(reportRuns)
+      .values({
+        definitionId,
+        status: 'COMPLETED',
+        periodStart,
+        periodEnd,
+        lineage: { ...lineage, triggeredBy: 'manual' },
+      })
+      .returning();
+    if (!run) throw new Error('Report run was not persisted');
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'REPORT_RUN_STARTED',
+      aggregateType: 'ReportDefinition',
+      aggregateId: definitionId,
+      purpose: 'ANALYTICS',
+      payload: { key: definition.key, ...lineage },
+    });
+    return { status: 'COMPLETED' as const, run };
+  }
+
+  async retryReportRun(runId: string, principal: Principal) {
+    const failedRun = await this.database.db.query.reportRuns.findFirst({
+      where: eq(reportRuns.id, runId),
+    });
+    if (!failedRun) return { status: 'NOT_FOUND' as const };
+    if (failedRun.status !== 'FAILED') {
+      return {
+        status: 'CONFLICT' as const,
+        message: `This run is ${failedRun.status.toLowerCase()}, not failed`,
+      };
+    }
+    const definition = await this.database.db.query.reportDefinitions.findFirst({
+      where: eq(reportDefinitions.id, failedRun.definitionId),
+    });
+    if (!definition) return { status: 'NOT_FOUND' as const };
+
+    const lineage = await this.computeReportLineage(failedRun.periodStart, failedRun.periodEnd);
+    const [run] = await this.database.db
+      .insert(reportRuns)
+      .values({
+        definitionId: failedRun.definitionId,
+        status: 'COMPLETED',
+        periodStart: failedRun.periodStart,
+        periodEnd: failedRun.periodEnd,
+        lineage: { ...lineage, retryOf: failedRun.id },
+      })
+      .returning();
+    if (!run) throw new Error('Report run retry was not persisted');
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'REPORT_RUN_RETRIED',
+      aggregateType: 'ReportDefinition',
+      aggregateId: failedRun.definitionId,
+      purpose: 'ANALYTICS',
+      payload: { key: definition.key, retryOf: failedRun.id, ...lineage },
+    });
+    return { status: 'COMPLETED' as const, run };
   }
 
   /**

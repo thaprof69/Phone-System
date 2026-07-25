@@ -16,6 +16,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { ReportScheduleToggle, RetryReportRunButton, RunReportButton } from '../report-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -136,6 +137,19 @@ export default async function ReportsPage() {
       },
       priority: 'secondary',
     },
+    {
+      key: 'manage',
+      header: 'Change',
+      render: (definition) => (
+        <details className="row-actions">
+          <summary>Manage</summary>
+          <div className="row-actions-body">
+            <RunReportButton definitionId={definition.id} />
+            <ReportScheduleToggle definitionId={definition.id} active={definition.active} />
+          </div>
+        </details>
+      ),
+    },
   ];
 
   const runColumns: Column<Run>[] = [
@@ -174,6 +188,16 @@ export default async function ReportsPage() {
       header: 'Run at',
       render: (run) => formatDateTime(run.createdAt),
       priority: 'secondary',
+    },
+    {
+      key: 'retry',
+      header: 'Change',
+      render: (run) =>
+        run.status === 'FAILED' ? (
+          <RetryReportRunButton runId={run.id} />
+        ) : (
+          <span className="muted-cell">—</span>
+        ),
     },
   ];
 

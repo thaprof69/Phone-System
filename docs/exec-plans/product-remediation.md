@@ -2,7 +2,7 @@
 
 Branch: `feature/product-remediation`
 Started: 2026-07-24
-Status: IN PROGRESS — foundations and breadth pass complete; depth passes 2.2 onward remain
+Status: IN PROGRESS — foundations, breadth pass and all ten Phase 2 depth passes (2.1–2.10) complete; Phase 3 verification and documentation review remain
 
 ---
 
@@ -79,7 +79,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
 - [x] 2.8 AI Infrastructure (§14) — eight areas, each rendered from real records: adapter-driven provider registry with connections, model registry with per-environment approval and availability, capability list drilling through to runs, route registry with a version builder and pre-activation validation, prompt/schema/taxonomy lifecycle, GBP budgets showing spend against limit, execution history with seven filters and pagination, and monitoring
 - [x] 2.9 Administration (§15) — feature-flag toggle with a mandatory recorded reason, retention-policy approval and an enforcement toggle that a server-side gate refuses while unapproved, legal-hold placement and release scoped to real calls and knowledge assets, and role assignment that enforces the same separation-of-duty rule the access page already surfaced as a read-only warning
-- [ ] 2.10 Analytics and Reports (§16)
+- [x] 2.10 Analytics and Reports (§16) — Analytics and Trends were already real (date-range filtering, an explicit no-evidence banner, confidence-scored trends with a low-confidence caution panel, evidence disclosure); added the genuine gap: report schedule pause/resume, a manual run-now that computes real aggregate-fact lineage without fabricating an artefact, and a retry for a failed run that recomputes over the same period without rewriting the original failure
 
 ### Phase 3 — Verification and documentation
 
@@ -358,7 +358,7 @@ session recurring nowhere new because the pattern was applied on the first write
 this time, not discovered by a failing test.
 
 **Server-side test-idempotency correction.** The first full two-pass run failed two
-of the eight new browser tests on the *second* pass: they hard-coded the
+of the eight new browser tests on the _second_ pass: they hard-coded the
 freshly-seeded starting state (a disabled flag, an unapproved policy), which the
 first pass's successful mutation had already changed, and the two required passes
 run back-to-back with no reseed between them — matching how every other test in
@@ -371,11 +371,11 @@ unreseeded database to confirm.
 warning for one seeded `knowledge_assets` row, unrelated to any file this pass
 touched. Flagged as a separate task rather than pulled into this change.
 
-| Command                                    | Result                                                                          |
-| ------------------------------------------- | -------------------------------------------------------------------------------- |
-| `pnpm check`                                | 17 tasks successful, 17 total                                                     |
-| `pnpm traceability:check`                   | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                            |
-| `playwright test --project=admin-chromium`  | **72 passed, twice consecutively**, one freshly reseeded database (3.6m, 2.7m)   |
+| Command                                    | Result                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `pnpm check`                               | 17 tasks successful, 17 total                                                  |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                         |
+| `playwright test --project=admin-chromium` | **72 passed, twice consecutively**, one freshly reseeded database (3.6m, 2.7m) |
 
 Eight new browser tests cover: enabling a gate flag, the enable/disable round trip
 surviving a server refresh, the unapproved-policy activation gate plus the approval
@@ -383,34 +383,86 @@ that unlocks it, placing and releasing a legal hold on a real call, refusing a h
 against a record that does not exist, refusing a role grant that would create a
 separation-of-duty conflict, and a plain grant/revoke round trip.
 
+### Analytics and Reports depth pass — 2026-07-25
+
+Surveyed `/intelligence/analytics`, `/trends`, `/gaps` and `/reports` before writing
+code. The first three were already real, built in an earlier session: date-range
+filtering via real links (7/30/90 days), an explicit "no calls in this window"
+banner rather than charts drawn from nothing, outcome charts stating plainly that
+they are "deterministic outcomes derived from persisted events, never asserted by
+a model" (verified-vs-inferred, already present), trend movements carrying a
+confidence score with a dedicated "treat with caution" panel for low-confidence
+ones, and an evidence footnote tying every figure to `aggregate_facts`. Extending
+these further — a bespoke CSV export button, per-chart drill-through pages — would
+have been speculative surface with no workflow demanding it; left alone.
+
+Reports was fully read-only: `listReports()`/`createReportDefinition()` existed,
+but nothing else. Added the three real, schema-backed gaps:
+
+- **Schedule pause/resume.** `setReportDefinitionActive` toggles
+  `reportDefinitions.active`, refusing a toggle to the state it is already in.
+- **Run now.** `runReportNow` computes the same aggregate-fact lineage the
+  analytics series query already produces — real row counts and received-call
+  totals from `aggregate_facts`, over the last 7 days — and records it against a
+  new run. There is no report-rendering integration anywhere in this codebase, so
+  `artifactObjectKey`/`checksum` are left null rather than fabricated: the run
+  honestly reports what it computed, not a file it never generated. The run
+  history table already renders a null artefact as "No artefact", so this needed
+  no UI change to be truthful.
+- **Retry.** `retryReportRun` refuses anything but a `FAILED` run, recomputes
+  lineage over the _same_ period the failed run covered, and inserts a new run —
+  the original failed row is never rewritten, matching how every other
+  history-preserving workflow in this codebase already treats retries and
+  corrections.
+
+All three reuse the `reports:read`/`ANALYTICS` permission that already gated
+`GET /reports` and `POST /reports` — no new permission invented.
+
+**A test bug found and fixed before the two-pass run went green**: the browser
+test's `page.locator('tbody tr').filter({ hasText: 'FAILED' }).first()` matched
+the _definitions_ table's "Last run: Failed" summary cell first, not the actual
+run row in the run-history table below it — both tables share `<tbody>`, and
+`.first()` resolved in DOM order. Scoped the locator to the run-history table by
+its caption text; reran three times to confirm.
+
+**Verification**
+
+| Command                                    | Result                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `pnpm check`                               | 17 tasks successful, 17 total                                                  |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                         |
+| `playwright test --project=admin-chromium` | **75 passed, twice consecutively**, one freshly reseeded database (2.7m, 2.3m) |
+
+Three new browser tests cover: running a report now and confirming its lineage is
+real with an honestly empty artefact field, pausing/resuming a schedule, and
+retrying a failed run without disturbing the original failure.
+
 ---
 
 ## 6a. Resume point
 
-Mission Control (2.1), Agent Studio (2.2), Knowledge Hub (2.3), Voice Library (2.4),
-Test Studio (2.5), Calls/Call Detail (2.6), Operations (2.7), AI Infrastructure (2.8)
-and Administration (2.9) are complete — every module in the fixed order except
-Analytics and Reports.
+All ten modules in the fixed Phase 2 order (§7–§16) are complete: Mission Control,
+Agent Studio, Knowledge Hub, Voice Library, Test Studio, Calls/Call Detail,
+Operations, AI Infrastructure, Administration, Analytics and Reports.
 
-**The next unchecked item is 2.10 — Analytics and Reports (§16):**
+**The next unchecked work is Phase 3 — Verification and documentation:**
 
-1. **Filters and date ranges** on the analytics charts (`/intelligence/analytics`),
-   currently rendering fixed-window data with no operator control over the period.
-2. **Evidence drill-down** from a chart or aggregate figure to the underlying calls
-   or records it was computed from.
-3. **Verified-vs-inferred labelling** wherever a figure comes from a generated
-   classification rather than a directly observed fact.
-4. **Export controls** for analytics views.
-5. **Report definitions**: `listReports()`/`createReportDefinition()` already exist
-   in `platform.service.ts` (`/intelligence/reports` reads them) — verify whether
-   scheduling, run-now, retry and delivery have real mutation methods or only the
-   definition-creation path exercised in the AI Infrastructure pass' budget-adjacent
-   work; add whichever of scheduling/run-now/retry/delivery/lineage-drill-down do
-   not yet exist.
-
-Then Phase 3: final full-repo verification (`pnpm check`, `pnpm traceability:check`,
-`pnpm test:e2e` twice on a fresh reseed) and the documentation pass (traceability
-matrix, compliance matrix, release evidence, README, admin user guide).
+1. A final full-repo verification pass: `pnpm check`, `pnpm architecture:check`,
+   `pnpm traceability:check`, and `pnpm test:e2e` (or
+   `playwright test --project=admin-chromium`) twice consecutively on one freshly
+   reseeded database — the same commands already run after every module above,
+   run once more as a whole-repository closing check rather than scoped to the
+   module just finished.
+2. Documentation pass: re-read and update
+   `docs/product/requirements-traceability.md`,
+   `docs/architecture/compliance-matrix.md`, `README.md`, the route map, and
+   `docs/operations/admin-user-guide.md` against what actually exists now, not
+   what existed when those documents were last written. Supersede ADR-0011 or add
+   new ADRs only if the IA changed materially since it was written (it has not,
+   in this session — the IA from Phase 0.5 was not restructured).
+3. A last honest look at `docs/qa/release-evidence.md`'s readiness statement: it
+   should still read `EXTERNALLY_BLOCKED` for the same externally-gated reasons in
+   §7 below, not something this session's engineering completeness can change.
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

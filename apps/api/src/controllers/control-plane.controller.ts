@@ -196,6 +196,7 @@ const ReportDefinitionSchema = z
     configuration: z.record(z.string(), z.unknown()),
   })
   .strict();
+const ReportScheduleSchema = z.object({ active: z.boolean() }).strict();
 
 @Controller()
 export class ControlPlaneController {
@@ -609,6 +610,26 @@ export class ControlPlaneController {
   @Post('reports')
   createReport(@Body() body: unknown) {
     return this.platform.createReportDefinition(ReportDefinitionSchema.parse(body));
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Post('reports/:id/schedule')
+  setReportSchedule(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = ReportScheduleSchema.parse(body);
+    return this.platform.setReportDefinitionActive(id, input.active, request.principal);
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Post('reports/:id/run')
+  runReport(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.runReportNow(id, request.principal);
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Post('report-runs/:id/retry')
+  retryReportRun(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.retryReportRun(id, request.principal);
   }
   @RequirePermission('audit:read', 'PRIVACY_AUDIT')
   @Get('audit')
