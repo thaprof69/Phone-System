@@ -19,14 +19,18 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
-import type { TestRow, TestRunRow } from '../../../lib/types';
+import type { AgentListRow, TestRow, TestRunRow } from '../../../lib/types';
+import { RunTestsForm, SyncRunButton } from '../test-actions';
 
 export const dynamic = 'force-dynamic';
 
 export default async function TestRunsPage() {
-  const response = await apiGet<{ tests: TestRow[]; runs: TestRunRow[] }>('/test-suites', {
-    purpose: 'RELEASE_MANAGEMENT',
-  });
+  const [response, agentsResponse] = await Promise.all([
+    apiGet<{ tests: TestRow[]; runs: TestRunRow[] }>('/test-suites', {
+      purpose: 'RELEASE_MANAGEMENT',
+    }),
+    apiGet<{ items: AgentListRow[] }>('/agents', { purpose: 'RELEASE_MANAGEMENT' }),
+  ]);
 
   if (!response.ok) {
     return (
@@ -41,6 +45,15 @@ export default async function TestRunsPage() {
   }
 
   const runs = response.data.runs;
+  const testCases = response.data.tests.filter((test) => !test.archived && test.latestVersionId);
+  const agentOptions = agentsResponse.ok
+    ? agentsResponse.data.items
+        .filter((agent) => agent.versionId)
+        .map((agent) => ({
+          value: agent.versionId as string,
+          label: `${agent.name} v${agent.version} (${humaniseState(agent.state ?? '')})`,
+        }))
+    : [];
   const latest = runs[0];
   const lastCompleted = runs.find((run) => run.status !== 'RUNNING');
   const failing = runs.filter((run) => run.failCount > 0);
@@ -98,6 +111,21 @@ export default async function TestRunsPage() {
       header: 'Provider run',
       render: (run) => <code className="inline-code">{run.providerRunId ?? '—'}</code>,
       priority: 'secondary',
+    },
+    {
+      key: 'sync',
+      header: 'Sync',
+      render: (run) =>
+        run.providerRunId && !run.completedAt ? (
+          <details className="row-actions">
+            <summary>Sync</summary>
+            <div className="row-actions-body">
+              <SyncRunButton runId={run.id} />
+            </div>
+          </details>
+        ) : (
+          <span className="muted-cell">—</span>
+        ),
     },
   ];
 
@@ -167,6 +195,21 @@ export default async function TestRunsPage() {
           />
         </Panel>
       ) : null}
+
+      <Panel
+        title="Run tests"
+        description="A run always evaluates a specific test version and produces provider-verified evidence — never a locally invented result."
+      >
+        <RunTestsForm
+          agentVersions={agentOptions}
+          testCases={testCases.map((test) => ({
+            id: test.id,
+            versionId: test.latestVersionId as string,
+            name: test.name,
+            riskLevel: test.riskLevel,
+          }))}
+        />
+      </Panel>
 
       <Panel title="All runs" eyebrow="Most recent first">
         <DataTable

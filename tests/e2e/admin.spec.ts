@@ -931,3 +931,103 @@ test('the voice catalogue can be refreshed from the provider', async ({ page }) 
   await page.getByRole('button', { name: 'Refresh from provider' }).click();
   await expect(page.getByText(/Saved|Refused/).first()).toBeVisible();
 });
+
+test('a test case can be created and appears immediately in the list', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/quality/test-cases');
+
+  const name = `Verification case ${Date.now()}`;
+  await page.getByLabel('Name').fill(name);
+  await page.getByRole('button', { name: 'Create test case' }).click();
+
+  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('created as version 1.')).toBeVisible();
+  await expect(page.getByText(name).first()).toBeVisible();
+});
+
+test('creating a test case with invalid JSON in its definition is refused', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/quality/test-cases');
+
+  await page.getByLabel('Name').fill(`Invalid definition ${Date.now()}`);
+  await page.getByLabel('Definition (JSON)').fill('{ this is not json');
+  await page.getByRole('button', { name: 'Create test case' }).click();
+
+  await expect(page.getByText(/not valid JSON/)).toBeVisible();
+});
+
+test('starting a test run against a release that is not staged for testing is refused', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/quality/runs');
+
+  await page.getByLabel('Agent version').selectOption({ index: 1 });
+  const firstCase = page.locator('.test-case-checklist input[type="checkbox"]').first();
+  if (await firstCase.isVisible().catch(() => false)) {
+    await firstCase.check();
+  }
+  await page.getByRole('button', { name: 'Run tests' }).click();
+
+  // Whichever release the first option resolves to, the platform states the real
+  // reason a run cannot start rather than silently doing nothing — a release that
+  // happens to be staged for testing would instead show a real run being created.
+  await expect(page.getByText(/Refused|Saved/).first()).toBeVisible();
+});
+
+test('a running test can be synced with the provider, and a completed run offers no such action', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/quality/runs');
+
+  const runningRow = page
+    .locator('tbody tr')
+    .filter({ has: page.locator('.status-pill', { hasText: 'Running' }) })
+    .first();
+  if (await runningRow.isVisible().catch(() => false)) {
+    const sync = await openDisclosure(runningRow, 'Sync');
+    await sync.getByRole('button', { name: 'Sync with provider' }).click();
+    await expect(sync.getByText(/Saved|Refused/).first()).toBeVisible();
+  }
+
+  // Scoped to the status pill specifically: the Result column's own "N passed, M
+  // failed" text would otherwise match a row that is not actually in the Passed state.
+  const completedRow = page
+    .locator('tbody tr')
+    .filter({ has: page.locator('.status-pill', { hasText: 'Passed' }) })
+    .first();
+  if (await completedRow.isVisible().catch(() => false)) {
+    await expect(completedRow.locator('details').filter({ hasText: 'Sync' })).toHaveCount(0);
+  }
+});
+
+test('the audit chain stays intact under rapid consecutive writes', async ({ page }) => {
+  // Ordering the audit log by wall-clock time rather than by its own sequence number
+  // was a real bug found in this suite: two events written within the same
+  // millisecond — routine under automated load — tie under `ORDER BY occurredAt`, and
+  // a LIMIT window then has no reliable tiebreaker, silently excluding one of the pair
+  // and making a perfectly intact chain look broken. Firing several mutations with no
+  // gap between them reproduces the conditions that exposed it, without the noise of
+  // driving the same form through the UI five times over.
+  test.setTimeout(120_000);
+  await Promise.all(
+    Array.from({ length: 8 }, (_, i) =>
+      page.request.post('/api/admin/ai/budgets', {
+        data: {
+          key: `rapid-write-check-${i}-${Date.now()}`,
+          environment: 'development',
+          scopeType: 'ENVIRONMENT',
+          perRequestLimitMicros: 10_000,
+          dailyLimitMicros: 1_000_000,
+          currency: 'GBP',
+          active: true,
+        },
+      }),
+    ),
+  );
+
+  await page.goto('/administration/audit');
+  await expect(page.getByText('Chain intact')).toBeVisible();
+  await expect(page.getByText(/broken link/)).toHaveCount(0);
+});

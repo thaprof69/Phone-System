@@ -326,3 +326,44 @@ is `BLOCKED`; the same voice with an added, already-expired consent record is st
 **Still outstanding** — recorded honestly rather than implied complete: Test Studio's
 case editor and repeated runs, call correction workflows, the remaining Administration
 areas, and report scheduling and lineage.
+
+## 2026-07-25 — Test Studio depth pass
+
+Test case authoring and run triggering, over the existing `agentTests`,
+`agentTestVersions`, `providerTestMappings`, `testRuns` and `testEvidence` tables and
+the already-real `createTestCase` / `runProviderTests` / `syncProviderTestRun` service
+methods, which previously had no interface calling them.
+
+**Workflows built**
+
+| Workflow            | What it enforces                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Test case authoring | Saved as an immutable version 1; the definition is validated as JSON client-side before it reaches the server                                                                  |
+| Run trigger         | Agent version x test selection x repeat count; refuses a release that is not `TESTING` or `TEST_FAILED`, or has no in-sync provider deployment, with the platform's own reason |
+| Provider sync       | Offered only for a run that is still in progress; a completed run offers no such action, since there is nothing left to sync                                                   |
+
+**A real defect found in the audit log, unrelated to Test Studio itself**: `listAudit`
+ordered and windowed on `occurredAt`, a millisecond-resolution timestamp. Two audit
+events written back to back — which the automated suite itself produces routinely —
+can share one, and `ORDER BY occurredAt LIMIT N` has no tiebreaker for a tie at the
+window boundary: the window can include one of the pair while silently excluding the
+other. The excluded row's chain link then reads as broken even though the full table
+was written and chained correctly throughout — confirmed directly against the database
+(`sequence 603` existed with an intact `previousHash`/`eventHash` pair; only the list
+query's windowing was at fault). Fixed by ordering and windowing on the audit table's
+own `sequence` column, assigned once per row under the same advisory lock that
+constructs the chain and therefore never tied. A new regression test fires eight
+concurrent budget-policy writes and asserts the chain still reports intact.
+
+**Verification**
+
+| Command                                    | Result                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful                                                                |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                              |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                             |
+| `playwright test --project=admin-chromium` | **61 passed, twice consecutively** on one freshly reseeded database (53.2s, 49.5s) |
+
+**Still outstanding** — recorded honestly rather than implied complete: Calls and Call
+Detail's correction and reconciliation depth, the remaining Administration areas, and
+report scheduling and lineage.

@@ -161,6 +161,8 @@ export type TestRow = {
   riskLevel: string;
   archived: boolean;
   createdAt: string;
+  latestVersionId: string | null;
+  latestVersion: number | null;
 };
 
 export type TestRunRow = {

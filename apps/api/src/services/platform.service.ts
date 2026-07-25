@@ -1944,12 +1944,33 @@ export class PlatformService {
     };
   }
 
+  /**
+   * Test cases and runs, with each case carrying its latest version id.
+   *
+   * A test case is immutable at the version level — running a test always runs a
+   * specific version — so triggering a run needs the version id, not the case id. That
+   * id was previously left off this payload, which meant the interface had no case
+   * definition it could actually submit to `runProviderTests`.
+   */
   async listTestsAndRuns() {
-    const [tests, runs] = await Promise.all([
+    const [tests, versions, runs] = await Promise.all([
       this.database.db.select().from(agentTests).orderBy(desc(agentTests.createdAt)),
+      this.database.db.select().from(agentTestVersions),
       this.database.db.select().from(testRuns).orderBy(desc(testRuns.startedAt)),
     ]);
-    return { tests, runs };
+    return {
+      tests: tests.map((test) => {
+        const latest = versions
+          .filter((version) => version.testId === test.id)
+          .sort((left, right) => right.version - left.version)[0];
+        return {
+          ...test,
+          latestVersionId: latest?.id ?? null,
+          latestVersion: latest?.version ?? null,
+        };
+      }),
+      runs,
+    };
   }
 
   async createTestCase(input: {
@@ -1957,10 +1978,11 @@ export class PlatformService {
     testType: string;
     riskLevel: string;
     definition: Record<string, unknown>;
+    principal: Principal;
   }) {
-    const actorId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+    const actorId = await this.actorId(input.principal);
     const checksum = createHash('sha256').update(JSON.stringify(input.definition)).digest('hex');
-    return this.database.db.transaction(async (tx) => {
+    const result = await this.database.db.transaction(async (tx) => {
       const [test] = await tx
         .insert(agentTests)
         .values({
@@ -1975,14 +1997,27 @@ export class PlatformService {
         .insert(agentTestVersions)
         .values({ testId: test.id, version: 1, definition: input.definition, checksum })
         .returning();
-      return { status: 'CREATED', test, version };
+      return { status: 'CREATED' as const, test, version };
     });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'TEST_CASE_CREATED',
+      aggregateType: 'AgentTest',
+      aggregateId: result.test.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { name: input.name, testType: input.testType, riskLevel: input.riskLevel },
+    });
+
+    return result;
   }
 
   async runProviderTests(input: {
     agentVersionId: string;
     testVersionIds: string[];
     repeatCount: number;
+    principal: Principal;
   }) {
     const release = await this.database.db.query.agentConfigVersions.findFirst({
       where: eq(agentConfigVersions.id, input.agentVersionId),
@@ -2073,6 +2108,21 @@ export class PlatformService {
         passed: false,
       })),
     );
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'TEST_RUN_STARTED',
+      aggregateType: 'TestRun',
+      aggregateId: run.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        agentVersionId: input.agentVersionId,
+        testCount: input.testVersionIds.length,
+        repeatCount: input.repeatCount,
+      },
+    });
+
     return this.applyProviderTestResult(run.id, remote.data);
   }
 
@@ -2603,12 +2653,23 @@ export class PlatformService {
       : { status: 'CONFLICT', message: 'A report definition with that key already exists' };
   }
 
+  /**
+   * The audit log, most recent first.
+   *
+   * Ordered and windowed by `sequence`, not `occurredAt`. The timestamp has only
+   * millisecond resolution, and two events written back to back — routine under
+   * automated load — can share one: `ORDER BY occurredAt` then has no tiebreaker, so a
+   * `LIMIT` window can silently exclude one of a tied pair while including the other.
+   * The result looks exactly like a broken hash-chain link even though every row was
+   * written correctly; `sequence` is assigned once per row under the append lock and is
+   * never tied, so windowing on it can never produce that false gap.
+   */
   async listAudit(limit: number) {
     return {
       items: await this.database.db
         .select()
         .from(auditEvents)
-        .orderBy(desc(auditEvents.occurredAt))
+        .orderBy(desc(auditEvents.sequence))
         .limit(limit),
     };
   }

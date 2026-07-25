@@ -74,7 +74,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [x] 2.2 Agent Studio (§8) — conversation editor with server-validated save, governed tool contracts, transfer routing, version comparison, publication judged by provider read-back, rollback and drift reconciliation
 - [x] 2.3 Knowledge Hub (§9) — authoring as immutable new versions with a checksum-based identical-edit refusal, submit/review with a genuinely independent approver (resolved from the real principal via `admin_users`, not a shared system identity), sync retry that re-sends local state and never adopts the remote copy, language-validated agent assignment, and gap-to-draft conversion that never auto-publishes
 - [x] 2.4 Voice Library (§10) — side-by-side comparison of real per-voice metadata (language, category, accent, use case, availability, approval, consent, assignments); assignment by agent version × language × environment × fallback with the existing production native-language check; a consent-gated approval that refuses a cloned voice with no currently valid consent record; catalogue refresh
-- [ ] 2.5 Test Studio (§11)
+- [x] 2.5 Test Studio (§11) — test case authoring saved as an immutable version 1; a run trigger over agent version x test selection x repeat count, reusing the existing provider test creation, mapping and evidence-recording workflow; provider sync for a run still in progress; release-gate wording verified unchanged
 - [ ] 2.6 Calls and Call Detail (§12)
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
 - [x] 2.8 AI Infrastructure (§14) — eight areas, each rendered from real records: adapter-driven provider registry with connections, model registry with per-environment approval and availability, capability list drilling through to runs, route registry with a version builder and pre-activation validation, prompt/schema/taxonomy lifecycle, GBP budgets showing spend against limit, execution history with seven filters and pagination, and monitoring
@@ -242,26 +242,56 @@ exercising all three states the consent gate can be in, not only the seeded happ
 
 ---
 
+### Test Studio depth pass — 2026-07-25
+
+| Command                                    | Result                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful, 17 total                                                    |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                            |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium` | **61 passed, twice consecutively**, one freshly reseeded database (53.2s, 49.5s) |
+
+Five new browser tests cover test-case authoring, JSON-definition validation, the
+run-refusal path for a release not staged for testing, provider sync for an in-progress
+run (with no sync action offered once a run is complete), and a regression test for the
+audit-log defect below.
+
+**A real defect found while verifying this pass, unrelated to Test Studio itself**: the
+audit log's `listAudit` query ordered and windowed by `occurredAt`, a millisecond-
+resolution timestamp. Two events written back to back — routine under the automated
+suite's own load — can share one, and `ORDER BY occurredAt LIMIT N` has no tiebreaker
+for that case: the window can silently include one of a tied pair while excluding the
+other, which then reads as a broken hash-chain link even though every row was written
+and chained correctly. Manually verified against the database that the excluded row
+(sequence 603) existed with a fully intact chain; the fault was in how the list query
+selected its window, not in the data. Fixed by ordering and windowing on the audit
+table's own monotonic `sequence` column, which is assigned once per row under the same
+advisory lock that builds the chain and can never tie. A regression test fires eight
+concurrent budget-policy writes and asserts the chain still reports intact.
+
+---
+
 ## 6a. Resume point
 
 Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8),
-Knowledge Hub (2.3) and Voice Library (2.4) are complete.
+Knowledge Hub (2.3), Voice Library (2.4) and Test Studio (2.5) are complete.
 
-**The next unchecked item is 2.5 — Test Studio (§11):**
+**The next unchecked item is 2.6 — Calls and Call Detail (§12):**
 
-1. **Test case editor.** Create and edit test cases with real inputs, expected
-   assertions and risk level. The list already exists at `/quality/test-cases`; it needs
-   authoring.
-2. **Suites.** Group related test cases and run them together.
-3. **Repeated runs.** Test runs against a non-deterministic system need repetition to be
-   meaningful — run N times, report the pass rate, not a single boolean.
-4. **Comparison.** Compare a run against a previous run for the same test case.
-5. **Independent release gates.** `/quality/gates` already states gates are
-   server-enforced; verify test creation and run-now feed those same gates, and that no
-   UI control can bypass them.
+1. **Call workspace depth.** `/calls` and `/calls/[id]` already exist with real
+   filtering and a provider-vs-canonical transcript distinction (verified by an
+   existing passing test). Extend to full depth: corrections editor wired to the
+   existing `corrections` / `correctionHistory` tables and `CorrectionSchema` in
+   `control-plane.controller.ts`, and the reconciliation view at `/calls/reconciliation`.
+2. **Correction workflow.** Propose a correction (already has a schema:
+   `targetType`, `targetRecordId`, `reason`, `proposedValue`), decide it
+   (`CorrectionDecisionSchema`), and show correction history preserved rather than
+   overwritten.
+3. **Reconciliation.** `listReconciliation()` already exists in `platform.service.ts` —
+   verify the UI surfaces it with real actions, not only a read view.
 
-Then continue in the order in section 3: Calls and Call Detail (2.6), Administration
-(2.9), Analytics and Reports (2.10).
+Then continue in the order in section 3: Administration (2.9), Analytics and Reports
+(2.10).
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

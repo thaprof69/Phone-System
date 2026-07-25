@@ -16,6 +16,7 @@ import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
 import { matchesSearch, readParam, type SearchParams } from '../../../lib/list-view';
 import type { TestRow, TestRunRow } from '../../../lib/types';
+import { CreateTestCaseForm } from '../test-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -137,6 +138,13 @@ export default async function TestCasesPage({
           {...(risk ? { defaultValue: risk } : {})}
         />
       </FilterBar>
+
+      <Panel
+        title="Create a test case"
+        description="Saved as version 1. A future edit would create a new version rather than changing this one, so a run always points at the exact definition it was evaluated against."
+      >
+        <CreateTestCaseForm />
+      </Panel>
 
       <Panel
         title={`${formatNumber(rows.length)} ${rows.length === 1 ? 'case' : 'cases'}`}

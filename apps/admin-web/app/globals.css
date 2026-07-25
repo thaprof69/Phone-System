@@ -1840,3 +1840,12 @@ td a {
 .failure-entry:last-child {
   border-bottom: none;
 }
+
+/* -------------------------------------------------------------- test studio */
+.test-case-checklist {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+}

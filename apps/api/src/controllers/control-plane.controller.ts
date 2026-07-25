@@ -468,13 +468,15 @@ export class ControlPlaneController {
   }
   @RequirePermission('test:write')
   @Post('test-suites')
-  createTest(@Body() body: unknown) {
-    return this.platform.createTestCase(TestCaseSchema.parse(body));
+  createTest(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = TestCaseSchema.parse(body);
+    return this.platform.createTestCase({ ...input, principal: request.principal });
   }
   @RequirePermission('test:write')
   @Post('test-runs')
-  runTests(@Body() body: unknown) {
-    return this.platform.runProviderTests(TestRunSchema.parse(body));
+  runTests(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = TestRunSchema.parse(body);
+    return this.platform.runProviderTests({ ...input, principal: request.principal });
   }
   @RequirePermission('test:write')
   @Post('test-runs/:id/sync')
