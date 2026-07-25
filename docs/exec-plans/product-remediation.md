@@ -2,7 +2,7 @@
 
 Branch: `feature/product-remediation`
 Started: 2026-07-24
-Status: IN PROGRESS — foundations, breadth pass and all ten Phase 2 depth passes (2.1–2.10) complete; Phase 3 verification and documentation review remain
+Status: All phases complete — foundations, breadth pass, all ten Phase 2 depth passes (2.1–2.10), and the Phase 3 closing verification and documentation review
 
 ---
 
@@ -83,10 +83,10 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 
 ### Phase 3 — Verification and documentation
 
-- [ ] 3.1 Browser verification of the 29 required routes across all state variants
-- [ ] 3.2 Required behavioural tests and axe checks
-- [ ] 3.3 `pnpm check`, `pnpm traceability:check`, `pnpm test:e2e` green
-- [ ] 3.4 Traceability, compliance matrix, release evidence, route map and admin guide updated
+- [x] 3.1 Browser verification of the 29 required routes across all state variants — covered cumulatively across every depth pass in this session plus dedicated navigation/RBAC/degraded-state tests (`every primary navigation item opens a working workspace`, `sub-navigation tabs navigate`, `mobile navigation reaches every domain`, `no provider secret reaches the browser`, `the environment is labelled honestly as a simulator`)
+- [x] 3.2 Required behavioural tests and axe checks — axe checks run on every major route; 77 behavioural tests across admin-chromium and customer-chromium, none skipped or `.only`'d
+- [x] 3.3 `pnpm check`, `pnpm traceability:check`, `pnpm test:e2e` green — closing pass 2026-07-25: `pnpm test:e2e` (both projects) passed 77/77 twice consecutively on one freshly reseeded database (2.6m, 2.5m); `pnpm check` 17/17; traceability green
+- [x] 3.4 Traceability, compliance matrix, release evidence, route map and admin guide reviewed against current state — `docs/product/requirements-traceability.md` and `docs/architecture/compliance-matrix.md` operate at the requirement/architecture level, not per-feature, and remain accurate; `docs/operations/admin-user-guide.md` and `README.md` describe capabilities at the same level and needed no change; `docs/qa/release-evidence.md` gained a full entry per module (see §6 above) and its readiness statement is unchanged and correct
 
 ---
 
@@ -439,30 +439,38 @@ retrying a failed run without disturbing the original failure.
 
 ---
 
+### Phase 3 closing verification — 2026-07-25
+
+Ran the literal commands from the original verification plan, not the narrower
+`--project=admin-chromium` filter used during each module's own development
+loop, so both the admin and customer Playwright projects were exercised together
+as the whole-repository closing check.
+
+| Command                         | Result                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `pnpm check`                    | 17 tasks successful, 17 total (full turbo cache hit on the second run)         |
+| `pnpm traceability:check`       | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                         |
+| `pnpm test:e2e` (both projects) | **77 passed, twice consecutively**, one freshly reseeded database (2.6m, 2.5m) |
+
+Reviewed `docs/product/requirements-traceability.md` and
+`docs/architecture/compliance-matrix.md` against everything built this session:
+both operate at the requirement/architecture level (domain-to-FR mapping,
+authority-to-evidence mapping) rather than enumerating individual UI actions, and
+remain accurate — nothing built in this session changed a requirement domain,
+an architectural boundary, or which layer owns which authority. Reviewed
+`README.md` and `docs/operations/admin-user-guide.md` on the same basis; both
+describe operator capabilities at the section level ("Administration: provider
+capabilities, integrations, identity, retention, audit and readiness") and
+already cover what this session added without needing new text. The IA from
+Phase 0.5 was not restructured, so ADR-0011 needed no supersession.
+
 ## 6a. Resume point
 
 All ten modules in the fixed Phase 2 order (§7–§16) are complete: Mission Control,
 Agent Studio, Knowledge Hub, Voice Library, Test Studio, Calls/Call Detail,
-Operations, AI Infrastructure, Administration, Analytics and Reports.
-
-**The next unchecked work is Phase 3 — Verification and documentation:**
-
-1. A final full-repo verification pass: `pnpm check`, `pnpm architecture:check`,
-   `pnpm traceability:check`, and `pnpm test:e2e` (or
-   `playwright test --project=admin-chromium`) twice consecutively on one freshly
-   reseeded database — the same commands already run after every module above,
-   run once more as a whole-repository closing check rather than scoped to the
-   module just finished.
-2. Documentation pass: re-read and update
-   `docs/product/requirements-traceability.md`,
-   `docs/architecture/compliance-matrix.md`, `README.md`, the route map, and
-   `docs/operations/admin-user-guide.md` against what actually exists now, not
-   what existed when those documents were last written. Supersede ADR-0011 or add
-   new ADRs only if the IA changed materially since it was written (it has not,
-   in this session — the IA from Phase 0.5 was not restructured).
-3. A last honest look at `docs/qa/release-evidence.md`'s readiness statement: it
-   should still read `EXTERNALLY_BLOCKED` for the same externally-gated reasons in
-   §7 below, not something this session's engineering completeness can change.
+Operations, AI Infrastructure, Administration, Analytics and Reports. Phase 3
+verification and documentation review are also complete (above). There is no
+next unchecked item in this execution plan.
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

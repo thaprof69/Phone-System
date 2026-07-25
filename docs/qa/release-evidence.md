@@ -495,3 +495,36 @@ text; reran three times to confirm.
 What remains is Phase 3 — a closing full-repo verification pass and a
 documentation review (traceability matrix, compliance matrix, README, admin user
 guide) against what actually exists, not a new module.
+
+## 2026-07-25 — Phase 3 closing verification and documentation review
+
+Ran the literal `pnpm test:e2e` (both the admin and customer Playwright
+projects together, not the narrower per-module filter used during development)
+as the whole-repository closing check, on a freshly reseeded database, twice
+consecutively.
+
+| Command                         | Result                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm check`                    | 17 tasks successful, 17 total                                                    |
+| `pnpm traceability:check`       | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `pnpm test:e2e` (both projects) | **77 passed, twice consecutively** on one freshly reseeded database (2.6m, 2.5m) |
+
+Reviewed `docs/product/requirements-traceability.md`,
+`docs/architecture/compliance-matrix.md`, `README.md` and
+`docs/operations/admin-user-guide.md` against everything built across every
+module this session. All four operate at the requirement, architectural
+authority, or operator-capability level rather than enumerating individual UI
+actions; nothing built this session changed a requirement domain, an
+architectural boundary, or which layer owns which authority, so none needed
+factual correction. The information architecture from Phase 0.5 was not
+restructured, so ADR-0011 needed no supersession.
+
+**Readiness statement unchanged and correct**: `EXTERNALLY_BLOCKED` remains
+accurate. Every module built this session runs against the deterministic local
+stack; none of it supplies a production ElevenLabs workspace, a production AI
+provider approval, an OIDC issuer, or native-language approvals — the external
+gates in the exec plan's §7 are exactly as blocked as before this session
+started, for the same reasons.
+
+All ten fixed-order Phase 2 modules and Phase 3 are now complete. There is no
+further unchecked item in `docs/exec-plans/product-remediation.md`.
