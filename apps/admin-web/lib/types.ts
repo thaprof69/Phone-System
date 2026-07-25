@@ -136,6 +136,19 @@ export type VoiceRow = {
   approved: boolean;
   custom: boolean;
   lastVerifiedAt: string | null;
+  preview: { objectKey: string; checksum: string; expiresAt: string | null } | null;
+  consent: {
+    permittedUse: string;
+    validUntil: string;
+    revokedAt: string | null;
+    valid: boolean;
+  } | null;
+  assignments: Array<{
+    agentVersionId: string;
+    language: string;
+    environment: string;
+    fallback: boolean;
+  }>;
 };
 
 /* ---------------------------------------------------------------- tests */

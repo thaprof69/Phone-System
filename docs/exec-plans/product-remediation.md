@@ -73,7 +73,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [x] 2.1 Mission Control (§7)
 - [x] 2.2 Agent Studio (§8) — conversation editor with server-validated save, governed tool contracts, transfer routing, version comparison, publication judged by provider read-back, rollback and drift reconciliation
 - [x] 2.3 Knowledge Hub (§9) — authoring as immutable new versions with a checksum-based identical-edit refusal, submit/review with a genuinely independent approver (resolved from the real principal via `admin_users`, not a shared system identity), sync retry that re-sends local state and never adopts the remote copy, language-validated agent assignment, and gap-to-draft conversion that never auto-publishes
-- [ ] 2.4 Voice Library (§10)
+- [x] 2.4 Voice Library (§10) — side-by-side comparison of real per-voice metadata (language, category, accent, use case, availability, approval, consent, assignments); assignment by agent version × language × environment × fallback with the existing production native-language check; a consent-gated approval that refuses a cloned voice with no currently valid consent record; catalogue refresh
 - [ ] 2.5 Test Studio (§11)
 - [ ] 2.6 Calls and Call Detail (§12)
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
@@ -224,24 +224,44 @@ existence. All three are recorded in `docs/qa/release-evidence.md`.
 
 ---
 
+### Voice Library depth pass — 2026-07-25
+
+| Command                                    | Result                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful, 17 total                                                    |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                            |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium` | **56 passed, twice consecutively**, one freshly reseeded database (49.5s, 51.7s) |
+
+Four new browser tests cover voice comparison, consent-gated approval reporting, voice
+assignment with the production native-language refusal, and catalogue refresh. Verified
+directly against the running API: a cloned voice with no consent record is `BLOCKED`
+with "no currently valid speaker consent on file"; the same voice with an expired
+consent record is still `BLOCKED`; and it succeeds once a valid consent record exists —
+exercising all three states the consent gate can be in, not only the seeded happy path.
+
+---
+
 ## 6a. Resume point
 
-Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8) and
-Knowledge Hub (2.3) are complete.
+Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8),
+Knowledge Hub (2.3) and Voice Library (2.4) are complete.
 
-**The next unchecked item is 2.4 — Voice Library (§10):**
+**The next unchecked item is 2.5 — Test Studio (§11):**
 
-1. **Catalogue.** The voice list already exists at `/receptionist/voices`; extend it with
-   real filtering and the metadata a comparison needs.
-2. **Side-by-side comparison.** Two or more voices compared directly rather than only in
-   a flat list.
-3. **Assignment.** By agent × language × environment × fallback, mirroring the pattern
-   just built for knowledge assignment (`knowledgeAssignments` / `AssignmentForm`).
-4. **Custom voices.** Behind consent and activation gates — never activated without a
-   recorded consent record.
+1. **Test case editor.** Create and edit test cases with real inputs, expected
+   assertions and risk level. The list already exists at `/quality/test-cases`; it needs
+   authoring.
+2. **Suites.** Group related test cases and run them together.
+3. **Repeated runs.** Test runs against a non-deterministic system need repetition to be
+   meaningful — run N times, report the pass rate, not a single boolean.
+4. **Comparison.** Compare a run against a previous run for the same test case.
+5. **Independent release gates.** `/quality/gates` already states gates are
+   server-enforced; verify test creation and run-now feed those same gates, and that no
+   UI control can bypass them.
 
-Then continue in the order in section 3: Test Studio (2.5), Calls and Call Detail (2.6),
-Administration (2.9), Analytics and Reports (2.10).
+Then continue in the order in section 3: Calls and Call Detail (2.6), Administration
+(2.9), Analytics and Reports (2.10).
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

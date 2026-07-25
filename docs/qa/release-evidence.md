@@ -294,3 +294,35 @@ Exercised through the browser's own proxy against the running stack: an identica
 refused with its version number, a second-attempt approval refused as already decided, a
 drifted sync retried and moved to `PUBLISH_PENDING`, and a mismatched-language assignment
 refused with the asset's actual language stated.
+
+## 2026-07-25 — Voice Library depth pass
+
+Comparison, assignment and consent-gated approval, over the existing `voice_profiles`,
+`voice_previews`, `voice_consent_records` and `voice_assignments` tables.
+
+**Workflows built**
+
+| Workflow          | What it enforces                                                                                                                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Comparison        | Two or more voices selected from the catalogue and shown side by side with real metadata — language, category, accent, use case, availability, approval, consent and current assignments — not a flat list alone |
+| Approval          | A cloned voice cannot be approved without a currently valid consent record; a provider-catalogue voice has no speaker to consent and is unaffected                                                               |
+| Assignment        | Reuses the existing agent × language × environment × fallback checks; production still requires a recorded native-speaker approval for the language                                                              |
+| Catalogue refresh | Pulls the provider's current voice list and reports how many were synchronised                                                                                                                                   |
+
+**Verified directly against the running API**, exercising every state the consent gate
+can be in rather than only the seeded happy path: a cloned voice with no consent record
+is `BLOCKED`; the same voice with an added, already-expired consent record is still
+`BLOCKED`; and it succeeds once a currently valid consent record exists.
+
+**Verification**
+
+| Command                                    | Result                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful                                                                |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                              |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                             |
+| `playwright test --project=admin-chromium` | **56 passed, twice consecutively** on one freshly reseeded database (49.5s, 51.7s) |
+
+**Still outstanding** — recorded honestly rather than implied complete: Test Studio's
+case editor and repeated runs, call correction workflows, the remaining Administration
+areas, and report scheduling and lineage.

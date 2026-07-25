@@ -1,6 +1,8 @@
+import Link from 'next/link';
 import {
   Banner,
   DataTable,
+  DefinitionList,
   EmptyState,
   FilterBar,
   MetricCard,
@@ -17,7 +19,8 @@ import {
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
 import { matchesSearch, readParam, type SearchParams } from '../../../lib/list-view';
-import type { MissionControl, VoiceRow } from '../../../lib/types';
+import type { AgentListRow, MissionControl, VoiceRow } from '../../../lib/types';
+import { ApproveVoiceButton, AssignVoiceForm, RefreshCatalogueButton } from './voice-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,9 +30,10 @@ export default async function VoicesPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const [voicesResponse, missionResponse] = await Promise.all([
+  const [voicesResponse, missionResponse, agentsResponse] = await Promise.all([
     apiGet<{ status: string; data: VoiceRow[] }>('/voices', { purpose: 'RELEASE_MANAGEMENT' }),
     apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' }),
+    apiGet<{ items: AgentListRow[] }>('/agents', { purpose: 'RELEASE_MANAGEMENT' }),
   ]);
 
   if (!voicesResponse.ok) {
@@ -74,6 +78,22 @@ export default async function VoicesPage({
     (voice) => !voice.available && assignedNames.has(voice.name),
   );
   const languages = [...new Set(all.map(languageOf).filter(Boolean))].sort();
+
+  const agentOptions = agentsResponse.ok
+    ? agentsResponse.data.items
+        .filter((agent) => agent.versionId)
+        .map((agent) => ({
+          value: agent.versionId as string,
+          label: `${agent.name} v${agent.version} (${humaniseState(agent.state ?? '')})`,
+        }))
+    : [];
+
+  const compareIds = new Set(
+    (Array.isArray(params.compare) ? params.compare[0] : params.compare)
+      ?.split(',')
+      .filter(Boolean) ?? [],
+  );
+  const compareVoices = all.filter((voice) => compareIds.has(voice.id));
 
   const columns: Column<VoiceRow>[] = [
     {
@@ -125,7 +145,22 @@ export default async function VoicesPage({
     {
       key: 'custom',
       header: 'Ownership',
-      render: (voice) => (voice.custom ? 'Custom (consent required)' : 'Provider catalogue'),
+      render: (voice) =>
+        voice.custom ? (
+          <>
+            Cloned
+            {voice.consent ? (
+              <small className="cell-sub">
+                {voice.consent.valid ? 'Consent valid' : 'Consent expired or revoked'} to{' '}
+                {formatDateTime(voice.consent.validUntil)}
+              </small>
+            ) : (
+              <small className="cell-sub">No consent record</small>
+            )}
+          </>
+        ) : (
+          'Provider catalogue'
+        ),
       priority: 'secondary',
     },
     {
@@ -133,6 +168,49 @@ export default async function VoicesPage({
       header: 'Last checked',
       render: (voice) => formatDateTime(voice.lastVerifiedAt),
       priority: 'secondary',
+    },
+    {
+      key: 'compare',
+      header: 'Compare',
+      render: (voice) => {
+        const next = new Set(compareIds);
+        if (next.has(voice.id)) next.delete(voice.id);
+        else next.add(voice.id);
+        const query = new URLSearchParams();
+        if (next.size > 0) query.set('compare', [...next].join(','));
+        return (
+          <Link
+            className="row-link"
+            href={`/receptionist/voices?${query.toString()}`}
+            scroll={false}
+          >
+            {compareIds.has(voice.id) ? 'Remove' : 'Add'}
+          </Link>
+        );
+      },
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (voice) => (
+        <details className="row-actions">
+          <summary>Manage</summary>
+          <div className="row-actions-body">
+            {!voice.approved ? (
+              <ApproveVoiceButton
+                voiceId={voice.id}
+                custom={voice.custom}
+                consentValid={voice.consent?.valid ?? false}
+              />
+            ) : (
+              <p className="muted-cell">Already approved.</p>
+            )}
+            {voice.approved && voice.available ? (
+              <AssignVoiceForm voiceId={voice.id} agentVersions={agentOptions} />
+            ) : null}
+          </div>
+        </details>
+      ),
     },
   ];
 
@@ -203,6 +281,81 @@ export default async function VoicesPage({
             ))}
           </div>
         )}
+      </Panel>
+
+      {compareVoices.length >= 2 ? (
+        <Panel
+          title="Comparison"
+          eyebrow={`${formatNumber(compareVoices.length)} voices`}
+          description="Selected from the catalogue below using each row's Compare link."
+          action={
+            <Link className="row-link" href="/receptionist/voices">
+              Clear comparison
+            </Link>
+          }
+        >
+          <div className="voice-compare-grid">
+            {compareVoices.map((voice) => (
+              <div className="voice-compare-card" key={voice.id}>
+                <strong>{voice.name}</strong>
+                <DefinitionList
+                  items={[
+                    { term: 'Language', value: languageOf(voice).toUpperCase() || '—' },
+                    { term: 'Category', value: humaniseState(categoryOf(voice)) },
+                    { term: 'Gender', value: humaniseState(String(voice.metadata?.gender ?? '—')) },
+                    { term: 'Accent', value: String(voice.metadata?.accent ?? '—') },
+                    {
+                      term: 'Use case',
+                      value: humaniseState(String(voice.metadata?.useCase ?? '—')),
+                    },
+                    {
+                      term: 'Availability',
+                      value: voice.available ? 'Available' : 'Unavailable',
+                    },
+                    {
+                      term: 'Approval',
+                      value: voice.approved ? 'Approved' : 'Not approved',
+                    },
+                    {
+                      term: 'Ownership',
+                      value: voice.custom ? 'Cloned voice' : 'Provider catalogue',
+                    },
+                    {
+                      term: 'Consent',
+                      value: !voice.custom
+                        ? 'Not applicable'
+                        : voice.consent
+                          ? voice.consent.valid
+                            ? `Valid to ${formatDateTime(voice.consent.validUntil)}`
+                            : 'Expired or revoked'
+                          : 'No record',
+                    },
+                    {
+                      term: 'Assignments',
+                      value:
+                        voice.assignments.length > 0
+                          ? voice.assignments
+                              .map(
+                                (assignment) =>
+                                  `${assignment.language.toUpperCase()} · ${humaniseState(assignment.environment)}${assignment.fallback ? ' (fallback)' : ''}`,
+                              )
+                              .join(', ')
+                          : 'None',
+                    },
+                    { term: 'Last checked', value: formatDateTime(voice.lastVerifiedAt) },
+                  ]}
+                />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      <Panel
+        title="Provider catalogue"
+        description="Pull the latest voices this workspace's provider offers."
+      >
+        <RefreshCatalogueButton />
       </Panel>
 
       <FilterBar

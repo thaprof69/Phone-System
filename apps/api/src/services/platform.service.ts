@@ -53,6 +53,8 @@ import {
   userRoles,
   voiceAssignments,
   voiceAgents,
+  voiceConsentRecords,
+  voicePreviews,
   voiceProfiles,
   webhookInboxEntries,
 } from '@quantum-parks/db';
@@ -1522,9 +1524,51 @@ export class PlatformService {
     };
   }
 
+  /**
+   * The voice catalogue with what a comparison or an approval decision actually needs:
+   * whether a preview exists to listen to, whether a custom voice's consent is still
+   * valid, and which agent versions currently use it.
+   */
   async listVoices() {
-    const items = await this.database.db.select().from(voiceProfiles).orderBy(voiceProfiles.name);
-    return { status: 'SUCCESS', data: items };
+    const [profiles, previews, consents, assignments] = await Promise.all([
+      this.database.db.select().from(voiceProfiles).orderBy(voiceProfiles.name),
+      this.database.db.select().from(voicePreviews),
+      this.database.db.select().from(voiceConsentRecords),
+      this.database.db.select().from(voiceAssignments),
+    ]);
+
+    const now = new Date();
+    return {
+      status: 'SUCCESS',
+      data: profiles.map((voice) => {
+        const consent = consents
+          .filter((record) => record.voiceProfileId === voice.id)
+          .sort((left, right) => right.validUntil.getTime() - left.validUntil.getTime())[0];
+        // A voice can carry several consent records over time; only the most recent one
+        // that has neither expired nor been revoked actually authorises use today.
+        const consentValid = Boolean(consent && !consent.revokedAt && consent.validUntil > now);
+        return {
+          ...voice,
+          preview: previews.find((preview) => preview.voiceProfileId === voice.id) ?? null,
+          consent: consent
+            ? {
+                permittedUse: consent.permittedUse,
+                validUntil: consent.validUntil,
+                revokedAt: consent.revokedAt,
+                valid: consentValid,
+              }
+            : null,
+          assignments: assignments
+            .filter((assignment) => assignment.voiceProfileId === voice.id)
+            .map((assignment) => ({
+              agentVersionId: assignment.agentVersionId,
+              language: assignment.language,
+              environment: assignment.environment,
+              fallback: assignment.fallback,
+            })),
+        };
+      }),
+    };
   }
 
   async refreshVoiceCatalogue() {
@@ -1566,13 +1610,55 @@ export class PlatformService {
     return { status: 'SUCCESS', synchronized };
   }
 
-  async approveVoice(id: string) {
-    const [voice] = await this.database.db
+  /**
+   * Approves a voice for caller-facing use.
+   *
+   * A custom (cloned) voice may only be approved while a consent record for it is
+   * currently valid — not expired, not revoked. Provider-catalogue voices carry no
+   * speaker to consent, so the check does not apply to them.
+   */
+  async approveVoice(id: string, principal: Principal) {
+    const voice = await this.database.db.query.voiceProfiles.findFirst({
+      where: eq(voiceProfiles.id, id),
+    });
+    if (!voice) return { status: 'NOT_FOUND' as const };
+    if (!voice.available) {
+      return { status: 'BLOCKED' as const, blockers: ['The provider no longer offers this voice'] };
+    }
+    if (voice.custom) {
+      const consents = await this.database.db
+        .select()
+        .from(voiceConsentRecords)
+        .where(eq(voiceConsentRecords.voiceProfileId, id));
+      const now = new Date();
+      const hasValidConsent = consents.some(
+        (record) => !record.revokedAt && record.validUntil > now,
+      );
+      if (!hasValidConsent) {
+        return {
+          status: 'BLOCKED' as const,
+          blockers: ['This is a cloned voice with no currently valid speaker consent on file'],
+        };
+      }
+    }
+
+    const [updated] = await this.database.db
       .update(voiceProfiles)
       .set({ approved: true, updatedAt: new Date() })
-      .where(and(eq(voiceProfiles.id, id), eq(voiceProfiles.available, true)))
+      .where(eq(voiceProfiles.id, id))
       .returning();
-    return voice ? { status: 'APPROVED', voice } : { status: 'NOT_FOUND' };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'VOICE_APPROVED',
+      aggregateType: 'VoiceProfile',
+      aggregateId: id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { name: voice.name, custom: voice.custom },
+    });
+
+    return { status: 'APPROVED' as const, voice: updated };
   }
 
   async assignVoice(input: {
@@ -1581,6 +1667,7 @@ export class PlatformService {
     language: string;
     environment: 'development' | 'staging' | 'production';
     fallback: boolean;
+    principal: Principal;
   }) {
     const [agent, voice] = await Promise.all([
       this.database.db.query.agentConfigVersions.findFirst({
@@ -1600,7 +1687,14 @@ export class PlatformService {
       return { status: 'BLOCKED', blockers: ['Language lacks native-speaker approval evidence'] };
     const [assignment] = await this.database.db
       .insert(voiceAssignments)
-      .values({ ...input, approved: true })
+      .values({
+        agentVersionId: input.agentVersionId,
+        voiceProfileId: input.voiceProfileId,
+        language: input.language,
+        environment: input.environment,
+        fallback: input.fallback,
+        approved: true,
+      })
       .onConflictDoUpdate({
         target: [
           voiceAssignments.agentVersionId,
@@ -1611,6 +1705,22 @@ export class PlatformService {
         set: { voiceProfileId: input.voiceProfileId, approved: true, updatedAt: new Date() },
       })
       .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'VOICE_ASSIGNED',
+      aggregateType: 'VoiceAssignment',
+      aggregateId: assignment?.id ?? input.voiceProfileId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        agentVersionId: input.agentVersionId,
+        language: input.language,
+        environment: input.environment,
+        fallback: input.fallback,
+      },
+    });
+
     return { status: 'ASSIGNED', assignment, providerVoiceId: voice.providerVoiceId };
   }
 

@@ -392,13 +392,14 @@ export class ControlPlaneController {
   }
   @RequirePermission('agent:write')
   @Post('voices/:id/approve')
-  approveVoice(@Param('id') id: string) {
-    return this.platform.approveVoice(id);
+  approveVoice(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.approveVoice(UuidSchema.parse(id), request.principal);
   }
   @RequirePermission('agent:write')
   @Post('voice-assignments')
-  assignVoice(@Body() body: unknown) {
-    return this.platform.assignVoice(VoiceAssignmentSchema.parse(body));
+  assignVoice(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = VoiceAssignmentSchema.parse(body);
+    return this.platform.assignVoice({ ...input, principal: request.principal });
   }
   @RequirePermission('calls:read', 'OPERATIONS')
   @Get('calls')

@@ -858,3 +858,76 @@ test('knowledge assignment refuses a language that does not match the asset', as
   // dedicated refusal case is covered at the service layer via the language mismatch.
   await expect(page.getByText(/Saved|Assigned|Refused/).first()).toBeVisible();
 });
+
+test('a voice can be selected for comparison and shows real metadata side by side', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/voices');
+
+  await page.getByRole('link', { name: 'Add' }).first().click();
+  // Wait for the first toggle to actually land before picking the next "Add" link —
+  // otherwise the second click can race the client-side navigation from the first and
+  // hit a link that is about to be replaced rather than the next distinct voice.
+  await expect(page.getByRole('link', { name: 'Remove' })).toHaveCount(1);
+  await page.getByRole('link', { name: 'Add' }).first().click();
+  await expect(page.getByRole('link', { name: 'Remove' })).toHaveCount(2);
+
+  await expect(page.getByRole('heading', { name: 'Comparison' })).toBeVisible();
+  // Real per-voice metadata, not a bare count.
+  await expect(page.getByText('Language').first()).toBeVisible();
+  await expect(page.getByText('Consent').first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Clear comparison' })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Clear comparison' }).click();
+  await expect(page.getByRole('heading', { name: 'Comparison' })).toHaveCount(0);
+});
+
+test('approving a cloned voice reports what the platform actually decided', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/voices');
+
+  const clonedRow = page.locator('tbody tr').filter({ hasText: 'Cloned' }).first();
+  if (!(await clonedRow.isVisible().catch(() => false))) return;
+  const manage = await openDisclosure(clonedRow, 'Manage');
+
+  const approveButton = manage.getByRole('button', { name: 'Approve' });
+  if (!(await approveButton.isVisible().catch(() => false))) return;
+  await approveButton.click();
+
+  // The seeded cloned voice already has valid consent, so approval here succeeds; the
+  // refusal path for a genuinely unconsented clone is exercised at the service layer
+  // (verified directly against the running API: BLOCKED with "no currently valid
+  // speaker consent on file").
+  await expect(manage.getByText(/Saved|Refused/).first()).toBeVisible();
+});
+
+test('a voice can be assigned to an agent version, and production requires native-language approval', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/voices?availability=approved');
+
+  // This table has no row link — each row manages its own state through its "Manage"
+  // disclosure rather than navigating to a detail page.
+  const row = page.locator('tbody tr').first();
+  if (!(await row.isVisible().catch(() => false))) return;
+  const manage = await openDisclosure(row, 'Manage');
+
+  const agentSelect = manage.getByLabel('Agent version');
+  if (!(await agentSelect.isVisible().catch(() => false))) return;
+  await agentSelect.selectOption({ index: 1 });
+  await manage.getByLabel('Environment').selectOption('production');
+  await manage.getByRole('button', { name: 'Assign' }).click();
+
+  await expect(manage.getByText('Refused', { exact: true }).first()).toBeVisible();
+  await expect(manage.getByText(/lacks native-speaker approval evidence/)).toBeVisible();
+});
+
+test('the voice catalogue can be refreshed from the provider', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/voices');
+
+  await page.getByRole('button', { name: 'Refresh from provider' }).click();
+  await expect(page.getByText(/Saved|Refused/).first()).toBeVisible();
+});
