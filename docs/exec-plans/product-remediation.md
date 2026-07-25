@@ -71,13 +71,13 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 ### Phase 2 — Depth passes (fixed order)
 
 - [x] 2.1 Mission Control (§7)
-- [~] 2.2 Agent Studio (§8) — agent list, detail with tabs, version history and **version comparison with a real line diff** complete; conversation editor, governed tool contracts and visual transfer routing still to build
+- [x] 2.2 Agent Studio (§8) — conversation editor with server-validated save, governed tool contracts, transfer routing, version comparison, publication judged by provider read-back, rollback and drift reconciliation
 - [ ] 2.3 Knowledge Hub (§9)
 - [ ] 2.4 Voice Library (§10)
 - [ ] 2.5 Test Studio (§11)
 - [ ] 2.6 Calls and Call Detail (§12)
-- [ ] 2.7 Operations (§13)
-- [ ] 2.8 AI Infrastructure (§14)
+- [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
+- [~] 2.8 AI Infrastructure (§14) — Execution, Governance and Monitoring rebuilt from real records with full provenance; adapter-driven provider registry, model registry with approvals, capability detail pages, route CRUD and prompt-library CRUD still to build
 - [ ] 2.9 Administration (§15)
 - [ ] 2.10 Analytics and Reports (§16)
 
@@ -189,26 +189,40 @@ are updated as each module reaches full depth, not on the strength of a surface 
 
 ## 6a. Resume point
 
-The next unchecked item is **2.2 Agent Studio (§8)**, specifically the parts not yet built:
+Agent Studio (2.2) and Operations (2.7) are complete. AI Infrastructure (2.8) is partly
+complete: the three count-only screens are gone.
 
-1. **Conversation editor** — system prompt with immutable policy fragments separated from
-   editable business fragments, first message, disclosure, closure, after-hours behaviour,
-   turn and interruption settings, per-language variants. Needs validation, unsaved-change
-   handling, a mandatory change reason, and a save that creates a new version rather than
-   editing the live one. The diff to review it against already exists at
-   `/receptionist/versions/compare`.
-2. **Governed tool contracts** — the fifteen tools in `tool-registry.service.ts` have no
-   operator surface. Each needs name, purpose, endpoint, authentication, schema,
-   verification tier, risk level, enabled environments, last contract test and state.
-3. **Visual transfer routing** — park × language × intent → target, with fallback, operating
-   hours, SLA and test state. The data is in `agent_config_versions.configuration.transfers`.
+**The next unchecked item is the remainder of 2.8 — AI Infrastructure:**
 
-After 2.2, continue in the order recorded in section 3.
+1. **Adapter-driven provider registry.** `aios-admin.controller.ts` still carries
+   `providerKey: z.literal('OPENAI')`. Replace it with an enum driven by the adapter
+   registry so provider forms are generated from capability metadata. Uninstalled
+   adapters already report "Adapter not installed" and must keep doing so — no fake
+   connect action.
+2. **Model registry.** List and detail, discovery, approval per environment, disable,
+   production eligibility, structured-output support, context window, deprecation,
+   cost metadata, region policy. The tables (`ai_models`, `ai_model_approvals`,
+   `ai_model_prices`) and seed data exist; the surface does not.
+3. **Capability detail pages.** One page per capability with its contract, active
+   version, prompt, schema, taxonomy, route, budget and execution history. The list
+   exists; the detail does not.
+4. **Route CRUD with pre-activation validation.** Ordered fallbacks, conditions,
+   timeouts, retries, circuit breaker, per-run ceiling and budgets — validating provider
+   enabled, model available and approved, structured output compatible, region and
+   privacy allowed, budget available and fallback valid before a route can activate.
+5. **Prompt library CRUD.** Draft, edit, diff, submit, approve, reject, activate,
+   rollback. `DiffView` and the compare pattern from `/receptionist/versions/compare`
+   are directly reusable.
 
-**Known gap carried forward**: the AI console's Execution, Governance and Monitoring
-sections still render `.length` counts rather than the registry rows the workspace payload
-already contains (`ai-console.tsx`, `GroupedArea`). That is depth item 2.8 and is the
-largest single piece of remaining slop.
+Then continue in the order in section 3: Knowledge Hub (2.3) authoring, approval queue
+and synchronisation actions; Test Studio (2.5) case editor, suites and runs;
+Administration (2.9) remaining actions; Analytics and Reports (2.10) filtering, evidence
+drill-down and report definition CRUD.
+
+**Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
+runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir
+under the session scratchpad) and the provider simulator from `apps/provider-simulator/dist`.
+`docker compose up` remains the documented path once the daemon is healthy.
 
 ---
 
