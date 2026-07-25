@@ -55,9 +55,9 @@ export function Dialog({
   onOpenChange,
   wide = false,
 }: {
-  trigger?: ReactNode;
+  trigger?: ReactNode | undefined;
   title: string;
-  description?: string;
+  description?: string | undefined;
   children: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -198,9 +198,9 @@ export function Drawer({
   open,
   onOpenChange,
 }: {
-  trigger?: ReactNode;
+  trigger?: ReactNode | undefined;
   title: string;
-  description?: string;
+  description?: string | undefined;
   children: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;

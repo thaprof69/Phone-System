@@ -59,11 +59,18 @@ import {
   type ProviderTestRun,
 } from '@quantum-parks/elevenlabs';
 import { runtimeSecret } from '@quantum-parks/config';
-import { evaluateReleaseGate, type ReleaseDependency } from '@quantum-parks/domain';
+import {
+  attemptsPolicyOverride,
+  evaluateReleaseGate,
+  validateAgentConfiguration,
+  type AgentConversationConfiguration,
+  type ReleaseDependency,
+} from '@quantum-parks/domain';
 import { DatabaseService } from './database.service.js';
 import { WorkflowDispatchService } from './workflow-dispatch.service.js';
 import { ElevenLabsIntegrationService } from './elevenlabs-integration.service.js';
 import { AiosPlatformService } from './aios-platform.service.js';
+import { AuditService } from './audit.service.js';
 
 const developmentActorId = '00000000-0000-4000-8000-000000000001';
 
@@ -74,6 +81,7 @@ export class PlatformService {
     private readonly workflows: WorkflowDispatchService,
     private readonly elevenLabsIntegration: ElevenLabsIntegrationService,
     private readonly aios: AiosPlatformService,
+    private readonly audit: AuditService,
   ) {}
 
   private async providerAdapter(): Promise<ElevenLabsPort> {
@@ -169,6 +177,220 @@ export class PlatformService {
       if (!version) throw new Error('Agent draft was not created');
       return { ...version, name: input.name, purpose: input.purpose };
     });
+  }
+
+  /** One agent version with its full configuration, for the conversation editor. */
+  async getAgentVersion(versionId: string) {
+    const version = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.id, versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    const [agent, approvals, deployment] = await Promise.all([
+      this.database.db.query.voiceAgents.findFirst({ where: eq(voiceAgents.id, version.agentId) }),
+      this.database.db
+        .select()
+        .from(agentApprovals)
+        .where(eq(agentApprovals.agentVersionId, versionId)),
+      this.database.db.query.agentDeployments.findFirst({
+        where: eq(agentDeployments.agentVersionId, versionId),
+      }),
+    ]);
+
+    return {
+      status: 'OK' as const,
+      version: {
+        id: version.id,
+        agentId: version.agentId,
+        agentName: agent?.name ?? 'Unknown agent',
+        version: version.version,
+        state: version.state,
+        configuration: version.configuration,
+        checksum: version.checksum,
+        changeReason: version.changeReason,
+        authorId: version.authorId,
+        synthetic: version.synthetic,
+        createdAt: version.createdAt,
+        // Only a draft is editable. Everything else is an immutable historical record,
+        // and the editor must not offer to change something that is already published.
+        editable: version.state === 'DRAFT' || version.state === 'CHANGES_REQUESTED',
+        approvals,
+        deployment: deployment ?? null,
+      },
+    };
+  }
+
+  /**
+   * Starts a new draft from an existing version.
+   *
+   * A change never edits the version callers are hearing. It creates the next version,
+   * which then has to travel the whole review, test and publication path on its own.
+   */
+  async createAgentVersionDraft(agentId: string, sourceVersionId?: string) {
+    const versions = await this.database.db
+      .select()
+      .from(agentConfigVersions)
+      .where(eq(agentConfigVersions.agentId, agentId));
+    if (versions.length === 0) return { status: 'NOT_FOUND' as const };
+
+    const existingDraft = versions.find(
+      (version) => version.state === 'DRAFT' || version.state === 'CHANGES_REQUESTED',
+    );
+    // One draft at a time per agent: two concurrent drafts would race for the next
+    // version number and make the review queue ambiguous.
+    if (existingDraft) {
+      return { status: 'CONFLICT' as const, existingDraftId: existingDraft.id };
+    }
+
+    const source = sourceVersionId
+      ? versions.find((version) => version.id === sourceVersionId)
+      : (versions.find((version) => version.state === 'ACTIVE') ??
+        [...versions].sort((left, right) => right.version - left.version)[0]);
+    if (!source) return { status: 'NOT_FOUND' as const };
+
+    const nextVersion = Math.max(...versions.map((version) => version.version)) + 1;
+    const actorId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+
+    const [created] = await this.database.db
+      .insert(agentConfigVersions)
+      .values({
+        agentId,
+        version: nextVersion,
+        state: 'DRAFT',
+        configuration: source.configuration,
+        checksum: source.checksum,
+        changeReason: `Draft created from version ${source.version}`,
+        authorId: actorId,
+        synthetic: source.synthetic,
+      })
+      .returning();
+    if (!created) return { status: 'FAILED' as const };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId,
+      action: 'AGENT_VERSION_DRAFT_CREATED',
+      aggregateType: 'AgentConfigVersion',
+      aggregateId: created.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { agentId, sourceVersion: source.version, version: nextVersion },
+    });
+
+    return { status: 'CREATED' as const, version: created };
+  }
+
+  /**
+   * Saves an edited configuration onto a draft.
+   *
+   * Validation is server-side and structural: the interface cannot talk the platform
+   * into accepting an out-of-range turn setting or a weakened safety instruction.
+   */
+  async updateAgentVersionConfiguration(input: {
+    versionId: string;
+    configuration: unknown;
+    changeReason: string;
+    allowAdditionalFragments: boolean;
+  }) {
+    const version = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.id, input.versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    // Published and in-review versions are immutable. Editing one would change what
+    // an approver already signed off, or what callers are currently hearing.
+    if (version.state !== 'DRAFT' && version.state !== 'CHANGES_REQUESTED') {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    // Reported rather than silently corrected: an author who tried to drop a safety
+    // instruction should be told, not quietly overruled.
+    if (attemptsPolicyOverride(input.configuration)) {
+      return {
+        status: 'FORBIDDEN' as const,
+        message:
+          'The safety policy fragments are code-owned. They cannot be removed or reworded by any role.',
+      };
+    }
+
+    const validation = validateAgentConfiguration(input.configuration, {
+      allowAdditionalFragments: input.allowAdditionalFragments,
+    });
+    if (!validation.valid) {
+      return { status: 'INVALID' as const, issues: validation.issues };
+    }
+
+    const configuration = validation.configuration as AgentConversationConfiguration;
+    const checksum = createHash('sha256').update(JSON.stringify(configuration)).digest('hex');
+    const actorId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+
+    const [updated] = await this.database.db
+      .update(agentConfigVersions)
+      .set({
+        configuration: configuration as unknown as Record<string, unknown>,
+        checksum,
+        changeReason: input.changeReason,
+      })
+      .where(eq(agentConfigVersions.id, input.versionId))
+      .returning();
+    if (!updated) return { status: 'FAILED' as const };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId,
+      action: 'AGENT_VERSION_CONFIGURATION_UPDATED',
+      aggregateType: 'AgentConfigVersion',
+      aggregateId: input.versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        version: updated.version,
+        changeReason: input.changeReason,
+        checksum,
+        additionalFragmentsPermitted: input.allowAdditionalFragments,
+      },
+    });
+
+    return { status: 'SAVED' as const, version: updated };
+  }
+
+  /**
+   * Submits a draft for review. Separate from saving so that an author can iterate
+   * without repeatedly notifying reviewers.
+   */
+  async submitAgentVersionForReview(versionId: string) {
+    const version = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.id, versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+    if (version.state !== 'DRAFT' && version.state !== 'CHANGES_REQUESTED') {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    const validation = validateAgentConfiguration(version.configuration, {
+      allowAdditionalFragments: true,
+    });
+    // Re-validated at submission rather than trusted from save time: the code-owned
+    // policy or the accepted runtime ranges may have moved since the draft was written.
+    if (!validation.valid) {
+      return { status: 'INVALID' as const, issues: validation.issues };
+    }
+
+    const [updated] = await this.database.db
+      .update(agentConfigVersions)
+      .set({ state: 'IN_REVIEW' })
+      .where(eq(agentConfigVersions.id, versionId))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: 'AGENT_VERSION_SUBMITTED_FOR_REVIEW',
+      aggregateType: 'AgentConfigVersion',
+      aggregateId: versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { version: version.version },
+    });
+
+    return { status: 'SUBMITTED' as const, version: updated };
   }
 
   async decideAgentRelease(id: string, decision: 'APPROVE' | 'REJECT', reason: string) {

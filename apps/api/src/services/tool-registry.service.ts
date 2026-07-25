@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, desc, eq, gt } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   callbackRequests,
@@ -18,6 +18,7 @@ import {
 import { runtimeSecret } from '@quantum-parks/config';
 import { redactSensitiveToolInput } from '@quantum-parks/domain';
 import { DatabaseService } from './database.service.js';
+import { TOOL_CONTRACTS, findToolContract } from './tool-contracts.js';
 
 type ToolResult =
   | { status: string; data?: Record<string, unknown>; safe_message?: string }
@@ -280,6 +281,103 @@ export class ToolRegistryService {
       },
       conversation_id: conversationId,
       protected_context_disclosed: false,
+    };
+  }
+
+  /**
+   * The governed tool catalogue: the code-owned contracts, joined to what the registry
+   * actually has registered and to the most recent live invocation of each.
+   *
+   * A contract described here but not registered would be a lie, so the registered
+   * flag is read from the registry rather than assumed from the catalogue.
+   */
+  async listToolContracts() {
+    const recent = await this.database.db
+      .select()
+      .from(toolInvocations)
+      .orderBy(desc(toolInvocations.requestedAt))
+      .limit(400);
+
+    return {
+      items: TOOL_CONTRACTS.map((contract) => {
+        const registered = Boolean(this.tools[contract.key]);
+        const invocations = recent.filter((invocation) => invocation.registryKey === contract.key);
+        const lastInvocation = invocations[0];
+        return {
+          ...contract,
+          registered,
+          invocationCount: invocations.length,
+          lastInvokedAt: lastInvocation?.requestedAt ?? null,
+          lastResultStatus: lastInvocation?.resultStatus ?? null,
+        };
+      }),
+      // Anything registered without a published contract is surfaced rather than
+      // hidden: an undocumented tool the runtime can call is a governance gap.
+      undocumented: Object.keys(this.tools).filter(
+        (key) => !TOOL_CONTRACTS.some((contract) => contract.key === key),
+      ),
+    };
+  }
+
+  /**
+   * Runs a contract test against a registered tool.
+   *
+   * For a tool that requires verification or a live conversation, the assertion that
+   * matters is that it *refuses* without one — so a refusal is recorded as a pass. A
+   * test that only checked for a success status would reward a tool that leaked.
+   */
+  async testToolContract(toolKey: string) {
+    const contract = findToolContract(toolKey);
+    const definition = this.tools[toolKey];
+    if (!contract || !definition) {
+      return { status: 'NOT_FOUND' as const };
+    }
+
+    // Built from the fields the contract declares, not a fixed blob. The tool schemas
+    // are strict, so an extra key would fail validation and make an unguarded tool look
+    // broken when the probe was simply wrong.
+    const sampleFor = (name: string, type: string): unknown => {
+      if (type === 'uuid') return '00000000-0000-4000-8000-000000000000';
+      if (name === 'park') return 'lisboa';
+      if (name === 'language') return 'en';
+      if (name === 'date') return new Date().toISOString().slice(0, 10);
+      if (name === 'caller_id') return '+000000000000';
+      if (name === 'priority') return 'NORMAL';
+      return 'Contract test probe';
+    };
+    const probe: Record<string, unknown> = Object.fromEntries(
+      contract.inputFields.map((field) => [field.name, sampleFor(field.name, field.type)]),
+    );
+
+    const started = Date.now();
+    const result = (await this.invoke(toolKey, probe)) as {
+      status?: string;
+      safe_message?: string;
+    };
+    const latencyMs = Date.now() - started;
+    const status = result.status ?? 'UNKNOWN';
+
+    // A guarded tool must decline an unverified probe. Declining is the correct
+    // behaviour and is recorded as a pass; answering it would be the failure.
+    const guarded = contract.verification !== 'NONE' || contract.writeLike;
+    const passed = guarded
+      ? ['VALIDATION_FAILED', 'NOT_FOUND', 'FORBIDDEN', 'NOT_CONFIGURED'].includes(status)
+      : // For an unguarded tool the contract is that it answers with an explicit state
+        // and never invents one. `NO_MATCH` against an unknown probe number is exactly
+        // that, so the assertion is "a known status", not "a successful one".
+        status !== 'UNKNOWN' && status.length > 0;
+
+    return {
+      status: 'TESTED' as const,
+      toolKey,
+      passed,
+      observedStatus: status,
+      latencyMs,
+      assertion: guarded
+        ? 'Declines an unverified probe'
+        : 'Responds with an explicit status and never invents a result',
+      safeMessage: result.safe_message ?? null,
+      testedAt: new Date().toISOString(),
     };
   }
 

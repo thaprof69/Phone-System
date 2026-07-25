@@ -167,20 +167,20 @@ Recorded as encountered. Evidence base path: `docs/qa/evidence/`.
 
 ## 6. FR/NFR and architecture-compliance updates
 
-Presentation now exists for the requirement groups below. These are marked as *surfaced*,
-not as *complete*: a list view backed by an authoritative endpoint is not the same as the
+Presentation now exists for the requirement groups below. These are marked as _surfaced_,
+not as _complete_: a list view backed by an authoritative endpoint is not the same as the
 full authoring and approval workflow the requirement describes.
 
-| Requirement group | Surface | State |
-|---|---|---|
-| FR-01–16 provider connection, agents, prompts, tools, transfers | Receptionist domain, Administration → Voice runtime | Read, compare and release-state surfaces built; authoring and tool-contract editing outstanding |
-| FR-17–29 knowledge lifecycle and provider sync | Knowledge domain | Library, review queue, publication state and gaps built; authoring and approval actions outstanding |
-| FR-30–35 voice catalogue, assignment, approval, consent | Receptionist → Voice library | Catalogue, assignments, availability and consent state built; comparison and approval actions outstanding |
-| FR-36–43 Test Studio and release gates | Quality domain | Cases, suites, runs, gates and QA reviews built; test-case editor outstanding |
-| FR-54–64 webhooks, evidence, transcripts, enrichment, reconciliation | Calls domain | Full call workspace, partial and failed views, corrections and reconciliation built |
-| FR-65–73 calls, analytics, reports, exports | Calls and Intelligence domains | Analytics with validated charts, trends and report lineage built; export and scheduling actions outstanding |
-| FR-74–82 operations, messaging, QA, RBAC, audit, retention | Operations and Administration domains | Queues, SLA view, access registry, audit chain, retention and flags built; work-item transitions outstanding |
-| NFR-10 accessibility (WCAG 2.2 AA) | Whole control plane | Three axe scans pass with zero violations; semantic tables, real navigation landmarks, keyboard paths tested |
+| Requirement group                                                    | Surface                                             | State                                                                                                        |
+| -------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| FR-01–16 provider connection, agents, prompts, tools, transfers      | Receptionist domain, Administration → Voice runtime | Read, compare and release-state surfaces built; authoring and tool-contract editing outstanding              |
+| FR-17–29 knowledge lifecycle and provider sync                       | Knowledge domain                                    | Library, review queue, publication state and gaps built; authoring and approval actions outstanding          |
+| FR-30–35 voice catalogue, assignment, approval, consent              | Receptionist → Voice library                        | Catalogue, assignments, availability and consent state built; comparison and approval actions outstanding    |
+| FR-36–43 Test Studio and release gates                               | Quality domain                                      | Cases, suites, runs, gates and QA reviews built; test-case editor outstanding                                |
+| FR-54–64 webhooks, evidence, transcripts, enrichment, reconciliation | Calls domain                                        | Full call workspace, partial and failed views, corrections and reconciliation built                          |
+| FR-65–73 calls, analytics, reports, exports                          | Calls and Intelligence domains                      | Analytics with validated charts, trends and report lineage built; export and scheduling actions outstanding  |
+| FR-74–82 operations, messaging, QA, RBAC, audit, retention           | Operations and Administration domains               | Queues, SLA view, access registry, audit chain, retention and flags built; work-item transitions outstanding |
+| NFR-10 accessibility (WCAG 2.2 AA)                                   | Whole control plane                                 | Three axe scans pass with zero violations; semantic tables, real navigation landmarks, keyboard paths tested |
 
 `docs/architecture/compliance-matrix.md` and `docs/product/requirements-traceability.md`
 are updated as each module reaches full depth, not on the strength of a surface existing.

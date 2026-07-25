@@ -619,12 +619,14 @@ export async function seedSyntheticBusinessData(
 
   const agentVersionIds = new Map<number, string>();
   for (const plan of agentVersionPlan) {
+    // Shaped to the agent conversation contract in `@quantum-parks/domain`, so seeded
+    // versions load in the editor and validate on save exactly like authored ones.
     const configuration = {
       systemPrompt: [
-        'You are the Quantum Parks telephone receptionist.',
-        'Always disclose that you are an automated assistant on the first turn.',
-        'Answer only from approved knowledge. If the answer is not in approved knowledge, say so and offer a callback.',
-        'Never take payment details. Never confirm a booking change yourself.',
+        'You are the Quantum Parks telephone receptionist for Lisboa, Porto and Sintra.',
+        'Answer callers courteously and briefly.',
+      ].join('\n'),
+      businessInstructions: [
         plan.version >= 2
           ? 'Offer accessibility guidance proactively when a caller mentions mobility.'
           : '',
@@ -637,35 +639,77 @@ export async function seedSyntheticBusinessData(
       ]
         .filter(Boolean)
         .join('\n'),
+      policyFragments: [
+        'Disclose on the first turn that this call is handled by an automated assistant.',
+        'Answer only from approved knowledge. If the answer is not in approved knowledge, say so and offer a callback.',
+        'Never request, accept, confirm or repeat payment card details. Transfer instead.',
+        'Never state that a booking, refund, payment or account change has been completed.',
+        'Never disclose protected customer details before verification has succeeded.',
+        'In a sensitive interaction, do not make commercial offers.',
+      ],
       firstMessage:
         'Good day, Quantum Parks. This call is handled by an automated assistant. How can I help?',
       disclosure: 'This call is handled by an automated assistant and is recorded as a transcript.',
-      closure: 'Thank you for calling Quantum Parks.',
+      closingMessage: 'Thank you for calling Quantum Parks.',
       afterHours: {
         enabled: true,
         message:
           'Our contact centre is closed. I can take a callback request for the next working day.',
+        offerCallback: true,
       },
-      turnSettings: { silenceTimeoutMs: 4500, maximumTurnMs: 30_000, interruptible: true },
+      turnSettings: {
+        silenceTimeoutMs: 4500,
+        maximumTurnMs: 30_000,
+        maximumCallSeconds: 900,
+        responseDelayMs: 250,
+        interruptible: true,
+      },
+      defaultLanguage: 'en',
       languages: plan.version >= 2 ? ['en', 'pt', 'es'] : ['en', 'pt'],
       tools: [
-        'lookup_opening_hours',
-        'lookup_ticket_pricing',
-        'create_callback_request',
-        ...(plan.version >= 4 ? ['create_lost_property_report', 'create_group_enquiry'] : []),
+        'get_opening_hours',
+        'get_packages_and_pricing',
+        'request_callback',
+        ...(plan.version >= 4 ? ['create_staff_task', 'lookup_customer'] : []),
       ],
       transfers: [
         {
           routeKey: 'payments',
+          park: null,
+          language: null,
           intent: 'refund_request',
           target: 'payments_queue',
           fallback: 'callback',
+          callbackPolicy: 'IF_UNANSWERED',
+          slaSeconds: 300,
+          operatingHours: {
+            opensAt: '09:00',
+            closesAt: '17:30',
+            days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+          },
+          sensitive: false,
+          environments: ['development'],
+          enabled: true,
+          priority: 0,
         },
         {
           routeKey: 'guest_relations',
+          park: null,
+          language: null,
           intent: 'complaint',
           target: 'guest_relations_queue',
           fallback: 'callback',
+          callbackPolicy: 'ALWAYS',
+          slaSeconds: 600,
+          operatingHours: {
+            opensAt: '09:00',
+            closesAt: '17:30',
+            days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+          },
+          sensitive: true,
+          environments: ['development'],
+          enabled: true,
+          priority: 1,
         },
       ],
     };

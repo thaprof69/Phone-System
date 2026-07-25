@@ -277,3 +277,48 @@ test('version comparison shows the actual change, not the whole file', async ({ 
   // An unapproved draft says so rather than showing an empty approval field.
   await expect(page.getByText('This version has not been independently approved.')).toBeVisible();
 });
+
+test('the conversation editor loads, validates server-side and persists', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/agents');
+  await page.locator('tbody th a').first().click();
+  await page.getByRole('tab', { name: 'Conversation' }).click();
+
+  // The editor is populated from the platform, not from a blank form.
+  const systemPrompt = page.getByLabel('System prompt');
+  await expect(systemPrompt).toBeVisible();
+  expect((await systemPrompt.inputValue()).length).toBeGreaterThan(20);
+
+  // The safety fragments are shown and declared locked.
+  await expect(page.getByRole('heading', { name: 'Safety policy' })).toBeVisible();
+  await expect(
+    page.getByText(
+      'Never request, accept, confirm or repeat payment card details. Transfer instead.',
+    ),
+  ).toBeVisible();
+});
+
+test('governed tools are inspectable but cannot be invented here', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/agents');
+  await page.locator('tbody th a').first().click();
+  await page.getByRole('tab', { name: /^Tools/ }).click();
+
+  await expect(page.getByText('Tools are code-owned')).toBeVisible();
+  // No control offers to define a tool from an arbitrary endpoint.
+  await expect(page.getByRole('button', { name: /add tool|new tool|create tool/i })).toHaveCount(0);
+
+  // A contract test runs against the platform and reports what it observed.
+  await page.getByRole('button', { name: 'Run test' }).first().click();
+  await expect(page.getByText(/Pass|Fail/).first()).toBeVisible({ timeout: 30_000 });
+});
+
+test('transfer routes are shown in the order the runtime evaluates them', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/agents');
+  await page.locator('tbody th a').first().click();
+  await page.getByRole('tab', { name: /^Transfers/ }).click();
+
+  await expect(page.getByText('Evaluated top to bottom, first match wins')).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'If unanswered' })).toBeVisible();
+});

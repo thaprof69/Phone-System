@@ -128,14 +128,14 @@ changes that, and no simulator evidence is presented as production evidence.
 
 **Verification**
 
-| Command | Result |
-|---|---|
-| `pnpm check` | format, lint, architecture, typecheck, test and build all green |
-| `pnpm traceability:check` | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.` |
-| `pnpm test:unit` | 9 files, 62 tests passed (was 8 files / 26) |
-| `npx playwright test --project=admin-chromium` | 19 passed across two consecutive runs |
-| `npx playwright test --project=customer-chromium` | 2 passed |
-| HTTP probe | all 45 admin routes return `200` |
+| Command                                           | Result                                                          |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `pnpm check`                                      | format, lint, architecture, typecheck, test and build all green |
+| `pnpm traceability:check`                         | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`          |
+| `pnpm test:unit`                                  | 9 files, 62 tests passed (was 8 files / 26)                     |
+| `npx playwright test --project=admin-chromium`    | 19 passed across two consecutive runs                           |
+| `npx playwright test --project=customer-chromium` | 2 passed                                                        |
+| HTTP probe                                        | all 45 admin routes return `200`                                |
 
 Three axe scans (Mission Control, call workspace, analytics) report zero violations.
 

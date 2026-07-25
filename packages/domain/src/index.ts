@@ -1,3 +1,4 @@
+export * from './agent-configuration.js';
 export * from './events.js';
 export * from './outcomes.js';
 export * from './redaction.js';

@@ -1,7 +1,23 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { authorize, type Principal } from '@quantum-parks/auth';
 import { z } from 'zod';
 import { PlatformService } from '../services/platform.service.js';
+import { ToolRegistryService } from '../services/tool-registry.service.js';
 import { RequirePermission } from '../security/access.guard.js';
+
+const IdSchema = z.uuid();
+const ToolKeySchema = z.string().regex(/^[a-z0-9_]+$/);
+type AuthenticatedRequest = { principal: Principal };
+
+const DraftFromVersionSchema = z.object({ sourceVersionId: z.uuid().optional() }).strict();
+const ConfigurationSaveSchema = z
+  .object({
+    // Validated structurally by the domain contract, not here: this route only needs
+    // to know a configuration object and a reason were supplied.
+    configuration: z.record(z.string(), z.unknown()),
+    changeReason: z.string().trim().min(8).max(500),
+  })
+  .strict();
 
 const AgentDraftSchema = z
   .object({
@@ -98,7 +114,10 @@ const ReportDefinitionSchema = z
 
 @Controller()
 export class ControlPlaneController {
-  constructor(private readonly platform: PlatformService) {}
+  constructor(
+    private readonly platform: PlatformService,
+    private readonly tools: ToolRegistryService,
+  ) {}
   @RequirePermission('agent:write')
   @Get('agents')
   agents() {
@@ -108,6 +127,62 @@ export class ControlPlaneController {
   @Post('agents')
   createAgent(@Body() body: unknown) {
     return this.platform.createAgentDraft(AgentDraftSchema.parse(body));
+  }
+  @RequirePermission('agent:write')
+  @Get('tool-contracts')
+  toolContracts() {
+    return this.tools.listToolContracts();
+  }
+  @RequirePermission('agent:write')
+  @Post('tool-contracts/:key/test')
+  testToolContract(@Param('key') key: string) {
+    return this.tools.testToolContract(ToolKeySchema.parse(key));
+  }
+  @RequirePermission('agent:write')
+  @Get('agent-versions/compare')
+  compareAgentVersions(@Query('left') left: string, @Query('right') right: string) {
+    return this.platform.compareAgentVersions(z.uuid().parse(left), z.uuid().parse(right));
+  }
+  // Declared after `compare` deliberately: a parameterised route registered first
+  // would capture the literal path and fail UUID parsing.
+  @RequirePermission('agent:write')
+  @Get('agent-versions/:id')
+  agentVersion(@Param('id') id: string) {
+    return this.platform.getAgentVersion(IdSchema.parse(id));
+  }
+  @RequirePermission('agent:write')
+  @Post('agents/:id/draft')
+  createAgentVersionDraft(@Param('id') id: string, @Body() body: unknown) {
+    const input = DraftFromVersionSchema.parse(body ?? {});
+    return this.platform.createAgentVersionDraft(
+      IdSchema.parse(id),
+      ...(input.sourceVersionId === undefined ? [] : ([input.sourceVersionId] as const)),
+    );
+  }
+  /**
+   * Saves an edited configuration. The safety fragments are code-owned, so the
+   * privilege to change them is checked here against the principal rather than
+   * inferred from what the browser sent.
+   */
+  @RequirePermission('agent:write')
+  @Post('agent-versions/:id/configuration')
+  saveAgentConfiguration(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = ConfigurationSaveSchema.parse(body);
+    return this.platform.updateAgentVersionConfiguration({
+      versionId: IdSchema.parse(id),
+      configuration: input.configuration,
+      changeReason: input.changeReason,
+      allowAdditionalFragments: authorize(request.principal, 'agent:publish', 'RELEASE_MANAGEMENT'),
+    });
+  }
+  @RequirePermission('agent:write')
+  @Post('agent-versions/:id/submit')
+  submitAgentVersion(@Param('id') id: string) {
+    return this.platform.submitAgentVersionForReview(IdSchema.parse(id));
   }
   @RequirePermission('agent:publish', 'RELEASE_MANAGEMENT')
   @Post('agent-releases/:id/decision')
@@ -129,11 +204,6 @@ export class ControlPlaneController {
   @Post('agent-releases/:id/publish')
   publish(@Param('id') id: string) {
     return this.platform.requestPublication(id);
-  }
-  @RequirePermission('agent:write')
-  @Get('agent-versions/compare')
-  compareAgentVersions(@Query('left') left: string, @Query('right') right: string) {
-    return this.platform.compareAgentVersions(z.uuid().parse(left), z.uuid().parse(right));
   }
   @RequirePermission('knowledge:write')
   @Get('knowledge')

@@ -22,6 +22,10 @@ import {
 } from '@quantum-parks/ui';
 import { AppShell } from '../../../shell';
 import { apiGet } from '../../../../lib/api';
+import { ConversationEditor, type ConversationConfiguration } from './conversation-editor';
+import { DraftActions } from './draft-actions';
+import { ToolContracts, type ToolContractRow } from './tool-contracts';
+import { TransferRoutes, type TransferRoute } from './transfer-routes';
 import type { AgentListRow, MissionControl, TestRunRow, TestRow } from '../../../../lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -68,7 +72,36 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
 
   const mission = missionResponse.ok ? missionResponse.data : null;
   const active = versions.find((row) => row.state === 'ACTIVE');
-  const draft = versions.find((row) => row.state === 'DRAFT');
+  const draft = versions.find((row) => row.state === 'DRAFT' || row.state === 'CHANGES_REQUESTED');
+
+  // The editor works on the draft when one exists, and otherwise shows the live
+  // version read-only so an operator can see what callers hear before drafting.
+  const editingVersionId = draft?.versionId ?? active?.versionId ?? versions[0]?.versionId;
+  const versionDetail = editingVersionId
+    ? await apiGet<{
+        status: string;
+        version: {
+          id: string;
+          version: number;
+          state: string;
+          configuration: ConversationConfiguration;
+          changeReason: string;
+          editable: boolean;
+        };
+      }>(`/agent-versions/${editingVersionId}`, { purpose: 'RELEASE_MANAGEMENT' })
+    : null;
+
+  const toolsResponse = await apiGet<{ items: ToolContractRow[]; undocumented: string[] }>(
+    '/tool-contracts',
+    { purpose: 'RELEASE_MANAGEMENT' },
+  );
+
+  const editedConfiguration =
+    versionDetail?.ok && versionDetail.data.status === 'OK'
+      ? versionDetail.data.version.configuration
+      : null;
+  const transferRoutes = (editedConfiguration?.transfers ?? []) as TransferRoute[];
+  const enabledToolKeys = (editedConfiguration?.tools ?? []) as string[];
   const sorted = [...versions].sort((left, right) => (right.version ?? 0) - (left.version ?? 0));
   const runs = testsResponse.ok ? testsResponse.data.runs : [];
   const lastCompletedRun = runs.find((run) => run.status !== 'RUNNING');
@@ -193,6 +226,37 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
             ),
           },
           {
+            value: 'conversation',
+            label: 'Conversation',
+            content:
+              versionDetail?.ok && versionDetail.data.status === 'OK' ? (
+                <>
+                  <DraftActions
+                    agentId={agent.id}
+                    versionId={versionDetail.data.version.id}
+                    versionNumber={versionDetail.data.version.version}
+                    state={versionDetail.data.version.state}
+                    hasDraft={Boolean(draft)}
+                  />
+                  <ConversationEditor
+                    versionId={versionDetail.data.version.id}
+                    versionNumber={versionDetail.data.version.version}
+                    editable={versionDetail.data.version.editable}
+                    canEditPolicy={false}
+                    initialConfiguration={versionDetail.data.version.configuration}
+                    initialChangeReason={versionDetail.data.version.changeReason}
+                  />
+                </>
+              ) : (
+                <Panel title="Configuration unavailable">
+                  <EmptyState
+                    title="This agent has no configuration to edit"
+                    detail="Create a draft to begin writing the conversation configuration."
+                  />
+                </Panel>
+              ),
+          },
+          {
             value: 'voices',
             label: 'Languages and voices',
             badge: assignments.length,
@@ -227,6 +291,37 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
                   </div>
                 )}
               </Panel>
+            ),
+          },
+          {
+            value: 'tools',
+            label: 'Tools',
+            badge: enabledToolKeys.length,
+            content: toolsResponse.ok ? (
+              <ToolContracts
+                contracts={toolsResponse.data.items}
+                undocumented={toolsResponse.data.undocumented}
+                enabledKeys={enabledToolKeys}
+              />
+            ) : (
+              <Panel title="Tool contracts unavailable">
+                <EmptyState title="Could not be read" detail={toolsResponse.reason} />
+              </Panel>
+            ),
+          },
+          {
+            value: 'transfers',
+            label: 'Transfers',
+            badge: transferRoutes.length,
+            content: (
+              <TransferRoutes
+                routes={transferRoutes}
+                editable={Boolean(
+                  versionDetail?.ok &&
+                  versionDetail.data.status === 'OK' &&
+                  versionDetail.data.version.editable,
+                )}
+              />
             ),
           },
           {

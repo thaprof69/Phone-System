@@ -1684,3 +1684,114 @@
   gap: 16px;
   margin-bottom: 20px;
 }
+
+/* ------------------------------------------------------ conversation editor */
+
+.conversation-editor .panel {
+  margin-bottom: 18px;
+}
+.unsaved-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  border: 1px solid #e6d3ad;
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: var(--amber-soft);
+}
+.policy-fragments {
+  padding-left: 20px;
+  margin: 0;
+  font-size: 13px;
+}
+.policy-fragments li {
+  margin-bottom: 7px;
+}
+.unsupported-settings {
+  padding-top: 14px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.unsupported-settings ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 6px 0 0;
+  list-style: none;
+}
+.unsupported-settings li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 9px 12px;
+  font-size: 13px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.unsupported-settings li small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.draft-actions {
+  margin-bottom: 18px;
+}
+.draft-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.draft-actions-row > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.draft-actions-buttons {
+  display: flex;
+  gap: 9px;
+}
+
+.drawer-subheading {
+  margin: 20px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.schema-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.schema-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.schema-list li small {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+.schema-type {
+  font-size: 11px;
+  color: var(--muted);
+}

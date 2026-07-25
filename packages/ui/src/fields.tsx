@@ -21,8 +21,8 @@ function FieldFrame({
 }: {
   id: string;
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
   required?: boolean;
   children: ReactNode;
 }) {
@@ -60,8 +60,8 @@ export function TextField({
 }: {
   id: string;
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
 } & Omit<ComponentProps<'input'>, 'id'>) {
   const description = describedBy(id, hint, error);
   return (
@@ -94,8 +94,8 @@ export function TextArea({
 }: {
   id: string;
   label: string;
-  hint?: string;
-  error?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
 } & Omit<ComponentProps<'textarea'>, 'id'>) {
   const description = describedBy(id, hint, error);
   return (
@@ -132,9 +132,9 @@ export function SelectField({
   id: string;
   label: string;
   options: readonly SelectOption[];
-  hint?: string;
-  error?: string;
-  placeholder?: string;
+  hint?: string | undefined;
+  error?: string | undefined;
+  placeholder?: string | undefined;
 } & Omit<ComponentProps<'select'>, 'id' | 'children'>) {
   const description = describedBy(id, hint, error);
   return (
@@ -171,7 +171,7 @@ export function CheckboxField({
 }: {
   id: string;
   label: string;
-  hint?: string;
+  hint?: string | undefined;
 } & Omit<ComponentProps<'input'>, 'id' | 'type'>) {
   return (
     <div className="field field-checkbox">
@@ -202,8 +202,8 @@ export function RadioGroupField({
   name: string;
   legend: string;
   options: readonly SelectOption[];
-  value?: string;
-  hint?: string;
+  value?: string | undefined;
+  hint?: string | undefined;
 }) {
   return (
     <fieldset className="field field-radio-group">
@@ -327,8 +327,8 @@ export function SearchInput({
   id?: string;
   name?: string;
   label?: string;
-  placeholder?: string;
-  defaultValue?: string;
+  placeholder?: string | undefined;
+  defaultValue?: string | undefined;
 }) {
   return (
     <div className="field field-search">
@@ -353,8 +353,8 @@ export function DateRangeFields({
 }: {
   fromName?: string;
   toName?: string;
-  fromValue?: string;
-  toValue?: string;
+  fromValue?: string | undefined;
+  toValue?: string | undefined;
   legend?: string;
 }) {
   return (
