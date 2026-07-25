@@ -189,6 +189,8 @@ export type CallRow = {
   sensitive: boolean;
   synthetic: boolean;
   receivedAt: string | null;
+  intent: string | null;
+  agentVersion: number | null;
 };
 
 /* ----------------------------------------------------------- operations */

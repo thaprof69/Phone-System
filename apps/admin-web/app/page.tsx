@@ -133,7 +133,7 @@ export default async function MissionControlPage() {
           tone="info"
           title="This environment uses the deterministic simulator"
           action={
-            <Link className="button ghost small" href="/administration/voice-runtime">
+            <Link className="button ghost small" href="/settings/ai-providers/elevenlabs">
               Voice runtime
             </Link>
           }
@@ -146,7 +146,7 @@ export default async function MissionControlPage() {
         title={receptionist.name}
         eyebrow="Current release"
         action={
-          <Link className="button secondary" href="/receptionist/agents">
+          <Link className="button secondary" href="/settings/receptionist">
             Open Agent Studio
           </Link>
         }
@@ -258,7 +258,7 @@ export default async function MissionControlPage() {
           label="Transferred"
           value={today.transferRate === null ? 'No data yet' : formatPercent(today.transferRate)}
           detail={`${formatNumber(today.transfers)} calls passed to a person`}
-          href="/operations/handoffs"
+          href="/calls/handoffs"
         />
         <MetricCard
           label="Unresolved"
@@ -272,14 +272,14 @@ export default async function MissionControlPage() {
           value={formatNumber(today.callbacksDue)}
           detail={`${formatNumber(today.callbacksOpen)} open in total`}
           tone={today.callbacksDue > 0 ? 'danger' : 'good'}
-          href="/operations/callbacks?due=overdue"
+          href="/calls/callbacks?due=overdue"
         />
         <MetricCard
           label="Open staff tasks"
           value={formatNumber(today.openTasks)}
           detail="Raised from calls, awaiting completion"
           tone={today.openTasks > 0 ? 'warning' : 'good'}
-          href="/operations/tasks"
+          href="/calls/tasks"
         />
         <MetricCard
           label="Failed processing"
@@ -297,7 +297,7 @@ export default async function MissionControlPage() {
               : 'No failing checks on the last completed run'
           }
           tone={today.testFailures > 0 ? 'danger' : toneForState(today.testStatus)}
-          href="/quality/runs"
+          href="/settings/simulation/results"
         />
       </MetricGrid>
 
@@ -335,7 +335,7 @@ export default async function MissionControlPage() {
             title="Readiness"
             eyebrow="Can this carry production traffic?"
             action={
-              <Link className="button ghost small" href="/administration/readiness">
+              <Link className="button ghost small" href="/settings/administration/readiness">
                 Details
               </Link>
             }
@@ -371,7 +371,7 @@ export default async function MissionControlPage() {
                   ))}
                 </ul>
                 {readiness.blockers.length > 3 ? (
-                  <Link className="more-link" href="/administration/readiness">
+                  <Link className="more-link" href="/settings/administration/readiness">
                     {readiness.blockers.length - 3} more
                   </Link>
                 ) : null}
@@ -400,7 +400,7 @@ export default async function MissionControlPage() {
                     Asked {formatNumber(data.insight.knowledgeGap.frequency)} times ·{' '}
                     {data.insight.knowledgeGap.language.toUpperCase()}
                   </span>
-                  <Link className="more-link" href="/knowledge/gaps">
+                  <Link className="more-link" href="/settings/knowledge/gaps">
                     Review knowledge gaps
                   </Link>
                 </div>

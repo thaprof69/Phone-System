@@ -51,6 +51,7 @@ import {
   aiTaxonomies,
   aiTaxonomyVersions,
   aiUsageRecords,
+  conversations,
   encryptedProviderCredentials,
   outboxEvents,
   transcriptRevisions,
@@ -82,6 +83,23 @@ type ProviderInput = {
 const successState = (state: string) => state === 'SUCCESS' || state === 'FALLBACK_USED';
 const safeCredentialReference = (provider: string, id: string) =>
   `AI-${provider}-${id.replaceAll('-', '').slice(0, 8).toUpperCase()}`;
+
+/** One grouped bucket (provider, model or capability) accumulated by `groupedUsage`. */
+type UsageGroup = {
+  key: string;
+  label: string;
+  executionCount: number;
+  latencies: number[];
+  fallbackCount: number;
+  schemaRejectedCount: number;
+  timeoutCount: number;
+  failureCount: number;
+  retryCount: number;
+  succeededCount: number;
+  costMicros: number;
+  inputTokens: number;
+  outputTokens: number;
+};
 
 @Injectable()
 export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventBus {
@@ -354,6 +372,219 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
         deprecated: model.deprecated,
         runs: usage.filter((record) => record.modelId === model.id).length,
       })),
+    };
+  }
+
+  /**
+   * One grouping pass over every usage record, joined back to the processing run
+   * that produced it, bucketed by provider, model and capability. `performanceBreakdown`
+   * and `costBreakdown` both read from this rather than each re-deriving their own
+   * groups, so there is one place that decides what counts as a fallback, a timeout
+   * or a retry.
+   */
+  private async groupedUsage() {
+    const [runs, usage, connections, models] = await Promise.all([
+      this.database.db.select().from(aiProcessingRuns),
+      this.database.db.select().from(aiUsageRecords),
+      this.database.db.select().from(aiProviderConnections),
+      this.database.db.select().from(aiModels),
+    ]);
+    const runById = new Map(runs.map((run) => [run.id, run]));
+
+    const emptyGroup = (key: string, label: string): UsageGroup => ({
+      key,
+      label,
+      executionCount: 0,
+      latencies: [],
+      fallbackCount: 0,
+      schemaRejectedCount: 0,
+      timeoutCount: 0,
+      failureCount: 0,
+      retryCount: 0,
+      succeededCount: 0,
+      costMicros: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    const byProvider = new Map<string, UsageGroup>();
+    const byModel = new Map<string, UsageGroup>();
+    const byCapability = new Map<string, UsageGroup>();
+
+    for (const record of usage) {
+      const run = runById.get(record.processingRunId);
+      if (!run) continue;
+      const connection = connections.find((entry) => entry.id === record.providerConnectionId);
+      const model = models.find((entry) => entry.id === record.modelId);
+
+      const providerKey = connection?.providerKey ?? 'UNKNOWN';
+      const modelKey = record.modelId;
+      const capabilityKey = record.capabilityKey;
+
+      const providerGroup =
+        byProvider.get(providerKey) ??
+        emptyGroup(providerKey, connection?.connectionLabel ?? providerKey);
+      const modelGroup =
+        byModel.get(modelKey) ??
+        emptyGroup(modelKey, model?.displayName ?? model?.providerModelId ?? 'Unknown model');
+      const capabilityGroup =
+        byCapability.get(capabilityKey) ?? emptyGroup(capabilityKey, capabilityKey);
+
+      for (const group of [providerGroup, modelGroup, capabilityGroup]) {
+        group.executionCount += 1;
+        group.latencies.push(record.latencyMs);
+        group.costMicros += record.costMicros ?? 0;
+        group.inputTokens += record.inputTokens ?? 0;
+        group.outputTokens += record.outputTokens ?? 0;
+        if (run.state === 'FALLBACK_USED') group.fallbackCount += 1;
+        if (run.state === 'SCHEMA_REJECTED' || run.state === 'VALIDATION_FAILED')
+          group.schemaRejectedCount += 1;
+        if (run.state === 'TIMEOUT') group.timeoutCount += 1;
+        if (successState(run.state)) group.succeededCount += 1;
+        else group.failureCount += 1;
+        if (run.attempt > 1) group.retryCount += 1;
+      }
+      byProvider.set(providerKey, providerGroup);
+      byModel.set(modelKey, modelGroup);
+      byCapability.set(capabilityKey, capabilityGroup);
+    }
+
+    return { runs, usage, byProvider, byModel, byCapability };
+  }
+
+  private percentile(latencies: number[], fraction: number): number | null {
+    if (latencies.length === 0) return null;
+    const sorted = [...latencies].sort((left, right) => left - right);
+    return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? null;
+  }
+
+  /**
+   * Per-provider, per-model and per-capability execution health. Every figure
+   * traces back to the same `ai_processing_runs`/`ai_usage_records` rows the
+   * execution list and monitoring summary already read — this is a different cut
+   * of the same evidence, not a second source of truth for it.
+   */
+  async performanceBreakdown() {
+    const { byProvider, byModel, byCapability } = await this.groupedUsage();
+    const toRow = (group: UsageGroup) => ({
+      key: group.key,
+      label: group.label,
+      executionCount: group.executionCount,
+      averageLatencyMs:
+        group.latencies.length > 0
+          ? group.latencies.reduce((sum, value) => sum + value, 0) / group.latencies.length
+          : null,
+      p95LatencyMs: this.percentile(group.latencies, 0.95),
+      fallbackRate: group.executionCount > 0 ? group.fallbackCount / group.executionCount : null,
+      schemaValidationFailures: group.schemaRejectedCount,
+      timeoutCount: group.timeoutCount,
+      failureCount: group.failureCount,
+      retryCount: group.retryCount,
+      successRate: group.executionCount > 0 ? group.succeededCount / group.executionCount : null,
+    });
+    const sortByVolume = <T extends { executionCount: number }>(rows: T[]) =>
+      rows.sort((left, right) => right.executionCount - left.executionCount);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      byProvider: sortByVolume([...byProvider.values()].map(toRow)),
+      byModel: sortByVolume([...byModel.values()].map(toRow)),
+      byCapability: sortByVolume([...byCapability.values()].map(toRow)),
+    };
+  }
+
+  /**
+   * Token usage and spend, grouped the same way as `performanceBreakdown`, plus
+   * cost attributed back to the conversations that caused it (via
+   * `sourceRecordId`) and the existing budget policies' utilisation/breach state
+   * from `budgetStatus`. No new spend ledger — this reads the same
+   * `ai_usage_records` and `ai_budget_policies` rows.
+   */
+  async costBreakdown() {
+    const { runs, usage, byProvider, byModel, byCapability } = await this.groupedUsage();
+    const budgets = await this.budgetStatus();
+    const runById = new Map(runs.map((run) => [run.id, run]));
+
+    const conversationIds = [...new Set(runs.map((run) => run.sourceRecordId))];
+    const conversationRows =
+      conversationIds.length > 0
+        ? await this.database.db
+            .select()
+            .from(conversations)
+            .where(inArray(conversations.id, conversationIds))
+        : [];
+    const conversationById = new Map(conversationRows.map((row) => [row.id, row]));
+
+    const costByConversation = new Map<string, number>();
+    for (const record of usage) {
+      const run = runById.get(record.processingRunId);
+      if (!run) continue;
+      costByConversation.set(
+        run.sourceRecordId,
+        (costByConversation.get(run.sourceRecordId) ?? 0) + (record.costMicros ?? 0),
+      );
+    }
+    const costedConversations = [...costByConversation.entries()];
+    const completedCosted = costedConversations.filter(
+      ([conversationId]) => conversationById.get(conversationId)?.processingState === 'COMPLETED',
+    );
+
+    const trendBucket = (date: Date, granularity: 'day' | 'week' | 'month'): string => {
+      if (granularity === 'month') return date.toISOString().slice(0, 7);
+      if (granularity === 'day') return date.toISOString().slice(0, 10);
+      const monday = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+      const isoDay = monday.getUTCDay() || 7;
+      monday.setUTCDate(monday.getUTCDate() - isoDay + 1);
+      return monday.toISOString().slice(0, 10);
+    };
+    const buildTrend = (granularity: 'day' | 'week' | 'month') => {
+      const totals = new Map<string, number>();
+      for (const record of usage) {
+        const key = trendBucket(record.createdAt, granularity);
+        totals.set(key, (totals.get(key) ?? 0) + (record.costMicros ?? 0));
+      }
+      return [...totals.entries()]
+        .map(([label, costMicros]) => ({ label, costMicros }))
+        .sort((left, right) => left.label.localeCompare(right.label));
+    };
+
+    const toRow = (group: UsageGroup) => ({
+      key: group.key,
+      label: group.label,
+      executionCount: group.executionCount,
+      costMicros: group.costMicros,
+      inputTokens: group.inputTokens,
+      outputTokens: group.outputTokens,
+    });
+    const sortBySpend = <T extends { costMicros: number }>(rows: T[]) =>
+      rows.sort((left, right) => right.costMicros - left.costMicros);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      currency: usage.find((record) => record.currency)?.currency ?? 'GBP',
+      totals: {
+        costMicros: usage.reduce((sum, record) => sum + (record.costMicros ?? 0), 0),
+        inputTokens: usage.reduce((sum, record) => sum + (record.inputTokens ?? 0), 0),
+        outputTokens: usage.reduce((sum, record) => sum + (record.outputTokens ?? 0), 0),
+      },
+      // Null rather than zero with nothing costed yet: an average of no evidence
+      // is unknown, not free.
+      costPerCallMicros:
+        costedConversations.length > 0
+          ? costedConversations.reduce((sum, [, cost]) => sum + cost, 0) /
+            costedConversations.length
+          : null,
+      costPerCompletedConversationMicros:
+        completedCosted.length > 0
+          ? completedCosted.reduce((sum, [, cost]) => sum + cost, 0) / completedCosted.length
+          : null,
+      byProvider: sortBySpend([...byProvider.values()].map(toRow)),
+      byModel: sortBySpend([...byModel.values()].map(toRow)),
+      byCapability: sortBySpend([...byCapability.values()].map(toRow)),
+      dailyTrend: buildTrend('day'),
+      weeklyTrend: buildTrend('week'),
+      monthlyTrend: buildTrend('month'),
+      budgets: budgets.items,
     };
   }
 

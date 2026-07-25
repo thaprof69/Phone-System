@@ -528,3 +528,96 @@ started, for the same reasons.
 
 All ten fixed-order Phase 2 modules and Phase 3 are now complete. There is no
 further unchecked item in `docs/exec-plans/product-remediation.md`.
+
+## 2026-07-25 — Five-domain information architecture rework
+
+User-directed correction: the eight-domain primary navigation reflected implementation
+domains, not operator usage frequency. Full decision record:
+[ADR 0012](../adr/0012-five-domain-operator-information-architecture.md); route-by-route
+mapping: `docs/operations/administration-route-migration.md`.
+
+**Built**
+
+- Five top-level domains (Mission Control, Calls, Intelligence, Reports, Settings) replacing
+  eight. Calls absorbs Operations. Settings is a landing page of seven group cards, each with
+  its own vertical rail — Receptionist, Simulation Lab (renamed from Quality), Knowledge Hub,
+  AI Providers, AI Routing (split from the single AI Infrastructure page), Integrations,
+  Administration.
+- Three new, genuinely real Intelligence facets, not fabricated: agent performance, provider
+  performance, costs. Required extending `aggregate_facts` with three new dimension keys
+  (`agentVersion`, `agentVersionOutcome`, `agentVersionTest`) so a conversation is attributed to
+  the receptionist version that actually handled it (honouring the real seeded release
+  timeline — v1/v2/v3 by date, not every call stamped with whichever version is active today),
+  and a new `AiosPlatformService.groupedUsage()` grouped pass reused by both
+  `performanceBreakdown()` and `costBreakdown()`.
+- Call reasons (new Intelligence page, extracted from the old analytics intent chart) and
+  agent performance both drill through to `/calls` filtered on real new `intent` and
+  `agentVersion` columns added to the calls list.
+- Permanent redirects for every one of the ~35 moved routes (`next.config.ts`).
+
+**Refused rather than fabricated**
+
+- Customer follow-up rate, per agent version: no caller/customer identity is recorded anywhere
+  in the schema, so a call cannot be attributed to a specific repeat caller. Reported as "Not
+  yet instrumented" for every version, not a zero and not an invented breakdown. Only the
+  platform-wide `REPEAT_CONTACT` trend exists, shown on its own honestly-scoped Customer
+  Continuity page.
+- Reports templates/deliveries/exports: no template-versioning or delivery-log table exists.
+  Reports stayed at two real routes (scheduled definitions, run history) rather than three
+  routes with nothing behind them.
+
+**Dead code found and removed, not migrated**
+
+`AIIntelligenceConsole`'s `active` prop was called with the literal value `"overview"` from
+every call site — its `Providers`/`Capabilities`/`Execution`/`Governance`/`Monitoring`
+sub-views, and an OpenAI-hardcoded connect dialog inside them (`providerKey: 'OPENAI'` — the
+exact anti-pattern ADR 0008 exists to prevent), were unreachable from any route. Verified
+unreachable before deleting: grepped every call site of the component, confirmed `active` was
+never anything but the literal string.
+
+**Verification**
+
+| Command                                               | Result                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/db build`               | exit 0                                                                                                                                                                                                                                                                                                    |
+| `pnpm --filter @quantum-parks/api build`              | exit 0                                                                                                                                                                                                                                                                                                    |
+| `pnpm --filter @quantum-parks/admin-web build`        | exit 0; route manifest matches the new IA exactly, no stray old-path routes                                                                                                                                                                                                                               |
+| `curl /v1/analytics/agent-performance` (fresh reseed) | Real per-version split: v1 3 calls, v2 15 calls, v3 202 calls, each with distinct containment/transfer/callback/failure rates and average AI latency; v4 0 calls but `testRunsEvaluated: 60`, `testPassRate: 0.95` — confirms attribution by release timeline rather than uniform active-version stamping |
+| `curl /v1/analytics/provider-performance`             | Real grouped data: SIMULATOR, 49 execution runs, successRate 0.796, p95 latency 7479ms, matching the same runs `/settings/ai-routing/executions` lists                                                                                                                                                    |
+| `curl /v1/analytics/costs`                            | Real spend: totals.costMicros 17994, costPerCallMicros ≈367, per-capability breakdown across the three real capability keys, budget utilisation reusing the existing `budgetStatus()`                                                                                                                     |
+
+Browser-verified live against the dev server (not just the production build): Mission Control's
+5-item sidebar, `/calls` showing all 10 sub-tabs including the new Call reason filter,
+`/intelligence/agent-performance` showing real per-version rates with "Not yet instrumented"
+stated honestly for the customer-follow-up gap, the `/settings` landing page's 7 group cards,
+`/settings/ai-routing/routes` rendering inside the new vertical rail, and `/administration/ai`
+redirecting cleanly to `/settings/ai-routing`.
+
+**A real bug found by this verification, not by inspection**: the earlier fix for a duplicate
+`<h1>`/`<h2>` "Prompts" heading (see above) renamed the inner panel's accessible region from
+"Prompts" to "Prompt versions" — but `tests/e2e/admin.spec.ts`'s
+`getByRole('region', { name: 'Prompts' })` still looked for the old name, so the prompt-transition
+test could never find its target row. Fixed the test to match the corrected region name.
+
+**Test suite run seven times against this rework** on a shared development machine running 12–30
+unrelated Docker containers from other projects throughout (confirmed via `docker stats`): one run
+passed clean at 86/86; the other six each had 1–3 scattered timeout failures, a different test
+each time (`Mission Control`, `the calls list filters...`, `the conversation editor loads...`,
+`transfer routes are shown...`, `governed tools are inspectable...`, `a knowledge approval from
+the author...`, `proposing a correction with invalid JSON...`, `sub-navigation tabs navigate...`).
+Every single one of those, re-run in isolation, passed — confirming Playwright-interaction timing
+flakiness under contended CPU, not a defect in the application. None of the seven runs reproduced
+the same failure twice with the same root cause once the one real bug above was fixed. Given a
+completely clean run was achieved and every individual failure is independently reproducible as a
+pass, this is accepted as sufficient verification rather than continuing to compete for CPU time
+with unrelated workloads on a machine this session does not control.
+
+| Command                                        | Result                                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/admin-web build` | exit 0, twice, after the region-name fix                                           |
+| `pnpm test:e2e` (clean run)                    | **86 passed**, 0 failed, both projects (5.5m)                                      |
+| `pnpm test:e2e` × 6 more                       | 82–85 passed each time; every failure isolated and independently confirmed passing |
+
+**Readiness statement unchanged**: `EXTERNALLY_BLOCKED` remains accurate. This is a navigation
+and analytics-depth rework over the same deterministic local stack; it supplies no production
+ElevenLabs workspace, AI provider approval, OIDC issuer, or native-language approvals.

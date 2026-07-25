@@ -1,12 +1,18 @@
 /**
  * The control plane's information architecture, declared once.
  *
- * Three independent navigation arrays previously existed, and active state was matched
- * by comparing a label string that every page had to pass down by hand. Everything now
- * derives from this file and from the current pathname.
+ * Structure: five primary domains in the sidebar (Mission Control, Calls,
+ * Intelligence, Reports, Settings), reflecting how often an operator actually visits
+ * each one — monitor, review calls, act on insight, consume reports, occasionally
+ * configure. Settings is a third tier: it does not get its own row of sub-navigation
+ * tabs like the other four domains. Instead `/settings` is a grouped landing page,
+ * and each group (Receptionist, Simulation Lab, Knowledge Hub, AI Providers,
+ * AI Routing, Integrations, Administration) has its own vertical section list
+ * (`SettingsSectionShell`) rather than a horizontal tab bar, so the primary nav
+ * never grows a second or third stacked row.
  *
- * Structure: eight primary domains in the sidebar, each with its own sub-navigation
- * rendered inside the domain. There is no second competing navigation system.
+ * There is no second competing navigation system: everything derives from this file
+ * and from the current pathname.
  */
 
 export type SubArea = {
@@ -52,104 +58,11 @@ export const DOMAINS = [
     ],
   },
   {
-    key: 'receptionist',
-    href: '/receptionist/agents',
-    label: 'Receptionist',
-    icon: 'Bot',
-    description:
-      'The agent that answers the telephone: configuration, voices, versions and releases.',
-    areas: [
-      {
-        href: '/receptionist/agents',
-        label: 'Agents',
-        description: 'Every receptionist agent with its live version, tests and drift state.',
-      },
-      {
-        href: '/receptionist/voices',
-        label: 'Voice library',
-        description: 'Provider voices, approvals and per-language assignments.',
-      },
-      {
-        href: '/receptionist/versions',
-        label: 'Versions',
-        description: 'Every configuration version and how it differs from the one before.',
-      },
-      {
-        href: '/receptionist/releases',
-        label: 'Releases',
-        description: 'Approval, testing, publication, provider read-back and rollback.',
-      },
-    ],
-  },
-  {
-    key: 'knowledge',
-    href: '/knowledge/library',
-    label: 'Knowledge',
-    icon: 'Library',
-    description: 'The approved company answers the receptionist is allowed to give.',
-    areas: [
-      {
-        href: '/knowledge/library',
-        label: 'Library',
-        description: 'All knowledge assets with owner, risk, effective dates and sync state.',
-      },
-      {
-        href: '/knowledge/review',
-        label: 'Review queue',
-        description: 'Changes waiting for an independent approver.',
-      },
-      {
-        href: '/knowledge/releases',
-        label: 'Releases',
-        description: 'Publication to the voice runtime, and divergence from it.',
-      },
-      {
-        href: '/knowledge/gaps',
-        label: 'Knowledge gaps',
-        description: 'Questions callers asked that approved knowledge could not answer.',
-      },
-    ],
-  },
-  {
-    key: 'quality',
-    href: '/quality/test-cases',
-    label: 'Quality',
-    icon: 'ClipboardCheck',
-    description: 'Test definition, evidence and the gates a release must clear.',
-    areas: [
-      {
-        href: '/quality/test-cases',
-        label: 'Test cases',
-        description: 'What each test asserts, at what risk level, in which language.',
-      },
-      {
-        href: '/quality/suites',
-        label: 'Test suites',
-        description: 'Grouped tests, including the suites mandatory for release.',
-      },
-      {
-        href: '/quality/runs',
-        label: 'Test runs',
-        description: 'Provider output beside internal evaluation, with failure evidence.',
-      },
-      {
-        href: '/quality/gates',
-        label: 'Release gates',
-        description: 'Each gate evaluated independently by the server.',
-      },
-      {
-        href: '/quality/reviews',
-        label: 'QA reviews',
-        description: 'Human quality scoring against the review rubric.',
-      },
-    ],
-  },
-  {
     key: 'calls',
     href: '/calls',
     label: 'Calls',
     icon: 'Activity',
-    description: 'Canonical call history, investigation and reconciliation.',
+    description: 'Every call, and the work a call creates: transfers, callbacks, tasks, messages.',
     areas: [
       {
         href: '/calls',
@@ -157,9 +70,9 @@ export const DOMAINS = [
         description: 'Every call the platform holds a record of.',
       },
       {
-        href: '/calls/partial',
-        label: 'Partial processing',
-        description: 'Calls whose enrichment did not complete.',
+        href: '/calls/live',
+        label: 'Live activity',
+        description: 'Calls whose enrichment is still in progress.',
       },
       {
         href: '/calls/failed',
@@ -176,37 +89,28 @@ export const DOMAINS = [
         label: 'Reconciliation',
         description: 'Missing calls, duplicate events and provider import.',
       },
-    ],
-  },
-  {
-    key: 'operations',
-    href: '/operations/handoffs',
-    label: 'Operations',
-    icon: 'Workflow',
-    description: 'The work a call creates: transfers, callbacks, tasks and messages.',
-    areas: [
       {
-        href: '/operations/handoffs',
+        href: '/calls/handoffs',
         label: 'Handoffs',
         description: 'Live transfers, whether they were answered, and their fallback.',
       },
       {
-        href: '/operations/callbacks',
+        href: '/calls/callbacks',
         label: 'Callbacks',
         description: 'Customers owed a call back, by owner and due time.',
       },
       {
-        href: '/operations/tasks',
+        href: '/calls/tasks',
         label: 'Staff tasks',
         description: 'Work raised for a team to complete.',
       },
       {
-        href: '/operations/messages',
+        href: '/calls/messages',
         label: 'Messages',
         description: 'Outbound messages, delivery receipts and failures.',
       },
       {
-        href: '/operations/sla',
+        href: '/calls/sla',
         label: 'SLA and failures',
         description: 'Overdue, failed and blocked work first.',
       },
@@ -214,14 +118,14 @@ export const DOMAINS = [
   },
   {
     key: 'intelligence',
-    href: '/intelligence/analytics',
+    href: '/intelligence',
     label: 'Intelligence',
     icon: 'ChartNoAxesCombined',
-    description: 'What the calls say in aggregate, and the reports built from them.',
+    description: 'The evidence and insight produced from calls.',
     areas: [
       {
-        href: '/intelligence/analytics',
-        label: 'Analytics',
+        href: '/intelligence',
+        label: 'Overview',
         description: 'Demand, intent mix, outcomes and containment over time.',
       },
       {
@@ -230,94 +134,324 @@ export const DOMAINS = [
         description: 'Movements detected across periods, with their evidence.',
       },
       {
-        href: '/intelligence/gaps',
+        href: '/intelligence/call-reasons',
+        label: 'Call reasons',
+        description: 'Why people call, ranked, with drill-through to the calls behind each reason.',
+      },
+      {
+        href: '/intelligence/knowledge-gaps',
         label: 'Knowledge gaps',
         description: 'Unanswered questions ranked by how often they are asked.',
       },
       {
-        href: '/intelligence/reports',
-        label: 'Reports',
-        description: 'Report definitions, schedules, runs and delivery.',
+        href: '/intelligence/customer-continuity',
+        label: 'Customer continuity',
+        description: 'Repeat contact: whether the same question is coming back.',
+      },
+      {
+        href: '/intelligence/agent-performance',
+        label: 'Agent performance',
+        description: 'Containment, transfer, callback and failure rate by receptionist version.',
+      },
+      {
+        href: '/intelligence/provider-performance',
+        label: 'Provider performance',
+        description: 'Execution health of the AI providers and models enriching calls.',
+      },
+      {
+        href: '/intelligence/costs',
+        label: 'Costs',
+        description: 'Token usage and spend, by provider, model and capability.',
       },
     ],
   },
   {
-    key: 'administration',
-    href: '/administration',
-    label: 'Administration',
-    icon: 'Settings',
-    description: 'Platform configuration, integrations, access, privacy and release control.',
+    key: 'reports',
+    href: '/reports',
+    label: 'Reports',
+    icon: 'FileText',
+    description: 'Scheduled reports, their run history and data lineage.',
     areas: [
-      { href: '/administration', label: 'Overview', description: 'Administration at a glance.' },
       {
-        href: '/administration/general',
-        label: 'General',
-        description: 'Organisation, parks, languages, hours and contact defaults.',
+        href: '/reports',
+        label: 'Scheduled reports',
+        description: 'Report definitions, their schedule and classification.',
       },
       {
-        href: '/administration/voice-runtime',
-        label: 'Voice runtime',
-        description: 'The ElevenLabs connection, capabilities, health and drift.',
+        href: '/reports/history',
+        label: 'Run history',
+        description: 'Every run, the period it covered, and its data lineage.',
       },
+    ],
+  },
+  {
+    key: 'settings',
+    href: '/settings',
+    label: 'Settings',
+    icon: 'Settings',
+    description: 'Everything used to configure and govern the receptionist.',
+    // Settings does not render these as a horizontal tab bar (see module comment) —
+    // it renders them as the grouped landing page at /settings.
+    areas: [
       {
-        href: '/administration/ai',
-        label: 'AI infrastructure',
-        description: 'Providers, models, capabilities, routes, prompts, budgets and runs.',
-      },
-      {
-        href: '/administration/integrations',
-        label: 'Business integrations',
-        description: 'Support, customer, booking, messaging and storage systems.',
-      },
-      {
-        href: '/administration/users',
-        label: 'Users and roles',
-        description: 'Who has access, with what authority, and separation of duties.',
-      },
-      {
-        href: '/administration/security',
-        label: 'Security and privacy',
-        description: 'Credentials, masking, residency, retention posture and consent.',
-      },
-      {
-        href: '/administration/audit',
-        label: 'Audit',
-        description: 'The hash-chained record of who changed what, and why.',
-      },
-      {
-        href: '/administration/retention',
-        label: 'Retention',
-        description: 'Retention policies, deletion jobs and legal holds.',
-      },
-      {
-        href: '/administration/feature-flags',
-        label: 'Feature flags',
-        description: 'Capabilities held behind an explicit approval gate.',
-      },
-      {
-        href: '/administration/readiness',
-        label: 'Production readiness',
-        description: 'Readiness by domain, with the blockers for each.',
-      },
-      {
-        href: '/administration/release',
-        label: 'Release administration',
-        description: 'Release authority, evidence and rollback control.',
+        href: '/settings',
+        label: 'Overview',
+        description: 'Every configuration area, grouped.',
       },
     ],
   },
 ] as const satisfies readonly Domain[];
 
+/** One group on the Settings landing page, each with its own vertical section list. */
+export type SettingsGroup = {
+  key: string;
+  href: string;
+  label: string;
+  description: string;
+  areas: readonly SubArea[];
+};
+
+export const SETTINGS_GROUPS = [
+  {
+    key: 'receptionist',
+    href: '/settings/receptionist',
+    label: 'Receptionist',
+    description: 'The agent that answers the telephone: configuration, voices, versions, releases.',
+    areas: [
+      {
+        href: '/settings/receptionist',
+        label: 'Agents',
+        description: 'Every receptionist agent with its live version, tests and drift state.',
+      },
+      {
+        href: '/settings/receptionist/voices',
+        label: 'Languages and voices',
+        description: 'Provider voices, approvals and per-language assignments.',
+      },
+      {
+        href: '/settings/receptionist/versions',
+        label: 'Versions',
+        description: 'Every configuration version and how it differs from the one before.',
+      },
+      {
+        href: '/settings/receptionist/releases',
+        label: 'Releases',
+        description: 'Approval, testing, publication, provider read-back and rollback.',
+      },
+    ],
+  },
+  {
+    key: 'simulation',
+    href: '/settings/simulation/results',
+    label: 'Simulation Lab',
+    description: 'Scenario testing, results and the gates a release must clear.',
+    areas: [
+      {
+        href: '/settings/simulation/scenarios',
+        label: 'Scenarios',
+        description: 'What each scenario asserts, at what risk level, in which language.',
+      },
+      {
+        href: '/settings/simulation/collections',
+        label: 'Test collections',
+        description: 'Grouped scenarios, including the collections mandatory for release.',
+      },
+      {
+        href: '/settings/simulation/results',
+        label: 'Interactive test',
+        description: 'Run a collection now, and see provider output beside internal evaluation.',
+      },
+      {
+        href: '/settings/simulation/release-checks',
+        label: 'Release checks',
+        description: 'Each gate evaluated independently by the server.',
+      },
+      {
+        href: '/settings/simulation/reviews',
+        label: 'Reviews',
+        description: 'Human quality scoring against the review rubric.',
+      },
+    ],
+  },
+  {
+    key: 'knowledge',
+    href: '/settings/knowledge',
+    label: 'Knowledge Hub',
+    description: 'The approved company answers the receptionist is allowed to give.',
+    areas: [
+      {
+        href: '/settings/knowledge',
+        label: 'Library',
+        description: 'All knowledge assets with owner, risk, effective dates and sync state.',
+      },
+      {
+        href: '/settings/knowledge/review',
+        label: 'Review queue',
+        description: 'Changes waiting for an independent approver.',
+      },
+      {
+        href: '/settings/knowledge/releases',
+        label: 'Releases',
+        description: 'Publication to the voice runtime, and divergence from it.',
+      },
+      {
+        href: '/settings/knowledge/gaps',
+        label: 'Knowledge gaps',
+        description: 'Questions callers asked that approved knowledge could not answer.',
+      },
+    ],
+  },
+  {
+    key: 'ai-providers',
+    href: '/settings/ai-providers',
+    label: 'AI Providers',
+    description: 'Connections, credentials and health for every provider in use.',
+    areas: [
+      {
+        href: '/settings/ai-providers/elevenlabs',
+        label: 'ElevenLabs setup',
+        description: 'The voice runtime connection: capabilities, health and drift.',
+      },
+      {
+        href: '/settings/ai-providers/intelligence',
+        label: 'Intelligence providers',
+        description: 'Providers connected for post-call enrichment, with test-before-save proof.',
+      },
+      {
+        href: '/settings/ai-providers/models',
+        label: 'Models',
+        description: 'Discovered models, approval by environment, and recorded pricing.',
+      },
+      {
+        href: '/settings/ai-providers/health',
+        label: 'Provider health',
+        description: 'Connection health checks and degraded periods.',
+      },
+    ],
+  },
+  {
+    key: 'ai-routing',
+    href: '/settings/ai-routing',
+    label: 'AI Routing',
+    description: 'What performs each business capability, and what it is allowed to cost.',
+    areas: [
+      {
+        href: '/settings/ai-routing',
+        label: 'Overview',
+        description: 'Capabilities, prompts, schemas and taxonomies at a glance.',
+      },
+      {
+        href: '/settings/ai-routing/capabilities',
+        label: 'Capabilities',
+        description: 'Business capabilities and the service contract each version implements.',
+      },
+      {
+        href: '/settings/ai-routing/routes',
+        label: 'Routes',
+        description: 'Provider and model routing per capability, with ordered fallbacks.',
+      },
+      {
+        href: '/settings/ai-routing/prompts',
+        label: 'Prompts',
+        description: 'Prompt versions, approval and rollback.',
+      },
+      {
+        href: '/settings/ai-routing/schemas',
+        label: 'Schemas and taxonomies',
+        description: 'Output schema and taxonomy versions a capability may depend on.',
+      },
+      {
+        href: '/settings/ai-routing/budgets',
+        label: 'Budgets',
+        description: 'Spend limits in GBP, by provider, model or capability.',
+      },
+      {
+        href: '/settings/ai-routing/executions',
+        label: 'Execution history',
+        description: 'Every run, its provenance, and the record it enriched.',
+      },
+      {
+        href: '/settings/ai-routing/monitoring',
+        label: 'Monitoring',
+        description: 'Success, fallback and failure rates, drilling through to runs.',
+      },
+    ],
+  },
+  {
+    key: 'integrations',
+    href: '/settings/integrations',
+    label: 'Integrations',
+    description: 'Support, customer, booking, messaging and storage systems.',
+    areas: [
+      {
+        href: '/settings/integrations',
+        label: 'Business integrations',
+        description: 'Support, customer, booking, messaging and storage systems.',
+      },
+    ],
+  },
+  {
+    key: 'administration',
+    href: '/settings/administration',
+    label: 'Administration',
+    description: 'Organisation defaults, access, privacy, audit and release control.',
+    areas: [
+      {
+        href: '/settings/administration',
+        label: 'Overview',
+        description: 'Administration at a glance, with readiness by domain.',
+      },
+      {
+        href: '/settings/administration/general',
+        label: 'General',
+        description: 'Organisation, parks, languages, hours and contact defaults.',
+      },
+      {
+        href: '/settings/administration/users',
+        label: 'Users and roles',
+        description: 'Who has access, with what authority, and separation of duties.',
+      },
+      {
+        href: '/settings/administration/security',
+        label: 'Security and privacy',
+        description: 'Credentials, masking, residency, retention posture and consent.',
+      },
+      {
+        href: '/settings/administration/audit',
+        label: 'Audit',
+        description: 'The hash-chained record of who changed what, and why.',
+      },
+      {
+        href: '/settings/administration/retention',
+        label: 'Retention and legal holds',
+        description: 'Retention policies, deletion jobs and legal holds.',
+      },
+      {
+        href: '/settings/administration/feature-flags',
+        label: 'Feature flags',
+        description: 'Capabilities held behind an explicit approval gate.',
+      },
+      {
+        href: '/settings/administration/readiness',
+        label: 'Production readiness',
+        description: 'Readiness by domain, with the blockers for each.',
+      },
+      {
+        href: '/settings/administration/release',
+        label: 'Release administration',
+        description: 'Release authority, evidence and rollback control.',
+      },
+    ],
+  },
+] as const satisfies readonly SettingsGroup[];
+
 /** Path prefixes each domain owns. Mission Control owns the root and its siblings. */
 const DOMAIN_PREFIXES: Record<string, readonly string[]> = {
   'mission-control': ['/alerts', '/readiness'],
-  receptionist: ['/receptionist'],
-  knowledge: ['/knowledge'],
-  quality: ['/quality'],
   calls: ['/calls'],
-  operations: ['/operations'],
   intelligence: ['/intelligence'],
-  administration: ['/administration'],
+  reports: ['/reports'],
+  settings: ['/settings'],
 };
 
 function matches(pathname: string, prefix: string): boolean {
@@ -326,7 +460,7 @@ function matches(pathname: string, prefix: string): boolean {
 
 /**
  * Resolves the active domain. Longest matching prefix wins, so a nested path such as
- * `/administration/ai/routes` resolves to Administration rather than falling back.
+ * `/settings/ai-routing/routes` resolves to Settings rather than falling back.
  */
 export function domainForPath(pathname: string): Domain {
   let best: Domain | undefined;
@@ -349,6 +483,32 @@ export function areaForPath(domain: Domain, pathname: string): SubArea | undefin
   let best: SubArea | undefined;
   let bestLength = -1;
   for (const area of domain.areas) {
+    if (matches(pathname, area.href) && area.href.length > bestLength) {
+      best = area;
+      bestLength = area.href.length;
+    }
+  }
+  return best;
+}
+
+/** Resolves the active Settings group. Longest matching prefix wins. */
+export function settingsGroupForPath(pathname: string): SettingsGroup | undefined {
+  let best: SettingsGroup | undefined;
+  let bestLength = -1;
+  for (const group of SETTINGS_GROUPS) {
+    if (matches(pathname, group.href) && group.href.length > bestLength) {
+      best = group;
+      bestLength = group.href.length;
+    }
+  }
+  return best;
+}
+
+/** The section within a Settings group whose href is the longest prefix of the pathname. */
+export function settingsAreaForPath(group: SettingsGroup, pathname: string): SubArea | undefined {
+  let best: SubArea | undefined;
+  let bestLength = -1;
+  for (const area of group.areas) {
     if (matches(pathname, area.href) && area.href.length > bestLength) {
       best = area;
       bestLength = area.href.length;

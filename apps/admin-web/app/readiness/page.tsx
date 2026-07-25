@@ -19,25 +19,25 @@ const DOMAIN_DETAIL: Record<string, { label: string; detail: string; href: strin
     label: 'Voice runtime',
     detail:
       'Whether ElevenLabs is connected, which capabilities it reports, and whether the live agent matches the approved configuration.',
-    href: '/administration/voice-runtime',
+    href: '/settings/ai-providers/elevenlabs',
   },
   aios: {
     label: 'AI infrastructure',
     detail:
       'Whether an AI provider is connected and approved, models are eligible, routes resolve and cost limits are set.',
-    href: '/administration/ai',
+    href: '/settings/ai-routing',
   },
   platform: {
     label: 'Platform',
     detail:
       'Approvals, mandatory tests, privacy and retention sign-off, identity, and operator queues.',
-    href: '/administration/readiness',
+    href: '/settings/administration/readiness',
   },
   productionRouting: {
     label: 'Production routing',
     detail:
       'The final decision. Enabled only when every other domain passes and a person approves it.',
-    href: '/administration/release',
+    href: '/settings/administration/release',
   },
 };
 
@@ -74,7 +74,7 @@ export default async function ReadinessPage() {
           tone="warning"
           title="Production routing is not enabled"
           action={
-            <Link className="button ghost small" href="/administration/readiness">
+            <Link className="button ghost small" href="/settings/administration/readiness">
               Domain detail
             </Link>
           }
@@ -94,7 +94,7 @@ export default async function ReadinessPage() {
             return (
               <Link
                 className="readiness-domain-card"
-                href={meta?.href ?? '/administration'}
+                href={meta?.href ?? '/settings/administration'}
                 key={key}
               >
                 <div>

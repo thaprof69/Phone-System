@@ -535,6 +535,14 @@ export async function seedSyntheticBusinessData(
   const { workspaceId, agentId } = context;
   const summary: Record<string, number> = {};
 
+  // Cross-cutting aggregate_facts rows produced by blocks that run before or after
+  // the main per-day rollup below (test runs, AI execution runs). Flushed once at
+  // the end so every fact still goes through the one aggregate_facts insert path.
+  const extraFactRows: Array<typeof aggregateFacts.$inferInsert> = [];
+  // Conversation id -> agent version number ("1"/"2"/"3"), set during conversation
+  // seeding and read back when AI execution runs are attributed to a version.
+  const conversationVersion = new Map<string, string>();
+
   /* ---------------------------------------------------------- people */
 
   await db
@@ -1143,6 +1151,27 @@ export async function seedSyntheticBusinessData(
       completedAt: isRunning ? null : daysAgo(plan.day, 8, 24),
     });
 
+    // A run still in progress has no verdict yet: only completed runs count toward
+    // a version's pass/fail rate.
+    if (!isRunning) {
+      extraFactRows.push({
+        date: daysAgo(plan.day, 0, 0),
+        dimensionKey: 'agentVersionTest',
+        dimensionValue: String(plan.agentVersion),
+        metric: 'test_pass_count',
+        count: evaluated.length - failCount,
+        sum: '0',
+      });
+      extraFactRows.push({
+        date: daysAgo(plan.day, 0, 0),
+        dimensionKey: 'agentVersionTest',
+        dimensionValue: String(plan.agentVersion),
+        metric: 'test_fail_count',
+        count: failCount,
+        sum: '0',
+      });
+    }
+
     for (const [index, testVersionId] of evaluated.entries()) {
       const passed = !plan.failing.includes(index);
       await db.insert(testEvidence).values({
@@ -1202,7 +1231,18 @@ export async function seedSyntheticBusinessData(
     outcome: string;
     durationSeconds: number;
     processingState: string;
+    agentVersion: string;
   }> = [];
+
+  // Which version actually handled a call, honouring the real release timeline
+  // above rather than stamping every conversation with the current active
+  // version: v3 has been active since day 31, v2 was active from day 74 to 31,
+  // and anything older was handled by v1.
+  const agentVersionForDayOffset = (dayOffset: number): { id: string; version: string } => {
+    if (dayOffset > 74) return { id: agentVersionIds.get(1) ?? activeAgentVersionId, version: '1' };
+    if (dayOffset > 31) return { id: agentVersionIds.get(2) ?? activeAgentVersionId, version: '2' };
+    return { id: activeAgentVersionId, version: '3' };
+  };
 
   for (let index = 0; index < CONVERSATION_COUNT; index += 1) {
     // Weight recent days more heavily so "today" and "this week" are populated.
@@ -1217,6 +1257,7 @@ export async function seedSyntheticBusinessData(
       [between(60, 89), 4],
     ]);
     const startedAt = daysAgo(dayOffset, between(8, 19), between(0, 59));
+    const agentVersion = agentVersionForDayOffset(dayOffset);
     const intent = pickWeighted(INTENT_WEIGHTS);
     const park = pick(PARKS);
     const language = pickWeighted([
@@ -1271,10 +1312,11 @@ export async function seedSyntheticBusinessData(
 
     const conversationId = stableUuid(`conversation:${index}`);
     conversationIds.push(conversationId);
+    conversationVersion.set(conversationId, agentVersion.version);
     await db.insert(conversations).values({
       id: conversationId,
       providerConversationId: providerConversationRowId,
-      agentVersionId: activeAgentVersionId,
+      agentVersionId: agentVersion.id,
       processingState: processingState as 'COMPLETED',
       startedAt,
       endedAt,
@@ -1426,6 +1468,7 @@ export async function seedSyntheticBusinessData(
       outcome,
       durationSeconds,
       processingState,
+      agentVersion: agentVersion.version,
     });
 
     /* tool invocations */
@@ -1686,6 +1729,37 @@ export async function seedSyntheticBusinessData(
         'calls_received',
         entries.filter((entry) => entry.outcome === outcome).length,
       );
+    }
+
+    // Agent-performance rollup: which version actually handled the call, so
+    // containment/transfer/callback/failure rates can be compared release over
+    // release rather than only in aggregate.
+    const versions = new Set(entries.map((entry) => entry.agentVersion));
+    for (const version of versions) {
+      const versionEntries = entries.filter((entry) => entry.agentVersion === version);
+      push('agentVersion', version, 'calls_received', versionEntries.length);
+      push(
+        'agentVersion',
+        version,
+        'calls_completed',
+        versionEntries.filter((entry) => entry.processingState === 'COMPLETED').length,
+      );
+      push(
+        'agentVersion',
+        version,
+        'call_duration_seconds',
+        versionEntries.length,
+        versionEntries.reduce((total, entry) => total + entry.durationSeconds, 0),
+      );
+      const versionOutcomes = new Set(versionEntries.map((entry) => entry.outcome));
+      for (const outcome of versionOutcomes) {
+        push(
+          'agentVersionOutcome',
+          `${version}::${outcome}`,
+          'calls_received',
+          versionEntries.filter((entry) => entry.outcome === outcome).length,
+        );
+      }
     }
   }
   // Chunked to stay well inside the parameter limit for a single statement.
@@ -2077,6 +2151,10 @@ export async function seedSyntheticBusinessData(
       'KNOWLEDGE_GAP_DETECTION',
     ];
 
+    // Bucketed by day and by the agent version that owned the source conversation,
+    // so AI latency can be attributed to a release the same way call metrics are.
+    const aiLatencyByDayVersion = new Map<string, { count: number; sum: number }>();
+
     for (const [index, state] of runStates.entries()) {
       const sourceConversation = conversationIds[index % conversationIds.length];
       if (!sourceConversation) continue;
@@ -2084,6 +2162,20 @@ export async function seedSyntheticBusinessData(
       const succeeded = state === 'SUCCESS' || state === 'FALLBACK_USED';
       const startedAt = daysAgo(Math.floor(index / 6), 9 + (index % 6) * 2, index % 60);
       const latencyMs = succeeded ? between(600, 3200) : between(200, 9000);
+
+      const runVersion = conversationVersion.get(sourceConversation);
+      if (runVersion) {
+        const dayKey = new Date(
+          startedAt.getFullYear(),
+          startedAt.getMonth(),
+          startedAt.getDate(),
+        ).toISOString();
+        const bucketKey = `${dayKey}::${runVersion}`;
+        const bucket = aiLatencyByDayVersion.get(bucketKey) ?? { count: 0, sum: 0 };
+        bucket.count += 1;
+        bucket.sum += latencyMs;
+        aiLatencyByDayVersion.set(bucketKey, bucket);
+      }
 
       const [run] = await db
         .insert(aiProcessingRuns)
@@ -2190,7 +2282,28 @@ export async function seedSyntheticBusinessData(
     }
     summary.aiRuns = runStates.length;
     summary.aiHealthChecks = healthRows.length;
+
+    for (const [bucketKey, bucket] of aiLatencyByDayVersion) {
+      const [dayKey, version] = bucketKey.split('::');
+      extraFactRows.push({
+        date: new Date(dayKey as string),
+        dimensionKey: 'agentVersion',
+        dimensionValue: version as string,
+        metric: 'ai_latency_ms',
+        count: bucket.count,
+        sum: bucket.sum.toFixed(4),
+      });
+    }
   }
+
+  // Chunked for the same reason as the main aggregate_facts insert above.
+  for (let offset = 0; offset < extraFactRows.length; offset += 200) {
+    await db
+      .insert(aggregateFacts)
+      .values(extraFactRows.slice(offset, offset + 200))
+      .onConflictDoNothing();
+  }
+  summary.agentPerformanceFacts = extraFactRows.length;
 
   return { created: true, summary };
 }

@@ -3,6 +3,7 @@ import { authorize, type Principal } from '@quantum-parks/auth';
 import { z } from 'zod';
 import { PlatformService } from '../services/platform.service.js';
 import { ToolRegistryService } from '../services/tool-registry.service.js';
+import { AiosPlatformService } from '../services/aios-platform.service.js';
 import { RequirePermission } from '../security/access.guard.js';
 
 const IdSchema = z.uuid();
@@ -203,6 +204,7 @@ export class ControlPlaneController {
   constructor(
     private readonly platform: PlatformService,
     private readonly tools: ToolRegistryService,
+    private readonly aios: AiosPlatformService,
   ) {}
   @RequirePermission('agent:write')
   @Get('agents')
@@ -600,6 +602,21 @@ export class ControlPlaneController {
     return this.platform.analyticsSeries(
       Number.isFinite(parsed) ? Math.min(Math.max(Math.trunc(parsed), 1), 90) : 30,
     );
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Get('analytics/agent-performance')
+  analyticsAgentPerformance() {
+    return this.platform.analyticsAgentPerformance();
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Get('analytics/provider-performance')
+  analyticsProviderPerformance() {
+    return this.aios.performanceBreakdown();
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Get('analytics/costs')
+  analyticsCosts() {
+    return this.aios.costBreakdown();
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('reports')

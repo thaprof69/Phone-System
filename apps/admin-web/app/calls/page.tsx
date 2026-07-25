@@ -66,12 +66,16 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   const park = readParam(params, 'park');
   const language = readParam(params, 'language');
   const state = readParam(params, 'state');
+  const intent = readParam(params, 'intent');
+  const agentVersion = readParam(params, 'agentVersion');
   const search = readParam(params, 'q');
 
   const filtered = all.filter((row) => {
     if (park && row.park !== park) return false;
     if (language && row.language !== language) return false;
     if (state && row.processingState !== state) return false;
+    if (intent && row.intent !== intent) return false;
+    if (agentVersion && String(row.agentVersion ?? '') !== agentVersion) return false;
     return matchesSearch(row, search, [
       (item) => item.providerConversationId,
       (item) => item.park,
@@ -97,6 +101,9 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
   ].sort();
   const languages = [
     ...new Set(all.map((row) => row.language).filter((value): value is string => Boolean(value))),
+  ].sort();
+  const intents = [
+    ...new Set(all.map((row) => row.intent).filter((value): value is string => Boolean(value))),
   ].sort();
 
   const columns: Column<CallRow>[] = [
@@ -189,6 +196,13 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
           placeholder="Any state"
           options={PROCESSING_STATES.map((value) => ({ value, label: humaniseState(value) }))}
           {...(state ? { defaultValue: state } : {})}
+        />
+        <SelectField
+          id="intent"
+          label="Call reason"
+          placeholder="Any reason"
+          options={intents.map((value) => ({ value, label: humaniseState(value) }))}
+          {...(intent ? { defaultValue: intent } : {})}
         />
       </FilterBar>
 

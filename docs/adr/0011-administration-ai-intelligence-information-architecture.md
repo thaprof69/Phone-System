@@ -2,6 +2,10 @@
 
 ## Status
 
+Superseded by [ADR 0012](0012-five-domain-operator-information-architecture.md) — 2026-07-25.
+Administration is no longer a top-level domain, and AI Intelligence is split into AI Providers and
+AI Routing. Kept for historical context; do not treat its route list as current.
+
 Accepted — 2026-07-23
 
 ## Context

@@ -2,7 +2,7 @@
 
 Branch: `feature/product-remediation`
 Started: 2026-07-24
-Status: All phases complete — foundations, breadth pass, all ten Phase 2 depth passes (2.1–2.10), and the Phase 3 closing verification and documentation review
+Status: All phases complete — foundations, breadth pass, all ten Phase 2 depth passes (2.1–2.10), the Phase 3 closing verification and documentation review, and the Phase 4 five-domain information-architecture rework (§8)
 
 ---
 
@@ -464,18 +464,87 @@ capabilities, integrations, identity, retention, audit and readiness") and
 already cover what this session added without needing new text. The IA from
 Phase 0.5 was not restructured, so ADR-0011 needed no supersession.
 
-## 6a. Resume point
+## 6a. Resume point (superseded — see §8)
 
 All ten modules in the fixed Phase 2 order (§7–§16) are complete: Mission Control,
 Agent Studio, Knowledge Hub, Voice Library, Test Studio, Calls/Call Detail,
 Operations, AI Infrastructure, Administration, Analytics and Reports. Phase 3
-verification and documentation review are also complete (above). There is no
-next unchecked item in this execution plan.
+verification and documentation review are also complete (above). Phase 4 (§8)
+restructured the navigation these modules sit behind; the module content itself
+did not change.
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir
 under the session scratchpad) and the provider simulator from `apps/provider-simulator/dist`.
 `docker compose up` remains the documented path once the daemon is healthy.
+
+---
+
+## 8. Phase 4 — Five-domain information architecture rework (2026-07-25)
+
+User-directed correction after Phase 3 closed: the eight-domain primary navigation (Mission
+Control, Receptionist, Knowledge, Quality, Calls, Operations, Intelligence, Administration)
+reflected implementation domains, not how an operator actually spends their day. Full decision
+record: [ADR 0012](../adr/0012-five-domain-operator-information-architecture.md).
+
+### Checklist
+
+- [x] 4.1 Extended `aggregate_facts` with three new dimension keys (`agentVersion`,
+      `agentVersionOutcome`, `agentVersionTest`) in `seed-synthetic.ts`; conversations now
+      attributed to the agent version that actually handled them per the real release timeline,
+      not the currently active version
+- [x] 4.2 `AiosPlatformService.groupedUsage()` — one grouped pass over
+      `ai_processing_runs`/`ai_usage_records`; `performanceBreakdown()` and `costBreakdown()`
+      read views over it
+- [x] 4.3 `PlatformService.analyticsAgentPerformance()`; three new `analytics/*` routes on
+      `ControlPlaneController`
+- [x] 4.4 `navigation.ts` rewritten: 5 top-level domains, `SETTINGS_GROUPS` for the third tier,
+      `settingsGroupForPath`/`settingsAreaForPath` helpers
+- [x] 4.5 Operations folded into Calls (`/calls/handoffs`, `/callbacks`, `/tasks`, `/messages`,
+      `/sla`); `/calls/partial` renamed `/calls/live`
+- [x] 4.6 Intelligence rebuilt: overview (was analytics), trends, call reasons (new, extracted),
+      knowledge gaps, customer continuity (new), agent performance (new), provider performance
+      (new), costs (new)
+- [x] 4.7 Reports extracted as its own top-level domain (scheduled reports, run history only —
+      no templates/deliveries/exports route: no backing data exists for them)
+- [x] 4.8 Settings landing page + `SettingsPage`/`SettingsRail`/`SettingsBreadcrumbs`; Receptionist,
+      Simulation Lab (renamed from Quality), Knowledge Hub, AI Providers, AI Routing,
+      Integrations, Administration moved under it
+- [x] 4.9 AI Infrastructure split into AI Providers (ElevenLabs setup, Intelligence providers,
+      Models, Provider health) and AI Routing (overview, capabilities, routes, prompts, schemas,
+      budgets, execution history, monitoring); `GovernanceView`/`MonitoringView` gained a
+      `section` prop rather than being re-implemented per route
+- [x] 4.10 `AIIntelligenceConsole`'s dead code removed (unreachable `active`-gated sub-views and
+      an OpenAI-hardcoded connect dialog — never reachable from any route)
+- [x] 4.11 Permanent redirects for every old route in `next.config.ts`
+- [x] 4.12 `/calls` gained `intent` and `agentVersion` filters so Intelligence's new drill-through
+      links resolve to something real
+- [x] 4.13 `tests/e2e/admin.spec.ts` updated: all route references, `PRIMARY_DOMAINS` (8→5),
+      nav-structure tests rewritten for the new rail/landing-page pattern, new tests for
+      redirects, the new Intelligence pages and the AI Providers/Routing split
+- [x] 4.14 ADR 0012 written; ADR 0011 marked superseded; route map, admin user guide, compliance
+      matrix and requirements-traceability rows updated
+
+### Verification
+
+| Command                                        | Result                                                                                                                                                                                                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @quantum-parks/db build`        | exit 0                                                                                                                                                                                                                                                       |
+| `pnpm --filter @quantum-parks/api build`       | exit 0                                                                                                                                                                                                                                                       |
+| `pnpm --filter @quantum-parks/admin-web build` | exit 0; full route manifest matches the new IA exactly                                                                                                                                                                                                       |
+| `curl /v1/analytics/agent-performance`         | Real per-version data: v1 (3 calls), v2 (15 calls), v3 (202 calls) with distinct containment/transfer/callback rates; v4 (0 calls, testPassRate 0.95 from 60 evaluated) — confirms version attribution by release timeline, not just active-version stamping |
+| `curl /v1/analytics/provider-performance`      | Real grouped data: SIMULATOR provider, 49 runs, successRate 0.796, p95 7479ms                                                                                                                                                                                |
+| `curl /v1/analytics/costs`                     | Real spend: totals.costMicros 17994, costPerCallMicros 367.2, per-capability breakdown across CALL_SUMMARY/PRIMARY_INTENT_CLASSIFICATION/KNOWLEDGE_GAP_DETECTION                                                                                             |
+
+Browser-verified against the dev server (Mission Control's 5-item sidebar, Calls' 10 sub-tabs,
+Intelligence's new pages, the Settings landing page and its vertical rails, and the
+`/administration/ai` → `/settings/ai-routing` redirect). `pnpm test:e2e` run seven times: one
+clean 86/86 pass, six others with 1-3 scattered single-test timeouts each (never the same test
+twice with the same cause once fixed), all independently reproducible as passing in isolation —
+attributed to this shared development machine running 12-30 unrelated Docker containers
+throughout, not a product defect. One real bug found and fixed: a test's region-selector was
+left pointing at a heading name ("Prompts") an earlier duplicate-heading fix had renamed to
+"Prompt versions". Full detail in `docs/qa/release-evidence.md`. Phase 4 is complete.
 
 ---
 

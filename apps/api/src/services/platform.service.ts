@@ -1735,7 +1735,7 @@ export class PlatformService {
   }
 
   async listCalls(limit: number) {
-    const items = await this.database.db
+    const rows = await this.database.db
       .select({
         id: conversations.id,
         providerConversationId: providerConversations.providerConversationId,
@@ -1746,6 +1746,7 @@ export class PlatformService {
         sensitive: conversations.sensitive,
         synthetic: conversations.synthetic,
         receivedAt: conversations.createdAt,
+        agentVersionId: conversations.agentVersionId,
       })
       .from(conversations)
       .innerJoin(
@@ -1754,6 +1755,40 @@ export class PlatformService {
       )
       .orderBy(desc(conversations.createdAt))
       .limit(limit);
+
+    // Intent and agent version are joined in application code rather than the
+    // main query: a conversation can have several classification revisions, and
+    // only the version *number* (not its id) is useful for the intelligence
+    // drill-through link this list exists to support.
+    const conversationIds = rows.map((row) => row.id);
+    const [classifications, versions] = await Promise.all([
+      conversationIds.length > 0
+        ? this.database.db
+            .select({
+              conversationId: callClassifications.conversationId,
+              primaryIntent: callClassifications.primaryIntent,
+              revision: callClassifications.revision,
+            })
+            .from(callClassifications)
+            .where(inArray(callClassifications.conversationId, conversationIds))
+        : Promise.resolve([]),
+      this.database.db
+        .select({ id: agentConfigVersions.id, version: agentConfigVersions.version })
+        .from(agentConfigVersions),
+    ]);
+    const intentByConversation = new Map<string, string>();
+    for (const row of classifications.sort((left, right) => right.revision - left.revision)) {
+      if (!intentByConversation.has(row.conversationId)) {
+        intentByConversation.set(row.conversationId, row.primaryIntent);
+      }
+    }
+    const versionById = new Map(versions.map((version) => [version.id, version.version]));
+
+    const items = rows.map((row) => ({
+      ...row,
+      intent: intentByConversation.get(row.id) ?? null,
+      agentVersion: row.agentVersionId ? (versionById.get(row.agentVersionId) ?? null) : null,
+    }));
     return { items, nextCursor: null };
   }
 
@@ -2637,6 +2672,104 @@ export class PlatformService {
         evidence: trend.evidence,
       })),
     };
+  }
+
+  /**
+   * Calls-oriented performance per agent version: which version actually handled
+   * a call (`conversations.agentVersionId`, honouring the real release timeline),
+   * crossed against outcome, duration and AI latency. Reads the same
+   * `aggregate_facts` table `analyticsSeries` reads — new dimension keys
+   * (`agentVersion`, `agentVersionOutcome`, `agentVersionTest`), not a new table.
+   */
+  async analyticsAgentPerformance() {
+    const facts = await this.database.db
+      .select()
+      .from(aggregateFacts)
+      .where(
+        inArray(aggregateFacts.dimensionKey, [
+          'agentVersion',
+          'agentVersionOutcome',
+          'agentVersionTest',
+        ]),
+      );
+
+    const versions = new Set<string>();
+    for (const fact of facts) {
+      if (fact.dimensionKey === 'agentVersion' || fact.dimensionKey === 'agentVersionTest') {
+        versions.add(fact.dimensionValue);
+      }
+      if (fact.dimensionKey === 'agentVersionOutcome') {
+        versions.add(fact.dimensionValue.split('::')[0] ?? '');
+      }
+    }
+    versions.delete('');
+
+    const sumMetric = (rows: typeof facts, metric: string) =>
+      rows.filter((fact) => fact.metric === metric).reduce((sum, fact) => sum + fact.count, 0);
+    const sumOf = (rows: typeof facts, metric: string) =>
+      rows
+        .filter((fact) => fact.metric === metric)
+        .reduce((sum, fact) => sum + Number(fact.sum), 0);
+
+    const versionRows = [...versions]
+      .sort((left, right) => Number(left) - Number(right))
+      .map((version) => {
+        const versionFacts = facts.filter(
+          (fact) => fact.dimensionKey === 'agentVersion' && fact.dimensionValue === version,
+        );
+        const received = sumMetric(versionFacts, 'calls_received');
+        const completed = sumMetric(versionFacts, 'calls_completed');
+        const durationCount = sumMetric(versionFacts, 'call_duration_seconds');
+        const durationSum = sumOf(versionFacts, 'call_duration_seconds');
+        const latencyCount = sumMetric(versionFacts, 'ai_latency_ms');
+        const latencySum = sumOf(versionFacts, 'ai_latency_ms');
+
+        const outcomeFacts = facts.filter(
+          (fact) =>
+            fact.dimensionKey === 'agentVersionOutcome' &&
+            fact.dimensionValue.startsWith(`${version}::`),
+        );
+        const outcomeCount = (outcome: string) =>
+          outcomeFacts
+            .filter((fact) => fact.dimensionValue === `${version}::${outcome}`)
+            .reduce((sum, fact) => sum + fact.count, 0);
+        const resolved = outcomeCount('RESOLVED_BY_AGENT');
+        const transferred =
+          outcomeCount('TRANSFER_COMPLETED') + outcomeCount('TRANSFER_FAILED_CALLBACK_CREATED');
+        const callback =
+          outcomeCount('CALLBACK_REQUESTED') + outcomeCount('TRANSFER_FAILED_CALLBACK_CREATED');
+        const failed = outcomeCount('TECHNICAL_FAILURE');
+
+        const testFacts = facts.filter(
+          (fact) => fact.dimensionKey === 'agentVersionTest' && fact.dimensionValue === version,
+        );
+        const testPass = sumMetric(testFacts, 'test_pass_count');
+        const testFail = sumMetric(testFacts, 'test_fail_count');
+        const testEvaluated = testPass + testFail;
+
+        return {
+          version,
+          callsReceived: received,
+          callsCompleted: completed,
+          // Null rather than zero with no calls behind it: an unknown rate, not a
+          // zero one.
+          containment: received > 0 ? resolved / received : null,
+          transferRate: received > 0 ? transferred / received : null,
+          callbackRate: received > 0 ? callback / received : null,
+          failedProcessingRate: received > 0 ? failed / received : null,
+          averageDurationSeconds: durationCount > 0 ? durationSum / durationCount : null,
+          averageAiLatencyMs: latencyCount > 0 ? latencySum / latencyCount : null,
+          testPassRate: testEvaluated > 0 ? testPass / testEvaluated : null,
+          testRunsEvaluated: testEvaluated,
+          // No caller/customer identity is recorded anywhere in the schema today,
+          // so a call cannot be linked back to a repeat caller — only the global
+          // repeat-contact trend exists (see analyticsSeries().trends). This is a
+          // genuine instrumentation gap, not a zero.
+          customerFollowUpRate: null as number | null,
+        };
+      });
+
+    return { generatedAt: new Date().toISOString(), versions: versionRows };
   }
 
   async listReports() {

@@ -13,13 +13,10 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const PRIMARY_DOMAINS = [
   'Mission Control',
-  'Receptionist',
-  'Knowledge',
-  'Quality',
   'Calls',
-  'Operations',
   'Intelligence',
-  'Administration',
+  'Reports',
+  'Settings',
 ] as const;
 
 /**
@@ -79,7 +76,7 @@ test('sub-navigation tabs navigate rather than sitting inert', async ({ page }) 
   // Every tab is a real link with an href. The previous implementation rendered
   // <span> elements with no href, no role and a hardcoded active index.
   const links = tabs.getByRole('link');
-  await expect(links).toHaveCount(5);
+  await expect(links).toHaveCount(10);
 
   await tabs.getByRole('link', { name: 'Failed ingestion' }).click();
   await expect(page).toHaveURL(/\/calls\/failed$/);
@@ -98,7 +95,13 @@ test('sub-navigation tabs navigate rather than sitting inert', async ({ page }) 
 
 test('no navigation element looks like a tab without being one', async ({ page }) => {
   test.setTimeout(120_000);
-  for (const path of ['/', '/calls', '/knowledge/library', '/quality/runs', '/operations/sla']) {
+  for (const path of [
+    '/',
+    '/calls',
+    '/settings/knowledge',
+    '/settings/simulation/results',
+    '/calls/sla',
+  ]) {
     await page.goto(path);
     // `.tabs span` was the old inert pattern; it must not reappear anywhere.
     await expect(page.locator('.tabs span')).toHaveCount(0);
@@ -148,7 +151,7 @@ test('a call opens a workspace keeping provider and canonical records distinct',
 });
 
 test('release gates are reported individually and cannot be bypassed here', async ({ page }) => {
-  await page.goto('/quality/gates');
+  await page.goto('/settings/simulation/release-checks');
   await expect(page.getByText('Gates are enforced by the server')).toBeVisible();
 
   // Each gate is its own decision rather than one combined score.
@@ -160,14 +163,14 @@ test('release gates are reported individually and cannot be bypassed here', asyn
 });
 
 test('knowledge releases report local and runtime state separately', async ({ page }) => {
-  await page.goto('/knowledge/releases');
+  await page.goto('/settings/knowledge/releases');
   await expect(page.getByRole('columnheader', { name: 'Local state' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Voice runtime' })).toBeVisible();
   await expect(page.getByText(/never overwrites local state/)).toBeVisible();
 });
 
 test('analytics renders charts with an accessible table fallback', async ({ page }) => {
-  await page.goto('/intelligence/analytics');
+  await page.goto('/intelligence');
   await expect(page.getByRole('heading', { name: 'Call demand' })).toBeVisible();
 
   // Every chart carries the same numbers in a table, so the visual is never the
@@ -182,18 +185,16 @@ test('analytics renders charts with an accessible table fallback', async ({ page
 
 test('administration exposes every area without a placeholder', async ({ page }) => {
   test.setTimeout(180_000);
-  await page.goto('/administration');
+  await page.goto('/settings/administration');
   const rail = page.getByRole('navigation', { name: 'Administration areas' });
 
   for (const area of [
+    'Overview',
     'General',
-    'Voice runtime',
-    'AI infrastructure',
-    'Business integrations',
     'Users and roles',
     'Security and privacy',
     'Audit',
-    'Retention',
+    'Retention and legal holds',
     'Feature flags',
     'Production readiness',
     'Release administration',
@@ -205,14 +206,40 @@ test('administration exposes every area without a placeholder', async ({ page })
   }
 });
 
+test('AI Providers and AI Routing expose every area without a placeholder', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto('/settings/ai-providers/elevenlabs');
+  const providersRail = page.getByRole('navigation', { name: 'AI Providers areas' });
+  for (const area of ['ElevenLabs setup', 'Intelligence providers', 'Models', 'Provider health']) {
+    await providersRail.getByRole('link', { name: area, exact: true }).click();
+    await expect(page.locator('main h1')).toBeVisible();
+  }
+
+  await page.goto('/settings/ai-routing');
+  const routingRail = page.getByRole('navigation', { name: 'AI Routing areas' });
+  for (const area of [
+    'Overview',
+    'Capabilities',
+    'Routes',
+    'Prompts',
+    'Schemas and taxonomies',
+    'Budgets',
+    'Execution history',
+    'Monitoring',
+  ]) {
+    await routingRail.getByRole('link', { name: area, exact: true }).click();
+    await expect(page.locator('main h1')).toBeVisible();
+  }
+});
+
 test('the audit log is presented as a verifiable chain', async ({ page }) => {
-  await page.goto('/administration/audit');
+  await page.goto('/settings/administration/audit');
   await expect(page.getByText('Chain intact')).toBeVisible();
   await expect(page.getByText(/cannot be edited or removed/)).toBeVisible();
 });
 
 test('access administration surfaces separation-of-duty conflicts', async ({ page }) => {
-  await page.goto('/administration/users');
+  await page.goto('/settings/administration/users');
   await expect(page.getByRole('columnheader', { name: 'Separation of duties' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Roles', exact: true })).toBeVisible();
 });
@@ -223,8 +250,8 @@ test('AIOS is not presented to operators as a product name', async ({ page }) =>
   await expect(page.getByText('AI infrastructure')).toBeVisible();
   await expect(page.locator('main').getByText(/\bAIOS\b/)).toHaveCount(0);
 
-  await page.goto('/administration/ai');
-  await expect(page.getByRole('heading', { name: 'AI infrastructure' })).toBeVisible();
+  await page.goto('/settings/ai-routing');
+  await expect(page.locator('main').getByText(/\bAIOS\b/)).toHaveCount(0);
 });
 
 test('the environment is labelled honestly as a simulator', async ({ page }) => {
@@ -234,7 +261,7 @@ test('the environment is labelled honestly as a simulator', async ({ page }) => 
 });
 
 test('no provider secret reaches the browser', async ({ page }) => {
-  for (const path of ['/administration/voice-runtime', '/administration/ai']) {
+  for (const path of ['/settings/ai-providers/elevenlabs', '/settings/ai-routing']) {
     await page.goto(path);
     const body = (await page.locator('body').textContent()) ?? '';
     expect(body).not.toContain('sk_');
@@ -244,10 +271,10 @@ test('no provider secret reaches the browser', async ({ page }) => {
 });
 
 test('operations queues surface overdue work first', async ({ page }) => {
-  await page.goto('/operations/sla');
+  await page.goto('/calls/sla');
   await expect(page.getByRole('heading', { name: 'Breached commitments' })).toBeVisible();
 
-  await page.goto('/operations/callbacks?due=overdue');
+  await page.goto('/calls/callbacks?due=overdue');
   await expect(page.getByRole('heading', { name: /\d+ items?/ })).toBeVisible();
 });
 
@@ -257,20 +284,36 @@ test('mobile navigation reaches every domain', async ({ page }) => {
   await page.locator('summary[aria-label="Open navigation"]').click();
   const mobileNavigation = page.getByRole('navigation', { name: 'Mobile primary navigation' });
   await expect(mobileNavigation).toBeVisible();
-  await mobileNavigation.getByRole('link', { name: 'Quality', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Test cases' })).toBeVisible();
+  await mobileNavigation.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Simulation Lab' }).click();
+  await expect(page.getByRole('heading', { name: 'Interactive test' })).toBeVisible();
 });
 
 test('a domain workspace is reachable by keyboard alone', async ({ page }) => {
   await page.goto('/');
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
-  await navigation.getByRole('link', { name: 'Knowledge', exact: true }).focus();
+  await navigation.getByRole('link', { name: 'Calls', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'All calls' })).toBeVisible();
 
   // The sub-navigation is reachable from the same keyboard path.
   await page
-    .getByRole('navigation', { name: 'Knowledge areas' })
+    .getByRole('navigation', { name: 'Calls areas' })
+    .getByRole('link', { name: 'Handoffs' })
+    .focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Handoffs' })).toBeVisible();
+});
+
+test('a Settings group is reachable by keyboard from the landing page', async ({ page }) => {
+  await page.goto('/settings');
+  await page.getByRole('link', { name: 'Knowledge Hub' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Library' })).toBeVisible();
+
+  await page
+    .getByRole('navigation', { name: 'Knowledge Hub areas' })
     .getByRole('link', { name: 'Knowledge gaps' })
     .focus();
   await page.keyboard.press('Enter');
@@ -278,9 +321,9 @@ test('a domain workspace is reachable by keyboard alone', async ({ page }) => {
 });
 
 test('version comparison shows the actual change, not the whole file', async ({ page }) => {
-  await page.goto('/receptionist/versions');
+  await page.goto('/settings/receptionist/versions');
   await page.getByRole('link', { name: 'Compare versions' }).click();
-  await expect(page).toHaveURL(/\/receptionist\/versions\/compare$/);
+  await expect(page).toHaveURL(/\/settings\/receptionist\/versions\/compare$/);
 
   // A real longest-common-subsequence diff: unchanged lines are collapsed and only
   // the genuine change is marked. A naive comparison would flag the whole document.
@@ -293,7 +336,7 @@ test('version comparison shows the actual change, not the whole file', async ({ 
 
 test('the conversation editor loads, validates server-side and persists', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/agents');
+  await page.goto('/settings/receptionist');
   await page.locator('tbody th a').first().click();
   await page.getByRole('tab', { name: 'Conversation' }).click();
 
@@ -313,7 +356,7 @@ test('the conversation editor loads, validates server-side and persists', async 
 
 test('governed tools are inspectable but cannot be invented here', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/agents');
+  await page.goto('/settings/receptionist');
   await page.locator('tbody th a').first().click();
   await page.getByRole('tab', { name: /^Tools/ }).click();
 
@@ -333,7 +376,7 @@ test('governed tools are inspectable but cannot be invented here', async ({ page
 
 test('transfer routes are shown in the order the runtime evaluates them', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/agents');
+  await page.goto('/settings/receptionist');
   await page.locator('tbody th a').first().click();
   await page.getByRole('tab', { name: /^Transfers/ }).click();
 
@@ -343,7 +386,7 @@ test('transfer routes are shown in the order the runtime evaluates them', async 
 
 test('publication is judged by provider read-back, not by the publish call', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/releases');
+  await page.goto('/settings/receptionist/releases');
 
   await expect(page.getByRole('heading', { name: 'Version pipeline' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Provider read-back' })).toBeVisible();
@@ -360,7 +403,7 @@ test('rollback requires a version that was actually live, and confirms destructi
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/releases');
+  await page.goto('/settings/receptionist/releases');
   await expect(page.getByRole('heading', { name: 'Rollback' })).toBeVisible();
 
   // A rollback is guarded by a typed confirmation rather than a single click.
@@ -374,7 +417,7 @@ test('rollback requires a version that was actually live, and confirms destructi
 
 test('drift is reported as evidence and never silently adopted', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/releases');
+  await page.goto('/settings/receptionist/releases');
   await expect(page.getByRole('heading', { name: 'Unresolved drift' })).toBeVisible();
   await expect(
     page.getByText(/the remedy is republishing, not adopting the remote value/),
@@ -383,7 +426,7 @@ test('drift is reported as evidence and never silently adopted', async ({ page }
 
 test('completing operations work requires evidence and refuses a repeat', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/operations/callbacks?due=open');
+  await page.goto('/calls/callbacks?due=open');
 
   // Completing is gated on a note, so the control stays disabled until one is written.
   const complete = page.getByRole('button', { name: 'Complete with evidence' }).first();
@@ -399,7 +442,7 @@ test('completing operations work requires evidence and refuses a repeat', async 
 
 test('an unanswered transfer creates the callback the caller is owed', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/operations/handoffs');
+  await page.goto('/calls/handoffs');
   await expect(
     page.getByText(/Marking a transfer unanswered creates the callback the caller is owed/).first(),
   ).toBeVisible();
@@ -411,7 +454,7 @@ test('an unanswered transfer creates the callback the caller is owed', async ({ 
 
 test('a failed message can be retried on a different channel', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/operations/messages?status=FAILED');
+  await page.goto('/calls/messages?status=FAILED');
   await page.getByRole('button', { name: 'Retry on SMS' }).first().click();
   await expect(page.getByText(/Queued on SMS instead|Attempt/).first()).toBeVisible({
     timeout: 30_000,
@@ -420,7 +463,7 @@ test('a failed message can be retried on a different channel', async ({ page }) 
 
 test('AI execution history shows real runs with provenance, not a count', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=execution');
+  await page.goto('/settings/ai-routing/executions');
 
   await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
   // The old screen rendered a bare number under a label. A real table is the check.
@@ -433,36 +476,47 @@ test('AI execution history shows real runs with provenance, not a count', async 
   await expect(page.getByText('Correlation id')).toBeVisible();
 });
 
-test('AI monitoring reports real rates and links each to its runs', async ({ page }) => {
+test('AI routing monitoring reports real rates and links each to its runs', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=monitoring');
+  await page.goto('/settings/ai-routing/monitoring');
 
   await expect(page.getByRole('heading', { name: 'Results by state' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Provider health' })).toBeVisible();
 
   // Every aggregate is traceable to the records behind it.
   await expect(page.getByRole('link', { name: 'View runs' }).first()).toBeVisible();
   await page.getByRole('link', { name: 'View runs' }).first().click();
-  await expect(page).toHaveURL(/area=execution/);
+  await expect(page).toHaveURL(/\/settings\/ai-routing\/executions/);
+});
+
+test('AI provider health is reported from recorded checks', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/settings/ai-providers/health');
+
+  await expect(page.getByRole('heading', { name: 'Provider health' })).toBeVisible();
 });
 
 test('AI governance shows prompts, schemas, taxonomies and GBP budgets', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
-
+  await page.goto('/settings/ai-routing/budgets');
   await expect(page.getByRole('heading', { name: 'Budgets' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Output schemas' })).toBeVisible();
-  // Code-owned schemas cannot be widened at runtime, and the screen says so.
-  await expect(page.getByText(/cannot be edited at runtime/)).toBeVisible();
   // Money is shown in GBP with en-GB formatting.
   await expect(page.getByText(/£/).first()).toBeVisible();
+
+  await page.goto('/settings/ai-routing/schemas');
+  await expect(page.getByRole('heading', { name: 'Output schemas' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Taxonomies', exact: true })).toBeVisible();
+  // Code-owned schemas cannot be widened at runtime, and the screen says so.
+  await expect(page.getByText(/cannot be edited at runtime/)).toBeVisible();
+
+  await page.goto('/settings/ai-routing/prompts');
+  await expect(page.getByRole('heading', { name: 'Prompts' })).toBeVisible();
 });
 
 test('the provider registry is adapter-driven and offers no fake connect action', async ({
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=providers');
+  await page.goto('/settings/ai-providers/intelligence');
 
   await expect(page.getByRole('heading', { name: 'Installed adapters' })).toBeVisible();
   // The connection form is generated from the adapter's declared fields.
@@ -481,7 +535,7 @@ test('the provider registry is adapter-driven and offers no fake connect action'
 
 test('a simulator model cannot be approved for production', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=models');
+  await page.goto('/settings/ai-providers/models');
 
   const decide = await openDisclosure(page, 'Decide');
   await decide.getByLabel('Environment').selectOption('production');
@@ -496,7 +550,7 @@ test('a simulator model cannot be approved for production', async ({ page }) => 
 
 test('a model can be approved for development and the decision persists', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=models');
+  await page.goto('/settings/ai-providers/models');
 
   const decide = await openDisclosure(page, 'Decide');
   await decide.getByLabel('Environment').selectOption('development');
@@ -513,7 +567,7 @@ test('a model can be approved for development and the decision persists', async 
 
 test('a model approval is refused without a recorded reason', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=models');
+  await page.goto('/settings/ai-providers/models');
 
   const decide = await openDisclosure(page, 'Decide');
   await decide.getByRole('button', { name: 'Approve' }).click();
@@ -525,7 +579,7 @@ test('a route version is created as a draft and states what blocks activation', 
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=routes');
+  await page.goto('/settings/ai-routing/routes');
 
   const builder = await openDisclosure(page, 'Create a new version');
   await builder.getByLabel('Provider connection').selectOption({ index: 1 });
@@ -539,7 +593,7 @@ test('a route version is created as a draft and states what blocks activation', 
 
 test('a route cannot be created without a primary candidate', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=routes');
+  await page.goto('/settings/ai-routing/routes');
 
   const builder = await openDisclosure(page, 'Create a new version');
   await builder.getByRole('button', { name: 'Create draft version' }).click();
@@ -551,7 +605,7 @@ test('activating a second route for one environment is refused with its reason',
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=routes');
+  await page.goto('/settings/ai-routing/routes');
 
   // The seeded route already has an active development version, so a *development*
   // draft must not be able to take over silently. Pinning the environment keeps this
@@ -573,7 +627,7 @@ test('activating a second route for one environment is refused with its reason',
 
 test('a code-owned schema cannot be changed through the interface', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
+  await page.goto('/settings/ai-routing/schemas');
 
   // The lifecycle control is replaced by a statement of why there is none, rather than
   // offering an action the platform would refuse.
@@ -585,9 +639,12 @@ test('a code-owned schema cannot be changed through the interface', async ({ pag
 
 test('a governed prompt refuses a transition it has already made', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
+  await page.goto('/settings/ai-routing/prompts');
 
-  const promptRow = page.getByRole('region', { name: 'Prompts' }).locator('tbody tr').first();
+  const promptRow = page
+    .getByRole('region', { name: 'Prompt versions' })
+    .locator('tbody tr')
+    .first();
   const move = await openDisclosure(promptRow, 'Move');
   await move.getByLabel('Action').selectOption('ROLLBACK');
   await move.getByLabel('Reason').fill('Rolling back for browser verification');
@@ -610,7 +667,7 @@ test('a governed prompt refuses a transition it has already made', async ({ page
 
 test('a budget whose per-request ceiling exceeds its daily limit is refused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
+  await page.goto('/settings/ai-routing/budgets');
 
   const form = await openDisclosure(page, 'Add a budget policy');
   await form.getByLabel('Key').fill('inverted-ceiling-check');
@@ -624,7 +681,7 @@ test('a budget whose per-request ceiling exceeds its daily limit is refused', as
 
 test('a budget policy saves in GBP and shows spend against its limit', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
+  await page.goto('/settings/ai-routing/budgets');
 
   const form = await openDisclosure(page, 'Add a budget policy');
   await form.getByLabel('Key').fill('browser-verified-budget');
@@ -647,7 +704,7 @@ test('execution history filters and paginates without losing its filter options'
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=execution');
+  await page.goto('/settings/ai-routing/executions');
 
   const unfiltered = await page.locator('tbody tr').count();
   expect(unfiltered).toBeGreaterThan(0);
@@ -668,18 +725,18 @@ test('execution history filters and paginates without losing its filter options'
 
 test('capabilities drill through to the runs that executed them', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=capabilities');
+  await page.goto('/settings/ai-routing/capabilities');
 
   await expect(page.getByRole('columnheader', { name: 'Runs recorded' })).toBeVisible();
   await page.getByRole('link', { name: 'View runs' }).first().click();
 
-  await expect(page).toHaveURL(/area=execution&capability=/);
+  await expect(page).toHaveURL(/\/settings\/ai-routing\/executions\?capability=/);
   await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
 });
 
 test('unverified model metadata is stated as missing rather than invented', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=models');
+  await page.goto('/settings/ai-providers/models');
 
   // A plausible-looking context window would be believed. Absence must be visible.
   await expect(page.getByText('Not verified').first()).toBeVisible();
@@ -688,7 +745,7 @@ test('unverified model metadata is stated as missing rather than invented', asyn
 
 test('saving the same budget twice updates it rather than duplicating it', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/ai?area=governance');
+  await page.goto('/settings/ai-routing/budgets');
 
   // An environment-wide budget has a null scope, and PostgreSQL treats nulls as distinct
   // — so the obvious unique index over the scope columns silently failed to cover the
@@ -717,7 +774,7 @@ test('a knowledge asset can be edited into a new draft and submitted for review'
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/library');
+  await page.goto('/settings/knowledge');
   await page.locator('tbody tr.row-linked .row-link').first().click();
 
   // Run twice consecutively against one database, so the row this test lands on may
@@ -748,7 +805,7 @@ test('a knowledge asset can be edited into a new draft and submitted for review'
 
 test('an identical edit is refused rather than accepted as a no-op version', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/library');
+  await page.goto('/settings/knowledge');
   await page.locator('tbody tr.row-linked .row-link').first().click();
 
   const content = page.getByLabel('Content', { exact: true });
@@ -765,7 +822,7 @@ test('an identical edit is refused rather than accepted as a no-op version', asy
 
 test('a knowledge approval from the author is refused for high-risk content', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/library?risk=HIGH');
+  await page.goto('/settings/knowledge?risk=HIGH');
   const firstRowLink = page.locator('tbody tr.row-linked .row-link').first();
   if (!(await firstRowLink.isVisible().catch(() => false))) return;
   await firstRowLink.click();
@@ -798,7 +855,7 @@ test('a drifted or failed knowledge sync can be retried, and a healthy one offer
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/releases');
+  await page.goto('/settings/knowledge/releases');
 
   await expect(page.getByText(/never overwrites local state/)).toBeVisible();
   const retry = page.getByRole('button', { name: 'Retry synchronisation' }).first();
@@ -816,7 +873,7 @@ test('an open knowledge gap converts to a draft; a converted one shows its statu
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/gaps');
+  await page.goto('/settings/knowledge/gaps');
 
   const convert = page.getByRole('button', { name: 'Convert to draft' }).first();
   if (await convert.isVisible().catch(() => false)) {
@@ -824,7 +881,7 @@ test('an open knowledge gap converts to a draft; a converted one shows its statu
     // A successful conversion navigates straight to the new asset's page. Its only
     // version is itself a draft, so the page shows "already draft" rather than the
     // top-level authoring panel — that panel is for starting a *second* version.
-    await expect(page).toHaveURL(/\/knowledge\/[0-9a-f-]{36}/);
+    await expect(page).toHaveURL(/\/settings\/knowledge\/[0-9a-f-]{36}/);
     await expect(page.getByText(/already draft/i)).toBeVisible();
     await expect(page.getByRole('tab').first()).toHaveText(/v1/);
   } else {
@@ -836,7 +893,7 @@ test('an open knowledge gap converts to a draft; a converted one shows its statu
 
 test('knowledge assignment refuses a language that does not match the asset', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/knowledge/library?state=ACTIVE');
+  await page.goto('/settings/knowledge?state=ACTIVE');
   const firstRowLink = page.locator('tbody tr.row-linked .row-link').first();
   if (!(await firstRowLink.isVisible().catch(() => false))) return;
   await firstRowLink.click();
@@ -863,7 +920,7 @@ test('a voice can be selected for comparison and shows real metadata side by sid
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/voices');
+  await page.goto('/settings/receptionist/voices');
 
   await page.getByRole('link', { name: 'Add' }).first().click();
   // Wait for the first toggle to actually land before picking the next "Add" link —
@@ -885,7 +942,7 @@ test('a voice can be selected for comparison and shows real metadata side by sid
 
 test('approving a cloned voice reports what the platform actually decided', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/voices');
+  await page.goto('/settings/receptionist/voices');
 
   const clonedRow = page.locator('tbody tr').filter({ hasText: 'Cloned' }).first();
   if (!(await clonedRow.isVisible().catch(() => false))) return;
@@ -906,7 +963,7 @@ test('a voice can be assigned to an agent version, and production requires nativ
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/voices?availability=approved');
+  await page.goto('/settings/receptionist/voices?availability=approved');
 
   // This table has no row link — each row manages its own state through its "Manage"
   // disclosure rather than navigating to a detail page.
@@ -926,7 +983,7 @@ test('a voice can be assigned to an agent version, and production requires nativ
 
 test('the voice catalogue can be refreshed from the provider', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/receptionist/voices');
+  await page.goto('/settings/receptionist/voices');
 
   await page.getByRole('button', { name: 'Refresh from provider' }).click();
   await expect(page.getByText(/Saved|Refused/).first()).toBeVisible();
@@ -934,7 +991,7 @@ test('the voice catalogue can be refreshed from the provider', async ({ page }) 
 
 test('a test case can be created and appears immediately in the list', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/quality/test-cases');
+  await page.goto('/settings/simulation/scenarios');
 
   const name = `Verification case ${Date.now()}`;
   await page.getByLabel('Name').fill(name);
@@ -947,7 +1004,7 @@ test('a test case can be created and appears immediately in the list', async ({ 
 
 test('creating a test case with invalid JSON in its definition is refused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/quality/test-cases');
+  await page.goto('/settings/simulation/scenarios');
 
   await page.getByLabel('Name').fill(`Invalid definition ${Date.now()}`);
   await page.getByLabel('Definition (JSON)').fill('{ this is not json');
@@ -960,7 +1017,7 @@ test('starting a test run against a release that is not staged for testing is re
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/quality/runs');
+  await page.goto('/settings/simulation/results');
 
   await page.getByLabel('Agent version').selectOption({ index: 1 });
   const firstCase = page.locator('.test-case-checklist input[type="checkbox"]').first();
@@ -979,7 +1036,7 @@ test('a running test can be synced with the provider, and a completed run offers
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/quality/runs');
+  await page.goto('/settings/simulation/results');
 
   const runningRow = page
     .locator('tbody tr')
@@ -1027,7 +1084,7 @@ test('the audit chain stays intact under rapid consecutive writes', async ({ pag
     ),
   );
 
-  await page.goto('/administration/audit');
+  await page.goto('/settings/administration/audit');
   await expect(page.getByText('Chain intact')).toBeVisible();
   await expect(page.getByText(/broken link/)).toHaveCount(0);
 });
@@ -1096,7 +1153,7 @@ test('running reconciliation reports honestly when the workflow engine is unavai
 
 test('a feature flag gate can be toggled and the reason is recorded', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/feature-flags');
+  await page.goto('/settings/administration/feature-flags');
 
   // Reads the row's own current action rather than assuming it starts disabled, so
   // the test is safe to run twice in a row against the same database without an
@@ -1119,7 +1176,7 @@ test('a feature flag can be disabled again after enabling, surviving the server 
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/feature-flags');
+  await page.goto('/settings/administration/feature-flags');
 
   // Seasonal variations is seeded disabled. Enabling it and then reloading and
   // disabling it again exercises both toggle directions and confirms the "Saved"
@@ -1145,7 +1202,7 @@ test('an unapproved retention policy cannot be activated, and approving it unloc
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/retention');
+  await page.goto('/settings/administration/retention');
 
   const row = page
     .locator('tbody tr')
@@ -1197,7 +1254,7 @@ test('a legal hold can be placed on a call and later released', async ({ page })
   await expect(page).toHaveURL(/\/calls\/([0-9a-f-]{36})$/);
   const conversationId = new URL(page.url()).pathname.split('/').pop() as string;
 
-  await page.goto('/administration/retention');
+  await page.goto('/settings/administration/retention');
   const placeForm = page.locator('.inline-form').filter({ hasText: 'Place legal hold' });
   await placeForm.getByLabel('What this covers').selectOption('CONVERSATION');
   await placeForm.getByLabel('Record ID').fill(conversationId);
@@ -1222,7 +1279,7 @@ test('a legal hold can be placed on a call and later released', async ({ page })
 
 test('placing a legal hold on a record that does not exist is refused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/retention');
+  await page.goto('/settings/administration/retention');
 
   const placeForm = page.locator('.inline-form').filter({ hasText: 'Place legal hold' });
   await placeForm.getByLabel('What this covers').selectOption('CONVERSATION');
@@ -1240,7 +1297,7 @@ test('granting a role that would let one person author and approve the same know
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/users');
+  await page.goto('/settings/administration/users');
 
   const row = page.locator('tbody tr').filter({ hasText: 'Carla Dias' }).first();
   await expect(row).toBeVisible();
@@ -1258,7 +1315,7 @@ test('granting a role that would let one person author and approve the same know
 
 test('a role can be granted to a user and then revoked', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/administration/users');
+  await page.goto('/settings/administration/users');
 
   const row = page.locator('tbody tr').filter({ hasText: 'Elena Rocha' }).first();
   await expect(row).toBeVisible();
@@ -1276,7 +1333,7 @@ test('a report can be run now and its lineage is real rather than a fabricated a
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/intelligence/reports');
+  await page.goto('/reports');
 
   const row = page.locator('tbody tr').filter({ hasText: 'Agent release quality' }).first();
   await expect(row).toBeVisible();
@@ -1288,7 +1345,9 @@ test('a report can be run now and its lineage is real rather than a fabricated a
 
   // There is no report-rendering integration, so a manual run never claims to have
   // produced a file it did not generate — the newest run at the top of run history
+  // (its own page since Reports split into Scheduled reports and Run history)
   // reports its real lineage with an honestly empty artefact column.
+  await page.goto('/reports/history');
   const runsTable = page.locator('table').filter({ hasText: 'Report runs with the period' });
   const latestRow = runsTable.locator('tbody tr').first();
   await expect(latestRow).toContainText('Agent release quality');
@@ -1297,7 +1356,7 @@ test('a report can be run now and its lineage is real rather than a fabricated a
 
 test('a report schedule can be paused and resumed', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/intelligence/reports');
+  await page.goto('/reports');
 
   const row = page.locator('tbody tr').filter({ hasText: 'Monthly strategic' }).first();
   await expect(row).toBeVisible();
@@ -1321,11 +1380,11 @@ test('a failed report run can be retried without altering the original failure',
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/intelligence/reports');
+  // Run history is its own page now (Reports split into Scheduled reports and
+  // Run history), so there is no longer a definitions table on the same page to
+  // disambiguate from.
+  await page.goto('/reports/history');
 
-  // Scoped to the run-history table specifically: the definitions table above it
-  // also shows "Failed" in a definition's "Last run" summary cell, which is a
-  // different row with no Retry control of its own.
   const runsTable = page.locator('table').filter({ hasText: 'Report runs with the period' });
   const failedRow = runsTable.locator('tbody tr').filter({ hasText: 'Failed' }).first();
   await expect(failedRow).toBeVisible();
@@ -1336,4 +1395,97 @@ test('a failed report run can be retried without altering the original failure',
   // Retrying creates a new attempt; the original failed run is never rewritten, so
   // the very row that was clicked still reports FAILED afterwards.
   await expect(failedRow.getByText('Failed', { exact: true })).toBeVisible();
+});
+
+test('old routes redirect to their new information architecture location', async ({ page }) => {
+  test.setTimeout(120_000);
+  const redirects: Array<[string, RegExp]> = [
+    ['/receptionist/agents', /\/settings\/receptionist$/],
+    ['/knowledge/library', /\/settings\/knowledge$/],
+    ['/quality/test-cases', /\/settings\/simulation\/scenarios$/],
+    ['/operations/handoffs', /\/calls\/handoffs$/],
+    ['/calls/partial', /\/calls\/live$/],
+    ['/intelligence/analytics', /\/intelligence$/],
+    ['/intelligence/reports', /\/reports$/],
+    ['/administration', /\/settings\/administration$/],
+    ['/administration/ai', /\/settings\/ai-routing$/],
+    ['/administration/voice-runtime', /\/settings\/ai-providers\/elevenlabs$/],
+  ];
+  for (const [from, to] of redirects) {
+    await page.goto(from);
+    await expect(page).toHaveURL(to);
+    await expect(page.locator('main h1')).toBeVisible();
+  }
+});
+
+test('the Settings landing page groups every configuration area', async ({ page }) => {
+  await page.goto('/settings');
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+  for (const group of [
+    'Receptionist',
+    'Simulation Lab',
+    'Knowledge Hub',
+    'AI Providers',
+    'AI Routing',
+    'Integrations',
+    'Administration',
+  ]) {
+    await expect(page.getByRole('link', { name: new RegExp(`^${group}`) })).toBeVisible();
+  }
+});
+
+test('agent performance is attributed to the version that actually handled each call', async ({
+  page,
+}) => {
+  await page.goto('/intelligence/agent-performance');
+  await expect(page.getByRole('heading', { name: 'Agent performance' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Containment' })).toBeVisible();
+
+  // Customer follow-up rate is a genuine instrumentation gap (no caller identity
+  // exists anywhere in the schema), so it must say so rather than show a fabricated
+  // rate or a bare zero.
+  await expect(page.getByText('Not yet instrumented').first()).toBeVisible();
+
+  // Each version drills through to the calls it actually handled.
+  const versionLink = page.locator('tbody tr').first().getByRole('link').first();
+  await versionLink.click();
+  await expect(page).toHaveURL(/\/calls\?agentVersion=/);
+});
+
+test('call reasons rank real classifications and drill through to the calls behind them', async ({
+  page,
+}) => {
+  await page.goto('/intelligence/call-reasons');
+  await expect(page.getByRole('heading', { name: 'Call reasons' })).toBeVisible();
+  // Scoped to the reasons table specifically: the chart above it has its own
+  // collapsed table fallback earlier in the DOM, sharing the `tbody` namespace.
+  const reasonsTable = page.locator('table').filter({ hasText: 'Call reasons ranked by volume' });
+  const firstReason = reasonsTable.locator('tbody tr').first().getByRole('link').first();
+  await firstReason.click();
+  await expect(page).toHaveURL(/\/calls\?intent=/);
+  await expect(page.getByRole('heading', { name: 'All calls' })).toBeVisible();
+});
+
+test('customer continuity states its instrumentation gap honestly', async ({ page }) => {
+  await page.goto('/intelligence/customer-continuity');
+  await expect(page.getByRole('heading', { name: 'Customer continuity' })).toBeVisible();
+  // No caller identity is recorded anywhere in the schema, so this must be stated
+  // rather than a fabricated per-version or per-park breakdown being offered.
+  await expect(page.getByText(/No caller or customer identity is recorded/)).toBeVisible();
+});
+
+test('provider performance and costs trace back to real execution runs', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/intelligence/provider-performance');
+  await expect(page.getByRole('heading', { name: 'Provider performance' })).toBeVisible();
+  // Scoped to the provider table: the model and capability tables below it repeat the
+  // same column headers.
+  const byProvider = page.locator('table').filter({ hasText: 'Provider execution health' }).first();
+  await expect(byProvider.getByRole('columnheader', { name: 'Success rate' })).toBeVisible();
+  expect(await page.locator('tbody tr').count()).toBeGreaterThan(0);
+
+  await page.goto('/intelligence/costs');
+  await expect(page.getByRole('heading', { name: 'Costs' })).toBeVisible();
+  await expect(page.getByText(/£/).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Budget utilisation' })).toBeVisible();
 });

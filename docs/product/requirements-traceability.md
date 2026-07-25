@@ -18,11 +18,11 @@ Implementation-specific rows are enriched continuously during the build; complet
 
 ## AIOS architecture extension
 
-| Requirement                       | Implementation                                                                         | Evidence                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Provider-independent enrichment   | `aios-contracts`, `aios`, `aios-adapters`; gateway-only worker                         | Architecture fitness and type checks                                  |
-| Evidence-linked call intelligence | Context Builder, manifest, schema validation, evidence resolver                        | AIOS unit tests and artifact tables                                   |
-| Non-blocking enrichment           | Temporal workflow returns `PARTIAL`; ingestion/outcomes continue                       | Workflow and gateway failure paths                                    |
-| Provenance and correction         | Immutable AIOS runs/artifacts plus projection artifact links                           | Migration `0006`                                                      |
-| Cost and readiness controls       | Usage, price, budget, evaluation, AI readiness entities                                | Admin AI Intelligence and readiness API                               |
-| Administration AI UX/IA           | Capability-first Administration Settings hierarchy and grouped AI workspace view model | Admin browser navigation, redirect, simulator and accessibility tests |
+| Requirement                       | Implementation                                                                                    | Evidence                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Provider-independent enrichment   | `aios-contracts`, `aios`, `aios-adapters`; gateway-only worker                                    | Architecture fitness and type checks                                  |
+| Evidence-linked call intelligence | Context Builder, manifest, schema validation, evidence resolver                                   | AIOS unit tests and artifact tables                                   |
+| Non-blocking enrichment           | Temporal workflow returns `PARTIAL`; ingestion/outcomes continue                                  | Workflow and gateway failure paths                                    |
+| Provenance and correction         | Immutable AIOS runs/artifacts plus projection artifact links                                      | Migration `0006`                                                      |
+| Cost and readiness controls       | Usage, price, budget, evaluation, AI readiness entities                                           | Admin AI Intelligence and readiness API                               |
+| AI Providers/Routing UX/IA        | Capability-first Settings → AI Providers/AI Routing hierarchy and grouped AI workspace view model | Admin browser navigation, redirect, simulator and accessibility tests |

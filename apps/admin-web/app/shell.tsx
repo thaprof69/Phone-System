@@ -4,27 +4,21 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity,
-  Bot,
   ChartNoAxesCombined,
-  ClipboardCheck,
+  FileText,
   Gauge,
-  Library,
   Menu,
   Settings,
   ShieldCheck,
-  Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { DOMAINS, areaForPath, domainForPath } from './navigation';
+import { DOMAINS, areaForPath, domainForPath, settingsGroupForPath } from './navigation';
 
 const ICONS: Record<string, LucideIcon> = {
   Gauge,
-  Bot,
-  Library,
-  ClipboardCheck,
   Activity,
-  Workflow,
   ChartNoAxesCombined,
+  FileText,
   Settings,
 };
 
@@ -45,6 +39,8 @@ export function AppShell({
   const pathname = usePathname() ?? '/';
   const activeDomain = domainForPath(pathname);
   const activeArea = areaForPath(activeDomain, pathname);
+  const activeSettingsGroup =
+    activeDomain.key === 'settings' ? settingsGroupForPath(pathname) : undefined;
 
   const links = DOMAINS.map((domain) => {
     const Icon = ICONS[domain.icon] ?? Gauge;
@@ -102,7 +98,9 @@ export function AppShell({
               <span>QP</span>
               <div>
                 <strong>Authenticated user</strong>
-                <small>{activeArea ? activeArea.label : activeDomain.label}</small>
+                <small>
+                  {activeSettingsGroup?.label ?? activeArea?.label ?? activeDomain.label}
+                </small>
               </div>
             </div>
           </div>
