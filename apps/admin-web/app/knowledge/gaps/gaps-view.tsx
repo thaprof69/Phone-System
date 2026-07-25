@@ -12,6 +12,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { ConvertGapButton } from './gap-actions';
 
 export type GapRow = {
   id: string;
@@ -100,6 +101,20 @@ export async function KnowledgeGapsView({ eyebrow }: { eyebrow: 'Knowledge' | 'I
       render: (gap) => formatRelativeTime(gap.createdAt),
       priority: 'secondary',
     },
+    ...(eyebrow === 'Knowledge'
+      ? [
+          {
+            key: 'convert',
+            header: 'Action',
+            render: (gap: GapRow) =>
+              gap.status === 'OPEN' ? (
+                <ConvertGapButton gapId={gap.id} />
+              ) : (
+                <span className="muted-cell">{humaniseState(gap.status)}</span>
+              ),
+          } satisfies Column<GapRow>,
+        ]
+      : []),
   ];
 
   return (

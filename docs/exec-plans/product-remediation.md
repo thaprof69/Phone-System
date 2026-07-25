@@ -72,7 +72,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 
 - [x] 2.1 Mission Control (§7)
 - [x] 2.2 Agent Studio (§8) — conversation editor with server-validated save, governed tool contracts, transfer routing, version comparison, publication judged by provider read-back, rollback and drift reconciliation
-- [ ] 2.3 Knowledge Hub (§9)
+- [x] 2.3 Knowledge Hub (§9) — authoring as immutable new versions with a checksum-based identical-edit refusal, submit/review with a genuinely independent approver (resolved from the real principal via `admin_users`, not a shared system identity), sync retry that re-sends local state and never adopts the remote copy, language-validated agent assignment, and gap-to-draft conversion that never auto-publishes
 - [ ] 2.4 Voice Library (§10)
 - [ ] 2.5 Test Studio (§11)
 - [ ] 2.6 Calls and Call Detail (§12)
@@ -204,28 +204,44 @@ refusals, route creation and pre-activation validation, code-owned schema protec
 repeat-transition conflict, budget validation, budget idempotency, execution filtering
 and pagination, and capability drill-through.
 
+### Knowledge Hub depth pass — 2026-07-25
+
+| Command                                       | Result                                                                           |
+| --------------------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm check`                                  | 17 tasks successful, 17 total                                                    |
+| `pnpm architecture:check`                     | `Architecture fitness checks passed.`                                            |
+| `pnpm traceability:check`                     | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium`    | **52 passed, twice consecutively**, one freshly reseeded database (40.9s, 39.8s) |
+| `playwright test --project=customer-chromium` | 2 passed                                                                         |
+
+Three real defects found and fixed while building the six new browser tests: the
+independent-approver rule was unenforceable because every write attributed itself to one
+shared system identity rather than the real signed-in principal; the version `<Tabs>`
+froze on its initial tab across a server refresh because Radix reads `defaultValue` only
+on mount; and the authoring panel's own success confirmation was destroyed by its own
+`router.refresh()` call the instant the new draft it had just announced came into
+existence. All three are recorded in `docs/qa/release-evidence.md`.
+
 ---
 
 ## 6a. Resume point
 
-Mission Control (2.1), Agent Studio (2.2), Operations (2.7) and AI Infrastructure (2.8)
-are complete.
+Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8) and
+Knowledge Hub (2.3) are complete.
 
-**The next unchecked item is 2.3 — Knowledge Hub (§9):**
+**The next unchecked item is 2.4 — Voice Library (§10):**
 
-1. **Authoring and versioning.** Create and edit a knowledge asset as a new version with a
-   mandatory change reason; versions are immutable once submitted.
-2. **Approval queue.** Diff against the current active version, stated impact, and
-   two-person approval where the asset's policy requires it — an author may never approve
-   their own draft.
-3. **Synchronisation.** Local approved state and remote runtime state shown separately,
-   with retry on a failed sync. Divergence is drift, never silently adopted.
-4. **Assignment.** Which agents and languages an asset serves, and the tests linked to it.
-5. **Gap to draft.** Convert a detected knowledge gap into a draft asset. Never
-   auto-publish generated knowledge.
+1. **Catalogue.** The voice list already exists at `/receptionist/voices`; extend it with
+   real filtering and the metadata a comparison needs.
+2. **Side-by-side comparison.** Two or more voices compared directly rather than only in
+   a flat list.
+3. **Assignment.** By agent × language × environment × fallback, mirroring the pattern
+   just built for knowledge assignment (`knowledgeAssignments` / `AssignmentForm`).
+4. **Custom voices.** Behind consent and activation gates — never activated without a
+   recorded consent record.
 
-Then continue in the order in section 3: Voice Library (2.4), Test Studio (2.5), Calls and
-Call Detail (2.6), Administration (2.9), Analytics and Reports (2.10).
+Then continue in the order in section 3: Test Studio (2.5), Calls and Call Detail (2.6),
+Administration (2.9), Analytics and Reports (2.10).
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

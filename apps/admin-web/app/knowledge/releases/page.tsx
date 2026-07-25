@@ -17,6 +17,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { RetrySyncButton } from '../[id]/knowledge-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,6 +177,7 @@ export default async function KnowledgeReleasesPage() {
           columns={columns}
           rows={rows}
           getRowKey={(row) => row.id}
+          rowHref={(row) => `/knowledge/${row.assetId}`}
           empty={
             <EmptyState
               title="Nothing published yet"
@@ -185,11 +187,16 @@ export default async function KnowledgeReleasesPage() {
         />
       </Panel>
 
-      {failed.length > 0 ? (
-        <Panel title="Publication failures" eyebrow="Provider responses">
-          {failed.map((row) => (
+      {failed.length + drifted.length > 0 ? (
+        <Panel
+          title="Needs attention"
+          eyebrow="Provider responses"
+          description="A retry re-sends the local approved content. It never adopts the remote copy as the new truth."
+        >
+          {[...failed, ...drifted].map((row) => (
             <div className="failure-entry" key={row.id}>
               <strong>{row.title}</strong>
+              <RetrySyncButton syncId={row.id} />
               <TechnicalDetails summary="Provider error and checksums">
                 <JsonInspector label="Last error" value={row.lastError} />
                 <dl className="technical-grid">

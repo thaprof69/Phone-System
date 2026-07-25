@@ -252,6 +252,7 @@ export default async function KnowledgeLibraryPage({
           columns={columns}
           rows={rows}
           getRowKey={(row) => row.id}
+          rowHref={(row) => `/knowledge/${row.id}`}
           sort={sort}
           buildSortHref={(key, direction) =>
             buildHref('/knowledge/library', params, { sort: key, dir: direction, page: undefined })

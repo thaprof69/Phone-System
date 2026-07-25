@@ -68,6 +68,25 @@ const KnowledgeDraftSchema = z
     park: z.string().optional(),
   })
   .strict();
+const UuidSchema = z.uuid();
+const KnowledgeEditSchema = z
+  .object({
+    content: z.string().min(1).max(200_000),
+    // Mandatory, and long enough to be a sentence. A version whose reason is "update"
+    // is unreviewable six months later.
+    changeReason: z.string().trim().min(8).max(500),
+    effectiveAt: z.iso.datetime().optional(),
+    expiresAt: z.iso.datetime().optional(),
+  })
+  .strict();
+const KnowledgeAssignmentSchema = z
+  .object({
+    agentVersionId: z.uuid(),
+    language: z.string().trim().min(2).max(20),
+    park: z.string().trim().min(2).max(100).optional(),
+    active: z.boolean(),
+  })
+  .strict();
 const CorrectionSchema = z
   .object({
     targetType: z.enum([
@@ -269,7 +288,7 @@ export class ControlPlaneController {
   }
   @RequirePermission('knowledge:write')
   @Post('knowledge')
-  createKnowledge(@Body() body: unknown) {
+  createKnowledge(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
     const parsed = KnowledgeDraftSchema.parse(body);
     return this.platform.createKnowledgeDraft({
       title: parsed.title,
@@ -277,14 +296,84 @@ export class ControlPlaneController {
       language: parsed.language,
       riskClass: parsed.riskClass,
       content: parsed.content,
+      principal: request.principal,
       ...(parsed.park === undefined ? {} : { park: parsed.park }),
     });
   }
+  // Registered before `knowledge/:id` so the literal path is not swallowed by it.
+  @RequirePermission('knowledge:write')
+  @Get('knowledge-gaps')
+  knowledgeGapsList() {
+    return this.platform.listKnowledgeGaps();
+  }
+  @RequirePermission('knowledge:write')
+  @Get('knowledge/:id')
+  knowledgeDetail(@Param('id') id: string) {
+    return this.platform.knowledgeAsset(UuidSchema.parse(id));
+  }
+  @RequirePermission('knowledge:write')
+  @Post('knowledge/:id/versions')
+  editKnowledge(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = KnowledgeEditSchema.parse(body);
+    return this.platform.editKnowledgeAsset({
+      assetId: UuidSchema.parse(id),
+      content: input.content,
+      changeReason: input.changeReason,
+      principal: request.principal,
+      ...(input.effectiveAt === undefined ? {} : { effectiveAt: input.effectiveAt }),
+      ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    });
+  }
+  @RequirePermission('knowledge:write')
+  @Post('knowledge-versions/:id/submit')
+  submitKnowledge(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.submitKnowledgeForReview(UuidSchema.parse(id), request.principal);
+  }
   @RequirePermission('knowledge:approve')
   @Post('knowledge-versions/:id/decision')
-  decideKnowledge(@Param('id') id: string, @Body() body: unknown) {
+  decideKnowledge(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
     const input = ReviewDecisionSchema.parse(body);
-    return this.platform.decideKnowledge(id, input.decision, input.reason);
+    return this.platform.decideKnowledge(
+      UuidSchema.parse(id),
+      input.decision,
+      input.reason,
+      request.principal,
+    );
+  }
+  @RequirePermission('knowledge:write')
+  @Post('knowledge-versions/:id/assignments')
+  assignKnowledge(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = KnowledgeAssignmentSchema.parse(body);
+    return this.platform.assignKnowledge({
+      versionId: UuidSchema.parse(id),
+      agentVersionId: input.agentVersionId,
+      language: input.language,
+      active: input.active,
+      principal: request.principal,
+      ...(input.park === undefined ? {} : { park: input.park }),
+    });
+  }
+  @RequirePermission('knowledge:approve', 'RELEASE_MANAGEMENT')
+  @Post('knowledge-syncs/:id/retry')
+  retryKnowledgeSync(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.retryKnowledgeSync(UuidSchema.parse(id), request.principal);
+  }
+  @RequirePermission('knowledge:write')
+  @Post('knowledge-gaps/:id/convert')
+  convertKnowledgeGap(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
+    return this.platform.convertGapToDraft(UuidSchema.parse(id), request.principal);
   }
   @RequirePermission('knowledge:approve', 'RELEASE_MANAGEMENT')
   @Post('knowledge-versions/:id/publish')
@@ -351,11 +440,6 @@ export class ControlPlaneController {
   @Get('knowledge-releases')
   knowledgeReleases() {
     return this.platform.listKnowledgeReleases();
-  }
-  @RequirePermission('knowledge:write')
-  @Get('knowledge-gaps')
-  knowledgeGaps() {
-    return this.platform.listKnowledgeGaps();
   }
   @RequirePermission('corrections:write', 'QUALITY_REVIEW')
   @Get('corrections')

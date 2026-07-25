@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import type { Principal } from '@quantum-parks/auth';
 import { and, desc, eq, gte, inArray, isNull } from 'drizzle-orm';
 import {
   adminUsers,
@@ -25,6 +26,8 @@ import {
   handoffs,
   knowledgeAssets,
   knowledgeApprovals,
+  knowledgeAssignments,
+  knowledgeConflicts,
   knowledgeGaps,
   knowledgeSyncs,
   knowledgeVersions,
@@ -83,6 +86,27 @@ export class PlatformService {
     private readonly aios: AiosPlatformService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Resolves a principal to the `admin_users` row that represents them.
+   *
+   * Authorship and approval columns are uuids referring to real people, while a
+   * principal carries an OIDC subject — the two are joined by `admin_users.oidc_subject`,
+   * which is exactly what that column is for. Writing the subject straight into a uuid
+   * column fails outright, and defaulting every actor to one system id would make the
+   * independent-approver rule unverifiable, because author and reviewer would always be
+   * the same person.
+   *
+   * An unrecognised subject falls back to the system actor rather than failing the
+   * request: the audit entry still records the principal's own subject, so the identity
+   * is never lost even when no user row exists yet.
+   */
+  private async actorId(principal: Principal): Promise<string> {
+    const user = await this.database.db.query.adminUsers.findFirst({
+      where: eq(adminUsers.oidcSubject, principal.subject),
+    });
+    return user?.id ?? process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+  }
 
   private async providerAdapter(): Promise<ElevenLabsPort> {
     const configured = await this.elevenLabsIntegration.resolveActiveCredential();
@@ -924,6 +948,419 @@ export class PlatformService {
     };
   }
 
+  /* ------------------------------------------------------------- knowledge */
+
+  /**
+   * One knowledge asset with everything an approver needs to decide.
+   *
+   * Content is included for every version, because the point of the review screen is to
+   * compare what is proposed against what is live — a summary cannot support that.
+   */
+  async knowledgeAsset(assetId: string) {
+    const asset = await this.database.db.query.knowledgeAssets.findFirst({
+      where: eq(knowledgeAssets.id, assetId),
+    });
+    if (!asset) return { status: 'NOT_FOUND' as const };
+
+    const versions = await this.database.db
+      .select()
+      .from(knowledgeVersions)
+      .where(eq(knowledgeVersions.assetId, assetId))
+      .orderBy(desc(knowledgeVersions.version));
+    const versionIds = versions.map((version) => version.id);
+
+    const [approvals, syncs, assignments, conflicts, agents, tests] = await Promise.all([
+      versionIds.length > 0
+        ? this.database.db
+            .select()
+            .from(knowledgeApprovals)
+            .where(inArray(knowledgeApprovals.knowledgeVersionId, versionIds))
+        : Promise.resolve([]),
+      versionIds.length > 0
+        ? this.database.db
+            .select()
+            .from(knowledgeSyncs)
+            .where(inArray(knowledgeSyncs.knowledgeVersionId, versionIds))
+        : Promise.resolve([]),
+      versionIds.length > 0
+        ? this.database.db
+            .select()
+            .from(knowledgeAssignments)
+            .where(inArray(knowledgeAssignments.knowledgeVersionId, versionIds))
+        : Promise.resolve([]),
+      versionIds.length > 0
+        ? this.database.db
+            .select()
+            .from(knowledgeConflicts)
+            .where(inArray(knowledgeConflicts.leftVersionId, versionIds))
+        : Promise.resolve([]),
+      this.database.db.select().from(agentConfigVersions),
+      this.database.db.select().from(agentTests),
+    ]);
+
+    const active = versions.find((version) => version.state === 'ACTIVE');
+    const live = active ?? versions.find((version) => version.state === 'PUBLISHED') ?? null;
+
+    return {
+      status: 'FOUND' as const,
+      asset,
+      // The version an approver is comparing against. Null when nothing is live yet,
+      // which is a different situation from "no change" and is shown as such.
+      liveVersionId: live?.id ?? null,
+      versions: versions.map((version) => ({
+        ...version,
+        approvals: approvals
+          .filter((approval) => approval.knowledgeVersionId === version.id)
+          .map((approval) => ({
+            reviewerId: approval.reviewerId,
+            decision: approval.decision,
+            reason: approval.reason,
+            createdAt: approval.createdAt,
+          })),
+        sync: syncs.find((sync) => sync.knowledgeVersionId === version.id) ?? null,
+        assignments: assignments
+          .filter((assignment) => assignment.knowledgeVersionId === version.id)
+          .map((assignment) => ({
+            ...assignment,
+            agentVersionLabel:
+              agents.find((agent) => agent.id === assignment.agentVersionId)?.version ?? null,
+          })),
+      })),
+      conflicts,
+      // Offered as assignment targets. Only versions that could actually serve.
+      agentVersions: agents
+        .filter((agent) => ['APPROVED', 'PUBLISHED', 'ACTIVE'].includes(agent.state))
+        .map((agent) => ({ id: agent.id, version: agent.version, state: agent.state })),
+      // A high-risk asset with no test covering it is a gap worth seeing on this page.
+      linkedTests: tests
+        .filter((test) => !test.archived)
+        .map((test) => ({ id: test.id, name: test.name, riskLevel: test.riskLevel })),
+    };
+  }
+
+  /**
+   * Saves an edit as a new version rather than mutating the existing one.
+   *
+   * Published knowledge is what an agent answered from, so a version that has ever been
+   * live is evidence and must stay readable exactly as it was. Editing therefore always
+   * supersedes; it never overwrites.
+   */
+  async editKnowledgeAsset(input: {
+    assetId: string;
+    content: string;
+    changeReason: string;
+    effectiveAt?: string | undefined;
+    expiresAt?: string | undefined;
+    principal: Principal;
+  }) {
+    const asset = await this.database.db.query.knowledgeAssets.findFirst({
+      where: eq(knowledgeAssets.id, input.assetId),
+    });
+    if (!asset) return { status: 'NOT_FOUND' as const };
+
+    const versions = await this.database.db
+      .select()
+      .from(knowledgeVersions)
+      .where(eq(knowledgeVersions.assetId, input.assetId))
+      .orderBy(desc(knowledgeVersions.version));
+
+    const blockers: string[] = [];
+    const effectiveAt = input.effectiveAt ? new Date(input.effectiveAt) : null;
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+    if (effectiveAt && Number.isNaN(effectiveAt.getTime())) {
+      blockers.push('The effective date is not a valid date');
+    }
+    if (expiresAt && Number.isNaN(expiresAt.getTime())) {
+      blockers.push('The expiry date is not a valid date');
+    }
+    if (effectiveAt && expiresAt && expiresAt <= effectiveAt) {
+      blockers.push('Knowledge cannot expire before it takes effect');
+    }
+
+    const checksum = createHash('sha256').update(input.content).digest('hex');
+    // An identical edit would produce a version indistinguishable from its predecessor
+    // and an approval decision about nothing.
+    const latest = versions[0];
+    if (latest && latest.contentChecksum === checksum) {
+      blockers.push(`This is identical to version ${latest.version}`);
+    }
+    // A draft already open for this asset would create two competing candidates with no
+    // rule for which supersedes which.
+    const openDraft = versions.find((version) => ['DRAFT', 'IN_REVIEW'].includes(version.state));
+    if (openDraft) {
+      blockers.push(
+        `Version ${openDraft.version} is already ${openDraft.state.toLowerCase().replace('_', ' ')}`,
+      );
+    }
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
+    const nextVersion = (latest?.version ?? 0) + 1;
+    const [created] = await this.database.db
+      .insert(knowledgeVersions)
+      .values({
+        assetId: input.assetId,
+        version: nextVersion,
+        state: 'DRAFT',
+        content: input.content,
+        contentChecksum: checksum,
+        changeReason: input.changeReason,
+        createdBy: await this.actorId(input.principal),
+        ...(effectiveAt ? { effectiveAt } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+      })
+      .returning();
+    if (!created) return { status: 'FAILED' as const };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'KNOWLEDGE_VERSION_DRAFTED',
+      aggregateType: 'KnowledgeVersion',
+      aggregateId: created.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        assetId: input.assetId,
+        version: nextVersion,
+        changeReason: input.changeReason,
+        checksum,
+      },
+    });
+
+    return { status: 'CREATED' as const, version: created };
+  }
+
+  /** Moves a draft into review. The state check is the only gate; submission is not restricted to the author. */
+  async submitKnowledgeForReview(versionId: string, principal: Principal) {
+    const version = await this.database.db.query.knowledgeVersions.findFirst({
+      where: eq(knowledgeVersions.id, versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+    if (version.state !== 'DRAFT') {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    const [updated] = await this.database.db
+      .update(knowledgeVersions)
+      .set({ state: 'IN_REVIEW' })
+      .where(eq(knowledgeVersions.id, versionId))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'KNOWLEDGE_VERSION_SUBMITTED',
+      aggregateType: 'KnowledgeVersion',
+      aggregateId: versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { assetId: version.assetId, version: version.version },
+    });
+
+    return { status: 'UPDATED' as const, from: 'DRAFT', to: 'IN_REVIEW', version: updated };
+  }
+
+  /**
+   * Retries a failed or drifted synchronisation.
+   *
+   * Local approved state stays authoritative throughout: a retry re-sends what was
+   * approved here, and never adopts the remote copy as the new truth.
+   */
+  async retryKnowledgeSync(syncId: string, principal: Principal) {
+    const sync = await this.database.db.query.knowledgeSyncs.findFirst({
+      where: eq(knowledgeSyncs.id, syncId),
+    });
+    if (!sync) return { status: 'NOT_FOUND' as const };
+    if (sync.syncState === 'IN_SYNC' && sync.remoteChecksum === sync.localChecksum) {
+      return { status: 'CONFLICT' as const, currentState: sync.syncState };
+    }
+
+    const version = await this.database.db.query.knowledgeVersions.findFirst({
+      where: eq(knowledgeVersions.id, sync.knowledgeVersionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+    if (!['APPROVED', 'PUBLISHED', 'ACTIVE', 'PUBLISH_FAILED', 'DRIFTED'].includes(version.state)) {
+      return { status: 'BLOCKED' as const, blockers: [`The version is ${version.state}`] };
+    }
+
+    const dispatched = await this.workflows.dispatchKnowledgePublication(sync.knowledgeVersionId);
+    await this.database.db
+      .update(knowledgeSyncs)
+      .set({ syncState: 'PUBLISH_PENDING', lastAttemptAt: new Date(), updatedAt: new Date() })
+      .where(eq(knowledgeSyncs.id, syncId));
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'KNOWLEDGE_SYNC_RETRIED',
+      aggregateType: 'KnowledgeSync',
+      aggregateId: syncId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { previousState: sync.syncState, versionId: sync.knowledgeVersionId },
+    });
+
+    return {
+      status: dispatched.queued ? ('QUEUED' as const) : ('TEMPORARILY_UNAVAILABLE' as const),
+      workflowId: dispatched.workflowId,
+    };
+  }
+
+  /** Assigns a knowledge version to an agent version for one language. */
+  async assignKnowledge(input: {
+    versionId: string;
+    agentVersionId: string;
+    language: string;
+    park?: string | undefined;
+    active: boolean;
+    principal: Principal;
+  }) {
+    const version = await this.database.db.query.knowledgeVersions.findFirst({
+      where: eq(knowledgeVersions.id, input.versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    const blockers: string[] = [];
+    // Assigning unapproved knowledge would put unreviewed content on a caller path.
+    if (!['APPROVED', 'PUBLISHED', 'ACTIVE'].includes(version.state)) {
+      blockers.push(`Only approved knowledge can be assigned; this version is ${version.state}`);
+    }
+    const asset = await this.database.db.query.knowledgeAssets.findFirst({
+      where: eq(knowledgeAssets.id, version.assetId),
+    });
+    if (asset && asset.language !== input.language) {
+      blockers.push(`This asset is written in ${asset.language}, not ${input.language}`);
+    }
+    const agent = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.id, input.agentVersionId),
+    });
+    if (!agent) blockers.push('That agent version does not exist');
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
+    const existing = await this.database.db
+      .select()
+      .from(knowledgeAssignments)
+      .where(
+        and(
+          eq(knowledgeAssignments.knowledgeVersionId, input.versionId),
+          eq(knowledgeAssignments.agentVersionId, input.agentVersionId),
+          eq(knowledgeAssignments.language, input.language),
+        ),
+      )
+      .limit(1);
+
+    // Idempotent: re-assigning the same triple updates it rather than failing on the
+    // unique index or silently doing nothing.
+    const [assignment] = existing[0]
+      ? await this.database.db
+          .update(knowledgeAssignments)
+          .set({ active: input.active, ...(input.park ? { park: input.park } : {}) })
+          .where(eq(knowledgeAssignments.id, existing[0].id))
+          .returning()
+      : await this.database.db
+          .insert(knowledgeAssignments)
+          .values({
+            knowledgeVersionId: input.versionId,
+            agentVersionId: input.agentVersionId,
+            language: input.language,
+            active: input.active,
+            ...(input.park ? { park: input.park } : {}),
+          })
+          .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'KNOWLEDGE_ASSIGNMENT_SET',
+      aggregateType: 'KnowledgeAssignment',
+      aggregateId: assignment?.id ?? input.versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        versionId: input.versionId,
+        agentVersionId: input.agentVersionId,
+        language: input.language,
+        active: input.active,
+      },
+    });
+
+    return { status: 'SAVED' as const, assignment };
+  }
+
+  /**
+   * Turns a detected knowledge gap into a draft an author then writes.
+   *
+   * The draft is deliberately empty of generated content and starts in DRAFT: generated
+   * knowledge is never published, and the evidence that produced the gap is recorded in
+   * the change reason so the author can see what callers actually asked.
+   */
+  async convertGapToDraft(gapId: string, principal: Principal) {
+    const gap = await this.database.db.query.knowledgeGaps.findFirst({
+      where: eq(knowledgeGaps.id, gapId),
+    });
+    if (!gap) return { status: 'NOT_FOUND' as const };
+    if (gap.status !== 'OPEN') return { status: 'CONFLICT' as const, currentState: gap.status };
+
+    const authorId = await this.actorId(principal);
+    const placeholder = [
+      `Draft raised from a detected knowledge gap: ${gap.title}`,
+      '',
+      `This was asked ${gap.frequency} times across ${gap.evidenceIds.length} recorded calls.`,
+      'Replace this text with the approved answer before submitting it for review.',
+    ].join('\n');
+    const checksum = createHash('sha256').update(placeholder).digest('hex');
+
+    const created = await this.database.db.transaction(async (tx) => {
+      const [asset] = await tx
+        .insert(knowledgeAssets)
+        .values({
+          title: gap.title,
+          sourceType: 'KNOWLEDGE_GAP',
+          category: 'UNCATEGORISED',
+          language: gap.language,
+          ...(gap.park ? { park: gap.park } : {}),
+          ownerId: authorId,
+          riskClass: 'MEDIUM',
+          synthetic: (process.env.QP_ENVIRONMENT ?? 'development') !== 'production',
+        })
+        .returning();
+      if (!asset) throw new Error('Knowledge asset was not created');
+
+      const [version] = await tx
+        .insert(knowledgeVersions)
+        .values({
+          assetId: asset.id,
+          version: 1,
+          state: 'DRAFT',
+          content: placeholder,
+          contentChecksum: checksum,
+          changeReason: `Raised from knowledge gap ${gap.id}`,
+          createdBy: authorId,
+        })
+        .returning();
+      if (!version) throw new Error('Knowledge version was not created');
+
+      await tx
+        .update(knowledgeGaps)
+        .set({ status: 'IN_PROGRESS', ownerId: authorId, updatedAt: new Date() })
+        .where(eq(knowledgeGaps.id, gapId));
+
+      return { asset, version };
+    });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'KNOWLEDGE_GAP_CONVERTED',
+      aggregateType: 'KnowledgeAsset',
+      aggregateId: created.asset.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { gapId, title: gap.title, frequency: gap.frequency },
+    });
+
+    return {
+      status: 'CREATED' as const,
+      assetId: created.asset.id,
+      versionId: created.version.id,
+    };
+  }
+
   async createKnowledgeDraft(input: {
     title: string;
     category: string;
@@ -931,7 +1368,14 @@ export class PlatformService {
     riskClass: 'LOW' | 'MEDIUM' | 'HIGH';
     content: string;
     park?: string;
+    /** Optional so existing callers keep working; supplied, it becomes the author. */
+    principal?: Principal;
   }) {
+    // Authorship has to be the real caller for the independent-approver rule to mean
+    // anything later. Falling back to the system actor keeps local seeding working.
+    const authorId = input.principal
+      ? await this.actorId(input.principal)
+      : (process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId);
     const checksum = createHash('sha256').update(input.content).digest('hex');
     return this.database.db.transaction(async (tx) => {
       const [asset] = await tx
@@ -942,7 +1386,7 @@ export class PlatformService {
           category: input.category,
           ...(input.park ? { park: input.park } : {}),
           language: input.language,
-          ownerId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+          ownerId: authorId,
           riskClass: input.riskClass,
           synthetic: (process.env.QP_ENVIRONMENT ?? 'development') !== 'production',
         })
@@ -956,7 +1400,7 @@ export class PlatformService {
           content: input.content,
           contentChecksum: checksum,
           changeReason: 'Initial authored draft',
-          createdBy: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+          createdBy: authorId,
         })
         .returning();
       if (!version) throw new Error('Knowledge draft was not created');
@@ -971,24 +1415,54 @@ export class PlatformService {
     });
   }
 
-  async decideKnowledge(id: string, decision: 'APPROVE' | 'REJECT', reason: string) {
+  /**
+   * Records an approval or rejection of a knowledge version.
+   *
+   * The reviewer is the calling principal, not a system actor. That distinction is the
+   * whole of two-person approval: while every decision was attributed to one shared
+   * identity, "an independent approver" could never actually be checked, because the
+   * author and the reviewer were always the same subject.
+   */
+  async decideKnowledge(
+    id: string,
+    decision: 'APPROVE' | 'REJECT',
+    reason: string,
+    principal: Principal,
+  ) {
     const version = await this.database.db.query.knowledgeVersions.findFirst({
       where: eq(knowledgeVersions.id, id),
     });
-    if (!version) return { status: 'NOT_FOUND' };
+    if (!version) return { status: 'NOT_FOUND' as const };
     if (!['DRAFT', 'IN_REVIEW'].includes(version.state))
-      return { status: 'CONFLICT', currentState: version.state };
+      return { status: 'CONFLICT' as const, currentState: version.state };
     const asset = await this.database.db.query.knowledgeAssets.findFirst({
       where: eq(knowledgeAssets.id, version.assetId),
     });
-    const reviewerId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
-    if (decision === 'APPROVE' && asset?.riskClass === 'HIGH' && version.createdBy === reviewerId)
-      return {
-        status: 'BLOCKED',
-        blockers: ['High-risk knowledge requires an independent approver'],
-      };
+    const reviewerId = await this.actorId(principal);
+
+    const blockers: string[] = [];
+    if (decision === 'APPROVE' && asset?.riskClass === 'HIGH' && version.createdBy === reviewerId) {
+      blockers.push('High-risk knowledge requires an approver other than its author');
+    }
+    // The unique index on (version, reviewer) would reject this anyway; catching it here
+    // means the operator gets a sentence rather than a constraint violation.
+    const alreadyDecided = await this.database.db
+      .select()
+      .from(knowledgeApprovals)
+      .where(
+        and(
+          eq(knowledgeApprovals.knowledgeVersionId, id),
+          eq(knowledgeApprovals.reviewerId, reviewerId),
+        ),
+      )
+      .limit(1);
+    if (alreadyDecided[0]) {
+      blockers.push('You have already recorded a decision on this version');
+    }
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
     const nextState = decision === 'APPROVE' ? ('APPROVED' as const) : ('DRAFT' as const);
-    return this.database.db.transaction(async (tx) => {
+    const result = await this.database.db.transaction(async (tx) => {
       await tx.insert(knowledgeApprovals).values({
         knowledgeVersionId: id,
         reviewerId,
@@ -1000,8 +1474,23 @@ export class PlatformService {
         .set({ state: nextState })
         .where(eq(knowledgeVersions.id, id))
         .returning();
-      return { status: decision === 'APPROVE' ? 'APPROVED' : 'REJECTED', release: updated };
+      return {
+        status: decision === 'APPROVE' ? ('APPROVED' as const) : ('REJECTED' as const),
+        release: updated,
+      };
     });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: reviewerId,
+      action: decision === 'APPROVE' ? 'KNOWLEDGE_VERSION_APPROVED' : 'KNOWLEDGE_VERSION_REJECTED',
+      aggregateType: 'KnowledgeVersion',
+      aggregateId: id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { assetId: version.assetId, version: version.version, reason },
+    });
+
+    return result;
   }
 
   async requestKnowledgePublication(id: string) {

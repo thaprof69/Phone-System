@@ -235,3 +235,62 @@ violations.
 authoring and approval, Voice Library comparison and assignment, Test Studio case editor
 and runs, call correction workflows, the remaining Administration areas, and report
 scheduling and lineage.
+
+## 2026-07-25 — Knowledge Hub depth pass
+
+Authoring, review, synchronisation, assignment and gap conversion, over the
+`knowledge_versions`, `knowledge_approvals`, `knowledge_syncs`, `knowledge_assignments`
+and `knowledge_gaps` tables the schema already had.
+
+**Workflows built**
+
+| Workflow             | What it enforces                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authoring            | Every edit is a new immutable version; a checksum-identical edit is refused rather than silently accepted as a no-op                              |
+| Review               | Submit moves DRAFT → IN_REVIEW; approval or rejection is refused a second time by the same reviewer on the same version                           |
+| Independent approval | High-risk content cannot be approved by its own author — enforced against the real caller, not a shared system identity                           |
+| Synchronisation      | Retry re-sends the local approved content; a healthy sync offers no retry action; drift is reported, never silently adopted                       |
+| Assignment           | Refuses a language that does not match the asset's own language; re-assigning the same triple updates it rather than erroring on the unique index |
+| Gap conversion       | Produces an unpublished placeholder draft, never a generated answer; converting the same gap twice is refused with its current state              |
+
+**A real defect found and fixed**: the independent-approver rule could never actually
+fire. Every knowledge write attributed itself to one shared `QP_SYSTEM_ACTOR_ID`, so the
+author and the reviewer were always the same identity regardless of who was signed in —
+the rule existed in the code but had no way to be true. Added `actorId(principal)`,
+resolving a principal's OIDC subject to its `admin_users` row (the mapping the schema
+already provided via `admin_users.oidc_subject`, but nothing read it). Verified: a
+high-risk asset's own author is now refused with "requires an approver other than its
+author"; a second reviewer decision on the same version is refused as already decided.
+
+**A second defect found while building the browser tests, not fixed in the tests**: the
+version `<Tabs>` on the knowledge detail page is a client component with an uncontrolled
+`defaultValue`, which Radix reads only on mount. After creating a new draft, the server
+re-renders with a new `defaultValue` pointing at that draft, but the already-mounted
+`Tabs` ignored it and stayed on whichever tab was open when the page first loaded — so
+"Submit for review" existed in the DOM but was never the visible tab, with no operator
+path to reach it short of a manual reload. Fixed by keying `<Tabs>` on the open draft's
+id so React remounts it exactly when which version is open actually changes.
+
+**A third defect, the same class as the second**: the top-of-page authoring panel was a
+ternary — a plain "already open" banner, or the editor — swapped at the page level.
+Saving a draft calls `router.refresh()`, which flips that ternary from editor to banner
+the instant the new draft exists, unmounting the very component holding the just-shown
+"Saved" confirmation before an operator (or a test) could read it — the same failure
+mode as the message-retry fix already on record in `queue-actions.tsx`, reintroduced
+fresh here. Fixed by always mounting the editor and moving the decision inside it: a
+`hasOpenDraft` prop drives which state to show, but the component's own just-succeeded
+local state takes precedence over what the next server render says, so a confirmation
+that has already appeared is never retroactively replaced.
+
+**Verification**
+
+| Command                           | Result                                                  |
+| --------------------------------- | ------------------------------------------------------- |
+| `pnpm architecture:check`         | `Architecture fitness checks passed.`                   |
+| `pnpm typecheck` (api, admin-web) | exit 0                                                  |
+| Six new browser tests             | pass individually and as part of the full 52-test suite |
+
+Exercised through the browser's own proxy against the running stack: an identical edit
+refused with its version number, a second-attempt approval refused as already decided, a
+drifted sync retried and moved to `PUBLISH_PENDING`, and a mismatched-language assignment
+refused with the asset's actual language stated.

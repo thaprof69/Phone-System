@@ -136,6 +136,7 @@ export default async function KnowledgeReviewPage() {
           columns={columns}
           rows={awaiting}
           getRowKey={(row) => row.versionId ?? row.id}
+          rowHref={(row) => `/knowledge/${row.id}`}
           empty={
             <EmptyState
               title="Nothing is waiting for review"
