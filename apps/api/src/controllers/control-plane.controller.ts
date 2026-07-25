@@ -10,6 +10,8 @@ const ToolKeySchema = z.string().regex(/^[a-z0-9_]+$/);
 type AuthenticatedRequest = { principal: Principal };
 
 const DraftFromVersionSchema = z.object({ sourceVersionId: z.uuid().optional() }).strict();
+const RollbackSchema = z.object({ targetVersionId: z.uuid() }).strict();
+const DriftResolutionSchema = z.object({ resolution: z.string().trim().min(8).max(500) }).strict();
 const ConfigurationSaveSchema = z
   .object({
     // Validated structurally by the domain contract, not here: this route only needs
@@ -199,6 +201,32 @@ export class ControlPlaneController {
   @Post('agent-releases/:id/promote')
   promoteAgent(@Param('id') id: string) {
     return this.platform.promoteAgentRelease(id);
+  }
+  @RequirePermission('agent:write')
+  @Get('agents/:id/release-pipeline')
+  releasePipeline(@Param('id') id: string) {
+    return this.platform.getReleasePipeline(IdSchema.parse(id));
+  }
+  /**
+   * Reads the published agent back from the provider. Activation follows from the
+   * comparison, not from the publish request having returned.
+   */
+  @RequirePermission('agent:publish', 'RELEASE_MANAGEMENT')
+  @Post('agent-versions/:id/verify-read-back')
+  verifyReadBack(@Param('id') id: string) {
+    return this.platform.verifyDeploymentReadBack(IdSchema.parse(id));
+  }
+  @RequirePermission('agent:publish', 'RELEASE_MANAGEMENT')
+  @Post('agents/:id/rollback')
+  rollback(@Param('id') id: string, @Body() body: unknown) {
+    const input = RollbackSchema.parse(body);
+    return this.platform.rollbackToVersion(IdSchema.parse(id), input.targetVersionId);
+  }
+  @RequirePermission('agent:publish', 'RELEASE_MANAGEMENT')
+  @Post('agent-drift/:id/resolve')
+  resolveDrift(@Param('id') id: string, @Body() body: unknown) {
+    const input = DriftResolutionSchema.parse(body);
+    return this.platform.resolveDriftFinding(IdSchema.parse(id), input.resolution);
   }
   @RequirePermission('agent:publish', 'RELEASE_MANAGEMENT')
   @Post('agent-releases/:id/publish')

@@ -26,6 +26,18 @@ const ROUTES: Array<{ pattern: RegExp; upstream: (id: string) => string }> = [
     upstream: (id) => `/agents/${id}/draft`,
   },
   {
+    pattern: new RegExp(`^versions/(${UUID})/verify-read-back$`),
+    upstream: (id) => `/agent-versions/${id}/verify-read-back`,
+  },
+  {
+    pattern: new RegExp(`^(${UUID})/rollback$`),
+    upstream: (id) => `/agents/${id}/rollback`,
+  },
+  {
+    pattern: new RegExp(`^drift/(${UUID})/resolve$`),
+    upstream: (id) => `/agent-drift/${id}/resolve`,
+  },
+  {
     pattern: new RegExp(`^releases/(${UUID})/decision$`),
     upstream: (id) => `/agent-releases/${id}/decision`,
   },

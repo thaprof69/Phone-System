@@ -495,6 +495,278 @@ export class PlatformService {
     return { status: 'APPROVED_FOR_PUBLISH', release: updated };
   }
 
+  /**
+   * The release pipeline for one agent: every version, its approval and test evidence,
+   * its deployment, and any unresolved drift.
+   */
+  async getReleasePipeline(agentId: string) {
+    const [versions, approvals, runs, deployments, drift] = await Promise.all([
+      this.database.db
+        .select()
+        .from(agentConfigVersions)
+        .where(eq(agentConfigVersions.agentId, agentId)),
+      this.database.db.select().from(agentApprovals),
+      this.database.db.select().from(testRuns),
+      this.database.db.select().from(agentDeployments),
+      this.database.db
+        .select({ finding: agentDriftFindings, deployment: agentDeployments })
+        .from(agentDriftFindings)
+        .innerJoin(agentDeployments, eq(agentDriftFindings.deploymentId, agentDeployments.id)),
+    ]);
+
+    const ordered = [...versions].sort((left, right) => right.version - left.version);
+
+    return {
+      versions: ordered.map((version) => {
+        const deployment = deployments.find((row) => row.agentVersionId === version.id);
+        const versionDrift = drift.filter(
+          (row) => row.deployment.agentVersionId === version.id && !row.finding.resolvedAt,
+        );
+        const versionRuns = runs.filter((run) => run.agentVersionId === version.id);
+        const lastRun = [...versionRuns].sort(
+          (left, right) => right.startedAt.getTime() - left.startedAt.getTime(),
+        )[0];
+        return {
+          id: version.id,
+          version: version.version,
+          state: version.state,
+          changeReason: version.changeReason,
+          checksum: version.checksum,
+          createdAt: version.createdAt,
+          approvals: approvals
+            .filter((approval) => approval.agentVersionId === version.id)
+            .map((approval) => ({
+              reviewerId: approval.reviewerId,
+              decision: approval.decision,
+              reason: approval.reason,
+              createdAt: approval.createdAt,
+            })),
+          testEvidence: lastRun
+            ? {
+                runId: lastRun.id,
+                status: lastRun.status,
+                passCount: lastRun.passCount,
+                failCount: lastRun.failCount,
+                completedAt: lastRun.completedAt,
+              }
+            : null,
+          deployment: deployment
+            ? {
+                id: deployment.id,
+                syncState: deployment.syncState,
+                providerAgentId: deployment.providerAgentId,
+                localChecksum: deployment.localChecksum,
+                remoteChecksum: deployment.remoteChecksum,
+                // The comparison that decides whether a publication actually took.
+                readBackMatches:
+                  deployment.remoteChecksum !== null &&
+                  deployment.remoteChecksum === deployment.localChecksum,
+                publishedAt: deployment.publishedAt,
+                verifiedAt: deployment.verifiedAt,
+              }
+            : null,
+          drift: versionDrift.map((row) => ({
+            id: row.finding.id,
+            severity: row.finding.severity,
+            path: row.finding.path,
+            localValueHash: row.finding.localValueHash,
+            remoteValueHash: row.finding.remoteValueHash,
+          })),
+          // Only a version that has already been live is a rollback candidate.
+          rollbackCandidate: ['SUPERSEDED', 'ROLLED_BACK'].includes(version.state),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Reads the published agent back from the provider and compares it to the approved
+   * local record.
+   *
+   * A publication is not successful because the request returned 200. It is successful
+   * when the object the provider actually holds matches what was approved, so this
+   * compares checksums and records a drift finding when they differ. Local records stay
+   * authoritative either way — the remote object is a runtime copy.
+   */
+  async verifyDeploymentReadBack(versionId: string) {
+    const [version, deployment] = await Promise.all([
+      this.database.db.query.agentConfigVersions.findFirst({
+        where: eq(agentConfigVersions.id, versionId),
+      }),
+      this.database.db.query.agentDeployments.findFirst({
+        where: eq(agentDeployments.agentVersionId, versionId),
+      }),
+    ]);
+    if (!version || !deployment) return { status: 'NOT_FOUND' as const };
+
+    const provider = await this.providerAdapter();
+    let remoteChecksum: string | null = null;
+    let providerError: string | null = null;
+    try {
+      const remote = deployment.providerAgentId
+        ? await provider.getAgent(deployment.providerAgentId)
+        : null;
+      remoteChecksum = remote
+        ? createHash('sha256').update(JSON.stringify(remote)).digest('hex')
+        : null;
+    } catch (error) {
+      providerError = error instanceof Error ? error.message : 'Provider read-back failed';
+    }
+
+    const matches = remoteChecksum !== null && remoteChecksum === deployment.localChecksum;
+    const syncState = providerError
+      ? ('PUBLISH_FAILED' as const)
+      : remoteChecksum === null
+        ? ('REMOTE_MISSING' as const)
+        : matches
+          ? ('IN_SYNC' as const)
+          : ('DRIFTED' as const);
+
+    await this.database.db
+      .update(agentDeployments)
+      .set({ remoteChecksum, syncState, verifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(agentDeployments.id, deployment.id));
+
+    // Divergence is recorded as evidence, not silently overwritten in either direction.
+    if (syncState === 'DRIFTED') {
+      await this.database.db.insert(agentDriftFindings).values({
+        deploymentId: deployment.id,
+        severity: 'HIGH',
+        path: 'agent.configuration',
+        localValueHash: deployment.localChecksum,
+        remoteValueHash: remoteChecksum,
+      });
+    }
+
+    await this.audit.append({
+      actorType: 'SYSTEM',
+      action: 'AGENT_DEPLOYMENT_READ_BACK',
+      aggregateType: 'AgentDeployment',
+      aggregateId: deployment.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { versionId, syncState, matches, providerError },
+    });
+
+    return {
+      status: 'VERIFIED' as const,
+      matches,
+      syncState,
+      localChecksum: deployment.localChecksum,
+      remoteChecksum,
+      providerError,
+      // Activation is granted by the comparison, never by the publish call returning.
+      activated: matches,
+    };
+  }
+
+  /**
+   * Records that a drift finding has been reconciled.
+   *
+   * Reconciliation means a person decided which side is correct and acted. It does not
+   * copy the remote value into the local record: local approved versions are
+   * authoritative, so the remedy for drift is republishing, not adopting.
+   */
+  async resolveDriftFinding(findingId: string, resolution: string) {
+    const finding = await this.database.db.query.agentDriftFindings.findFirst({
+      where: eq(agentDriftFindings.id, findingId),
+    });
+    if (!finding) return { status: 'NOT_FOUND' as const };
+    if (finding.resolvedAt) return { status: 'CONFLICT' as const, resolvedAt: finding.resolvedAt };
+
+    const [updated] = await this.database.db
+      .update(agentDriftFindings)
+      .set({ resolvedAt: new Date(), resolution, updatedAt: new Date() })
+      .where(eq(agentDriftFindings.id, findingId))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: 'AGENT_DRIFT_RESOLVED',
+      aggregateType: 'AgentDriftFinding',
+      aggregateId: findingId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { resolution, path: finding.path },
+    });
+
+    return { status: 'RESOLVED' as const, finding: updated };
+  }
+
+  /**
+   * Rolls back to a previously approved version.
+   *
+   * The rolled-back version is marked, never deleted, and the version being restored is
+   * republished rather than edited — so the history of what was live and when stays
+   * intact and auditable.
+   */
+  async rollbackToVersion(agentId: string, targetVersionId: string) {
+    const versions = await this.database.db
+      .select()
+      .from(agentConfigVersions)
+      .where(eq(agentConfigVersions.agentId, agentId));
+
+    const target = versions.find((version) => version.id === targetVersionId);
+    const current = versions.find((version) => version.state === 'ACTIVE');
+    if (!target) return { status: 'NOT_FOUND' as const };
+
+    const blockers: string[] = [];
+    if (!['SUPERSEDED', 'ROLLED_BACK', 'PUBLISHED'].includes(target.state)) {
+      blockers.push(
+        `Version ${target.version} was never live, so there is nothing to roll back to`,
+      );
+    }
+    if (current?.id === targetVersionId) {
+      blockers.push(`Version ${target.version} is already the live version`);
+    }
+    const approvals = await this.database.db
+      .select()
+      .from(agentApprovals)
+      .where(eq(agentApprovals.agentVersionId, targetVersionId));
+    if (!approvals.some((approval) => approval.decision === 'APPROVED')) {
+      blockers.push('The target version has no approval evidence');
+    }
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
+    await this.database.db.transaction(async (tx) => {
+      if (current) {
+        await tx
+          .update(agentConfigVersions)
+          .set({ state: 'ROLLED_BACK' })
+          .where(eq(agentConfigVersions.id, current.id));
+      }
+      await tx
+        .update(agentConfigVersions)
+        .set({ state: 'ACTIVE' })
+        .where(eq(agentConfigVersions.id, targetVersionId));
+      // The restored version must be re-verified against the provider before it can be
+      // treated as genuinely live again.
+      await tx
+        .update(agentDeployments)
+        .set({ syncState: 'PUBLISH_PENDING', updatedAt: new Date() })
+        .where(eq(agentDeployments.agentVersionId, targetVersionId));
+    });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: 'AGENT_VERSION_ROLLED_BACK',
+      aggregateType: 'AgentConfigVersion',
+      aggregateId: targetVersionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        restoredVersion: target.version,
+        supersededVersion: current?.version ?? null,
+      },
+    });
+
+    return {
+      status: 'ROLLED_BACK' as const,
+      restoredVersion: target.version,
+      supersededVersion: current?.version ?? null,
+      requiresReadBack: true,
+    };
+  }
+
   async requestPublication(id: string) {
     const version = await this.database.db.query.agentConfigVersions.findFirst({
       where: eq(agentConfigVersions.id, id),

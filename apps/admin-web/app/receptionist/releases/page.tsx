@@ -13,7 +13,8 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
-import type { MissionControl, Readiness } from '../../../lib/types';
+import { ReleaseControls, type PipelineVersion } from './release-controls';
+import type { AgentListRow, MissionControl, Readiness } from '../../../lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,10 +24,18 @@ export const dynamic = 'force-dynamic';
  * and what is holding it there. It never offers an action the gates would reject.
  */
 export default async function ReleasesPage() {
-  const [missionResponse, readinessResponse] = await Promise.all([
+  const [missionResponse, readinessResponse, agentsResponse] = await Promise.all([
     apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' }),
     apiGet<Readiness>('/readiness', { purpose: 'RELEASE_MANAGEMENT' }),
+    apiGet<{ items: AgentListRow[] }>('/agents', { purpose: 'RELEASE_MANAGEMENT' }),
   ]);
+
+  const agentId = agentsResponse.ok ? agentsResponse.data.items[0]?.id : undefined;
+  const pipelineResponse = agentId
+    ? await apiGet<{ versions: PipelineVersion[] }>(`/agents/${agentId}/release-pipeline`, {
+        purpose: 'RELEASE_MANAGEMENT',
+      })
+    : null;
 
   if (!missionResponse.ok) {
     return (
@@ -143,6 +152,10 @@ export default async function ReleasesPage() {
           </ol>
         )}
       </Panel>
+
+      {agentId && pipelineResponse?.ok ? (
+        <ReleaseControls agentId={agentId} versions={pipelineResponse.data.versions} />
+      ) : null}
 
       <Panel title="Recent release activity" eyebrow="Most recent first">
         <Timeline

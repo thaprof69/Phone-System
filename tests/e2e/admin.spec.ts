@@ -322,3 +322,43 @@ test('transfer routes are shown in the order the runtime evaluates them', async 
   await expect(page.getByText('Evaluated top to bottom, first match wins')).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'If unanswered' })).toBeVisible();
 });
+
+test('publication is judged by provider read-back, not by the publish call', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/releases');
+
+  await expect(page.getByRole('heading', { name: 'Version pipeline' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Provider read-back' })).toBeVisible();
+  await expect(page.getByText(/The publish call returning is not the same thing/)).toBeVisible();
+
+  // Running a read-back reports what the provider actually holds.
+  await page.getByRole('button', { name: 'Verify read-back' }).first().click();
+  await expect(
+    page.getByText(/Read-back matched the approved configuration|Read-back did not match/),
+  ).toBeVisible({ timeout: 45_000 });
+});
+
+test('rollback requires a version that was actually live, and confirms destructively', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/releases');
+  await expect(page.getByRole('heading', { name: 'Rollback' })).toBeVisible();
+
+  // A rollback is guarded by a typed confirmation rather than a single click.
+  await page.getByRole('button', { name: 'Roll back' }).first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByText(/Type/)).toBeVisible();
+  const confirm = page.getByRole('button', { name: /^Roll back to version/ });
+  await expect(confirm).toBeDisabled();
+  await page.keyboard.press('Escape');
+});
+
+test('drift is reported as evidence and never silently adopted', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/receptionist/releases');
+  await expect(page.getByRole('heading', { name: 'Unresolved drift' })).toBeVisible();
+  await expect(
+    page.getByText(/the remedy is republishing, not adopting the remote value/),
+  ).toBeVisible();
+});
