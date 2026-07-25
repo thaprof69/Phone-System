@@ -75,7 +75,11 @@ export function QueueActions({
           .join(' ');
         setOutcome({ kind: 'ok', message: `${success} ${extras}`.trim() });
         setNote('');
-        router.refresh();
+        // A retry creates a sibling record rather than changing this row, and
+        // refreshing would reorder the table, remount this component and destroy the
+        // confirmation the operator just earned. The new attempt appears on their next
+        // navigation instead.
+        if (data.status !== 'RETRIED') router.refresh();
         return;
       }
       if (data.status === 'CONFLICT') {

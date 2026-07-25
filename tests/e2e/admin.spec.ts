@@ -308,8 +308,13 @@ test('governed tools are inspectable but cannot be invented here', async ({ page
   // No control offers to define a tool from an arbitrary endpoint.
   await expect(page.getByRole('button', { name: /add tool|new tool|create tool/i })).toHaveCount(0);
 
-  // A contract test runs against the platform and reports what it observed.
-  await page.getByRole('button', { name: 'Run test' }).first().click();
+  // A contract test runs against the platform and reports what it observed. The
+  // contracts table scrolls horizontally, so the control is brought into view first
+  // rather than relying on the click to reach it.
+  const runTest = page.getByRole('button', { name: 'Run test' }).first();
+  await runTest.scrollIntoViewIfNeeded();
+  await expect(runTest).toBeEnabled();
+  await runTest.click();
   await expect(page.getByText(/Pass|Fail/).first()).toBeVisible({ timeout: 30_000 });
 });
 
@@ -398,4 +403,44 @@ test('a failed message can be retried on a different channel', async ({ page }) 
   await expect(page.getByText(/Queued on SMS instead|Attempt/).first()).toBeVisible({
     timeout: 30_000,
   });
+});
+
+test('AI execution history shows real runs with provenance, not a count', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=execution');
+
+  await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
+  // The old screen rendered a bare number under a label. A real table is the check.
+  await expect(page.getByRole('columnheader', { name: 'Capability' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Latency' })).toBeVisible();
+  expect(await page.locator('tbody tr').count()).toBeGreaterThan(5);
+
+  // Provenance is present but kept out of the primary reading order.
+  await page.getByText('Provenance for the most recent run').click();
+  await expect(page.getByText('Correlation id')).toBeVisible();
+});
+
+test('AI monitoring reports real rates and links each to its runs', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=monitoring');
+
+  await expect(page.getByRole('heading', { name: 'Results by state' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Provider health' })).toBeVisible();
+
+  // Every aggregate is traceable to the records behind it.
+  await expect(page.getByRole('link', { name: 'View runs' }).first()).toBeVisible();
+  await page.getByRole('link', { name: 'View runs' }).first().click();
+  await expect(page).toHaveURL(/area=execution/);
+});
+
+test('AI governance shows prompts, schemas, taxonomies and GBP budgets', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  await expect(page.getByRole('heading', { name: 'Budgets' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Output schemas' })).toBeVisible();
+  // Code-owned schemas cannot be widened at runtime, and the screen says so.
+  await expect(page.getByText(/cannot be edited at runtime/)).toBeVisible();
+  // Money is shown in GBP with en-GB formatting.
+  await expect(page.getByText(/£/).first()).toBeVisible();
 });

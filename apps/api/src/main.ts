@@ -24,7 +24,14 @@ await app.register(cors, {
   origin: (process.env.CORS_ORIGINS ?? 'http://localhost:3000,http://localhost:3001').split(','),
   credentials: true,
 });
-await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+// The production limit protects a caller-facing service from abuse. Outside production
+// the same ceiling throttles the browser suite, whose pages then correctly render their
+// degraded state and fail assertions for a reason that has nothing to do with the code
+// under test. The limit is raised, not removed, so the behaviour is still exercised.
+await app.register(rateLimit, {
+  max: configuration.QP_ENVIRONMENT === 'production' ? 120 : 5_000,
+  timeWindow: '1 minute',
+});
 app.setGlobalPrefix('v1', { exclude: ['health', 'ready', 'metrics'] });
 app.enableShutdownHooks();
 const document = SwaggerModule.createDocument(

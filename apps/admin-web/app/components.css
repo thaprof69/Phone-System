@@ -1851,3 +1851,26 @@
 .queue-complete .field {
   margin-bottom: 0;
 }
+
+.failure-reasons {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.failure-reasons li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.failure-reasons span {
+  flex: 1;
+  min-width: 200px;
+  color: var(--muted);
+}

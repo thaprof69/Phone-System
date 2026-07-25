@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { Principal } from '@quantum-parks/auth';
 import { z } from 'zod';
 import { RequirePermission } from '../security/access.guard.js';
@@ -39,6 +39,19 @@ export class AiosAdminController {
   @Get('workspace')
   workspace() {
     return this.aios.workspaceView();
+  }
+
+  @Get('execution')
+  execution(@Query('limit') limit?: string) {
+    const parsed = Number(limit ?? 50);
+    return this.aios.executionHistory(
+      Number.isFinite(parsed) ? Math.min(Math.max(Math.trunc(parsed), 1), 200) : 50,
+    );
+  }
+
+  @Get('monitoring')
+  monitoring() {
+    return this.aios.monitoringSummary();
   }
 
   @Post('readiness/evaluate')

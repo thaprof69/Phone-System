@@ -185,6 +185,170 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
     };
   }
 
+  /**
+   * Execution history with full provenance.
+   *
+   * A count of recent runs answers nothing. What an operator needs when enrichment
+   * misbehaves is which capability ran, on which model and prompt version, what it
+   * cost, how long it took, whether it fell back, and which record it was about — all
+   * of which is already recorded and was simply never surfaced.
+   */
+  async executionHistory(limit: number) {
+    const [runs, artifacts, usage, models, capabilities, capabilityVersions] = await Promise.all([
+      this.database.db
+        .select()
+        .from(aiProcessingRuns)
+        .orderBy(desc(aiProcessingRuns.startedAt))
+        .limit(limit),
+      this.database.db.select().from(aiArtifacts),
+      this.database.db.select().from(aiUsageRecords),
+      this.database.db.select().from(aiModels),
+      this.database.db.select().from(aiCapabilities),
+      this.database.db.select().from(aiCapabilityVersions),
+    ]);
+
+    return {
+      items: runs.map((run) => {
+        const artifact = artifacts.find((row) => row.processingRunId === run.id);
+        const usageRecord = usage.find((row) => row.processingRunId === run.id);
+        const model = models.find((row) => row.id === (artifact?.modelId ?? usageRecord?.modelId));
+        const version = capabilityVersions.find((row) => row.id === run.capabilityVersionId);
+        const capability = capabilities.find((row) => row.id === version?.capabilityId);
+
+        return {
+          id: run.id,
+          capabilityKey: capability?.key ?? usageRecord?.capabilityKey ?? 'UNKNOWN',
+          capabilityDisplayName: capability?.displayName ?? null,
+          capabilityVersion: version?.version ?? null,
+          sourceRecordId: run.sourceRecordId,
+          sourceRevisionId: run.sourceRevisionId,
+          state: run.state,
+          attempt: run.attempt,
+          replayOfRunId: run.replayOfRunId,
+          errorCode: run.errorCode,
+          safeError: run.safeError,
+          startedAt: run.startedAt,
+          completedAt: run.completedAt,
+          latencyMs: usageRecord?.latencyMs ?? null,
+          inputTokens: usageRecord?.inputTokens ?? null,
+          outputTokens: usageRecord?.outputTokens ?? null,
+          costMicros: usageRecord?.costMicros ?? null,
+          currency: usageRecord?.currency ?? null,
+          correlationId: run.correlationId,
+          causationId: run.causationId,
+          provider: artifact?.providerKey ?? null,
+          providerRequestId: artifact?.providerRequestId ?? null,
+          model: model?.providerModelId ?? null,
+          providerModelVersion: artifact?.providerModelVersion ?? null,
+          promptVersionId: artifact?.promptVersionId ?? null,
+          schemaVersionId: artifact?.schemaVersionId ?? null,
+          taxonomyVersionId: artifact?.taxonomyVersionId ?? null,
+          routeVersionId: artifact?.routeVersionId ?? null,
+          contextManifestId: artifact?.contextManifestId ?? null,
+          outputRevisionId: artifact?.id ?? null,
+          fallbackUsed: artifact?.fallbackUsed ?? false,
+          qualityFlags: artifact?.qualityFlags ?? [],
+          confidence: artifact?.confidence ?? null,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Monitoring aggregates. Every figure here is derived from the runs above, so a
+   * number on this screen can always be traced to the records that produced it.
+   */
+  async monitoringSummary() {
+    const [runs, usage, health, connections, models] = await Promise.all([
+      this.database.db.select().from(aiProcessingRuns),
+      this.database.db.select().from(aiUsageRecords),
+      this.database.db
+        .select()
+        .from(aiProviderHealthChecks)
+        .orderBy(desc(aiProviderHealthChecks.checkedAt))
+        .limit(200),
+      this.database.db.select().from(aiProviderConnections),
+      this.database.db.select().from(aiModels),
+    ]);
+
+    const total = runs.length;
+    const succeeded = runs.filter((run) => run.state === 'SUCCESS').length;
+    const fellBack = runs.filter((run) => run.state === 'FALLBACK_USED').length;
+    const validationFailed = runs.filter((run) =>
+      ['VALIDATION_FAILED', 'SCHEMA_REJECTED', 'EVIDENCE_INSUFFICIENT'].includes(run.state),
+    ).length;
+    const failed = total - succeeded - fellBack;
+
+    const latencies = usage
+      .map((record) => record.latencyMs)
+      .filter((value): value is number => typeof value === 'number')
+      .sort((left, right) => left - right);
+    const percentile = (fraction: number) =>
+      latencies.length === 0
+        ? null
+        : (latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * fraction))] ??
+          null);
+
+    const byState = Object.entries(
+      runs.reduce<Record<string, number>>((totals, run) => {
+        totals[run.state] = (totals[run.state] ?? 0) + 1;
+        return totals;
+      }, {}),
+    )
+      .map(([state, count]) => ({ state, count }))
+      .sort((left, right) => right.count - left.count);
+
+    return {
+      // Rates are null rather than zero when nothing has run: a failure rate with no
+      // executions behind it is unknown, not perfect.
+      totals: {
+        runs: total,
+        succeeded,
+        failed,
+        fellBack,
+        validationFailed,
+        successRate: total > 0 ? succeeded / total : null,
+        failureRate: total > 0 ? failed / total : null,
+        fallbackRate: total > 0 ? fellBack / total : null,
+        validationFailureRate: total > 0 ? validationFailed / total : null,
+      },
+      latency: {
+        p50Ms: percentile(0.5),
+        p95Ms: percentile(0.95),
+        maxMs: latencies[latencies.length - 1] ?? null,
+      },
+      spend: {
+        costMicros: usage.reduce((sum, record) => sum + (record.costMicros ?? 0), 0),
+        currency: usage.find((record) => record.currency)?.currency ?? 'GBP',
+        inputTokens: usage.reduce((sum, record) => sum + (record.inputTokens ?? 0), 0),
+        outputTokens: usage.reduce((sum, record) => sum + (record.outputTokens ?? 0), 0),
+      },
+      byState,
+      providerHealth: connections.map((connection) => {
+        const checks = health.filter((check) => check.connectionId === connection.id);
+        const degraded = checks.filter((check) => check.status !== 'CONNECTED');
+        return {
+          connectionId: connection.id,
+          providerKey: connection.providerKey,
+          label: connection.connectionLabel,
+          status: connection.status,
+          checks: checks.length,
+          degradedChecks: degraded.length,
+          lastCheckedAt: checks[0]?.checkedAt ?? null,
+          lastStatus: checks[0]?.status ?? null,
+          lastErrorCode: degraded[0]?.normalizedErrorCode ?? null,
+        };
+      }),
+      models: models.map((model) => ({
+        id: model.id,
+        providerModelId: model.providerModelId,
+        available: model.available,
+        deprecated: model.deprecated,
+        runs: usage.filter((record) => record.modelId === model.id).length,
+      })),
+    };
+  }
+
   async catalogue() {
     const [
       capabilities,

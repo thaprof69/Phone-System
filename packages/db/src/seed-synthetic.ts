@@ -19,6 +19,15 @@
 import { createHash } from 'node:crypto';
 import { desc } from 'drizzle-orm';
 import {
+  aiArtifacts,
+  aiBudgetPolicies,
+  aiContextManifests,
+  aiEvidenceReferences,
+  aiModelApprovals,
+  aiModelPrices,
+  aiProcessingRuns,
+  aiProviderHealthChecks,
+  aiUsageRecords,
   agentApprovals,
   agentConfigVersions,
   agentDeployments,
@@ -1940,6 +1949,248 @@ export async function seedSyntheticBusinessData(
     previousHash = eventHash;
   }
   summary.auditEvents = auditSeed.length;
+
+  /* ------------------------------------------------- AI execution evidence */
+
+  // The AI control plane's Execution, Governance and Monitoring surfaces are only
+  // meaningful with real runs behind them: provenance, cost, latency and failure
+  // states. These are generated against the registry the main seed already created.
+  const aiConnection = await db.query.aiProviderConnections.findFirst();
+  const aiModel = await db.query.aiModels.findFirst();
+  const aiCapabilityVersion = await db.query.aiCapabilityVersions.findFirst();
+  const aiServiceVersion = await db.query.aiServiceVersions.findFirst();
+  const aiPipelineVersion = await db.query.aiPipelineVersions.findFirst();
+  const aiRouteVersion = await db.query.aiRouteVersions.findFirst();
+  const aiPromptVersion = await db.query.aiPromptVersions.findFirst();
+  const aiSchemaVersion = await db.query.aiOutputSchemaVersions.findFirst();
+  const aiTaxonomyVersion = await db.query.aiTaxonomyVersions.findFirst();
+  const aiContextPolicyVersion = await db.query.aiContextPolicyVersions.findFirst();
+
+  if (
+    aiConnection &&
+    aiModel &&
+    aiCapabilityVersion &&
+    aiServiceVersion &&
+    aiPipelineVersion &&
+    aiRouteVersion &&
+    aiPromptVersion &&
+    aiSchemaVersion &&
+    aiContextPolicyVersion
+  ) {
+    // Governance for the model: an approval per environment and a recorded price.
+    // Prices are stored, never inferred — the platform must not invent what a
+    // provider charges.
+    await db
+      .insert(aiModelApprovals)
+      .values({
+        modelId: aiModel.id,
+        environment: 'development',
+        approved: true,
+        approvedBy: 'ana.ferreira',
+        reason: 'Approved for non-production enrichment only',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(aiModelPrices)
+      .values({
+        modelId: aiModel.id,
+        currency: 'GBP',
+        inputMicrosPerMillion: 120_000,
+        outputMicrosPerMillion: 480_000,
+        sourceUrl: 'https://example.invalid/simulator-pricing',
+        effectiveAt: daysAgo(60, 0, 0),
+        approvedBy: 'diogo.melo',
+      })
+      .onConflictDoNothing();
+
+    // Budgets in GBP, with a per-request ceiling well below the daily limit so a
+    // single runaway call cannot exhaust the day.
+    await db
+      .insert(aiBudgetPolicies)
+      .values([
+        {
+          key: 'development-provider-budget',
+          environment: 'development',
+          scopeType: 'PROVIDER',
+          scopeId: aiConnection.id,
+          dailyLimitMicros: 5_000_000,
+          monthlyLimitMicros: 100_000_000,
+          perRequestLimitMicros: 50_000,
+          currency: 'GBP',
+          active: true,
+          approvedBy: 'ana.ferreira',
+        },
+        {
+          key: 'development-capability-budget',
+          environment: 'development',
+          scopeType: 'CAPABILITY',
+          scopeId: 'CALL_SUMMARY',
+          dailyLimitMicros: 2_000_000,
+          monthlyLimitMicros: 40_000_000,
+          perRequestLimitMicros: 25_000,
+          currency: 'GBP',
+          active: true,
+          approvedBy: 'ana.ferreira',
+        },
+        {
+          key: 'production-provider-budget',
+          environment: 'production',
+          scopeType: 'PROVIDER',
+          scopeId: aiConnection.id,
+          dailyLimitMicros: 20_000_000,
+          monthlyLimitMicros: 400_000_000,
+          perRequestLimitMicros: 100_000,
+          currency: 'GBP',
+          active: false,
+          approvedBy: null,
+        },
+      ])
+      .onConflictDoNothing();
+
+    // Health checks over the last few days, including two degraded readings so the
+    // monitoring view has a real failure to explain rather than a flat green line.
+    const healthRows = Array.from({ length: 24 }, (_, index) => ({
+      connectionId: aiConnection.id,
+      status: (index === 7 || index === 15 ? 'DEGRADED' : 'CONNECTED') as 'CONNECTED',
+      normalizedErrorCode: index === 7 || index === 15 ? 'RATE_LIMITED' : null,
+      latencyMs: index === 7 || index === 15 ? between(2200, 4200) : between(180, 900),
+      checkedAt: daysAgo(Math.floor(index / 4), 6 + (index % 4) * 4, 0),
+    }));
+    await db.insert(aiProviderHealthChecks).values(healthRows);
+
+    // Runs with full provenance. The state mix is deliberate: most succeed, some fall
+    // back, and a few fail in the ways the orchestrator actually reports.
+    const runStates = [
+      ...Array.from({ length: 34 }, () => 'SUCCESS' as const),
+      ...Array.from({ length: 5 }, () => 'FALLBACK_USED' as const),
+      ...Array.from({ length: 3 }, () => 'VALIDATION_FAILED' as const),
+      ...Array.from({ length: 2 }, () => 'EVIDENCE_INSUFFICIENT' as const),
+      ...Array.from({ length: 2 }, () => 'RATE_LIMITED' as const),
+      'TIMEOUT' as const,
+      'SCHEMA_REJECTED' as const,
+      'COST_LIMIT_REACHED' as const,
+    ];
+
+    const capabilityKeys = [
+      'CALL_SUMMARY',
+      'PRIMARY_INTENT_CLASSIFICATION',
+      'KNOWLEDGE_GAP_DETECTION',
+    ];
+
+    for (const [index, state] of runStates.entries()) {
+      const sourceConversation = conversationIds[index % conversationIds.length];
+      if (!sourceConversation) continue;
+      const capabilityKey = capabilityKeys[index % capabilityKeys.length] ?? 'CALL_SUMMARY';
+      const succeeded = state === 'SUCCESS' || state === 'FALLBACK_USED';
+      const startedAt = daysAgo(Math.floor(index / 6), 9 + (index % 6) * 2, index % 60);
+      const latencyMs = succeeded ? between(600, 3200) : between(200, 9000);
+
+      const [run] = await db
+        .insert(aiProcessingRuns)
+        .values({
+          capabilityVersionId: aiCapabilityVersion.id,
+          sourceRecordId: sourceConversation,
+          sourceRevisionId: stableUuid(`revision:${index}:2`),
+          correlationId: `corr_${sha256(`run:${index}`).slice(0, 16)}`,
+          causationId: `cause_${sha256(`cause:${index}`).slice(0, 16)}`,
+          state,
+          attempt: state === 'RATE_LIMITED' ? 2 : 1,
+          errorCode: succeeded ? null : state,
+          safeError: succeeded
+            ? null
+            : `The capability returned ${state.replaceAll('_', ' ').toLowerCase()}`,
+          startedAt,
+          completedAt: new Date(startedAt.getTime() + latencyMs),
+        })
+        .returning();
+      if (!run) continue;
+
+      const [manifest] = await db
+        .insert(aiContextManifests)
+        .values({
+          processingRunId: run.id,
+          policyVersionId: aiContextPolicyVersion.id,
+          items: [
+            {
+              evidenceId: `ev_${sha256(`${sourceConversation}:transcript`).slice(0, 24)}`,
+              sourceType: 'TRANSCRIPT',
+              sourceId: sourceConversation,
+              tokenEstimate: between(300, 1400),
+            },
+          ],
+          excluded: succeeded
+            ? []
+            : [{ sourceType: 'APPROVED_KNOWLEDGE', reason: 'CONTEXT_SOURCE_NOT_REGISTERED' }],
+          totalTokenEstimate: between(300, 1400),
+          checksum: sha256(`manifest:${index}`),
+        })
+        .returning();
+      if (!manifest) continue;
+
+      let artifactId: string | null = null;
+      if (succeeded) {
+        const [artifact] = await db
+          .insert(aiArtifacts)
+          .values({
+            processingRunId: run.id,
+            capabilityVersionId: aiCapabilityVersion.id,
+            serviceVersionId: aiServiceVersion.id,
+            contextManifestId: manifest.id,
+            pipelineVersionId: aiPipelineVersion.id,
+            routeVersionId: aiRouteVersion.id,
+            promptVersionId: aiPromptVersion.id,
+            schemaVersionId: aiSchemaVersion.id,
+            taxonomyVersionId: aiTaxonomyVersion?.id ?? null,
+            providerKey: 'SIMULATOR',
+            providerRequestId: `req_${sha256(`provider:${index}`).slice(0, 20)}`,
+            modelId: aiModel.id,
+            providerModelVersion: '1',
+            resultState: state,
+            result: { capability: capabilityKey, synthetic: true },
+            confidence: (0.7 + random() * 0.29).toFixed(4),
+            qualityFlags: state === 'FALLBACK_USED' ? ['FALLBACK_PATH'] : [],
+            fallbackUsed: state === 'FALLBACK_USED',
+            generatedAt: new Date(startedAt.getTime() + latencyMs),
+          })
+          .returning();
+        artifactId = artifact?.id ?? null;
+
+        if (artifact) {
+          await db.insert(aiEvidenceReferences).values({
+            artifactId: artifact.id,
+            evidenceId: `ev_${sha256(`${sourceConversation}:transcript`).slice(0, 24)}`,
+            sourceType: 'TRANSCRIPT',
+            sourceId: sourceConversation,
+            sourceVersion: '2',
+            checksum: sha256(`evidence:${index}`),
+            classification: 'INTERNAL',
+          });
+        }
+      }
+
+      const inputTokens = between(400, 2600);
+      const outputTokens = between(80, 700);
+      await db.insert(aiUsageRecords).values({
+        processingRunId: run.id,
+        artifactId,
+        providerConnectionId: aiConnection.id,
+        modelId: aiModel.id,
+        capabilityKey,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens: 0,
+        latencyMs,
+        // Priced from the recorded per-million rates rather than a made-up figure.
+        costMicros: Math.round(
+          (inputTokens / 1_000_000) * 120_000 + (outputTokens / 1_000_000) * 480_000,
+        ),
+        currency: 'GBP',
+        synthetic: true,
+      });
+    }
+    summary.aiRuns = runStates.length;
+    summary.aiHealthChecks = healthRows.length;
+  }
 
   return { created: true, summary };
 }

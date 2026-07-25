@@ -19,6 +19,13 @@ export default defineConfig({
         baseURL: process.env.ADMIN_WEB_URL ?? 'http://127.0.0.1:3000',
       },
       testMatch: /admin\.spec\.ts/,
+      // The admin suite runs against one shared database and several tests genuinely
+      // mutate it — completing a callback, failing a transfer, rolling back a release.
+      // Run them one at a time so a test is never racing another for the same record.
+      // `serial` is deliberately not used: it would skip the remainder after a failure
+      // and hide problems behind the first one.
+      fullyParallel: false,
+      workers: 1,
     },
     {
       name: 'customer-chromium',

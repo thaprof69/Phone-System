@@ -5,6 +5,8 @@ const apiBase = process.env.API_INTERNAL_URL ?? 'http://localhost:4000/v1';
 const safeSegment = /^[A-Za-z0-9_-]+$/;
 const allowed = [
   /^overview$/,
+  /^execution$/,
+  /^monitoring$/,
   /^workspace$/,
   /^catalogue$/,
   /^readiness\/evaluate$/,
