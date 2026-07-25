@@ -14,6 +14,7 @@ import {
   type Column,
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
+import { QueueActions } from '../queue-actions';
 import { apiGet } from '../../../lib/api';
 import { readParam, type SearchParams } from '../../../lib/list-view';
 import type { DeliveryRow, Operations } from '../../../lib/types';
@@ -89,6 +90,11 @@ export default async function MessagesPage({
           <span className="muted-cell">None</span>
         ),
       priority: 'secondary',
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row) => <QueueActions kind="messages" id={row.id} status={row.status} />,
     },
     {
       key: 'cost',

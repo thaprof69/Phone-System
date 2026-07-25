@@ -1640,6 +1640,266 @@ export class PlatformService {
    * `conversations`. The facts table is the aggregation boundary: reading from it
    * keeps a chart and a scheduled report answering with the same numbers.
    */
+  /**
+   * Work-item transitions for callbacks and staff tasks.
+   *
+   * The two share a schema and a lifecycle, so they share this method. Transitions are
+   * validated against the current state rather than trusted from the caller: a browser
+   * showing a stale row must not be able to complete something already cancelled.
+   */
+  async transitionWorkItem(input: {
+    kind: 'callback' | 'task';
+    id: string;
+    action: 'ASSIGN' | 'START' | 'COMPLETE' | 'CANCEL' | 'REOPEN' | 'RESCHEDULE' | 'REPRIORITISE';
+    ownerId?: string | undefined;
+    dueAt?: string | undefined;
+    priority?: string | undefined;
+    note?: string | undefined;
+  }) {
+    const table = input.kind === 'callback' ? callbackRequests : staffTasks;
+    const [existing] = await this.database.db.select().from(table).where(eq(table.id, input.id));
+    if (!existing) return { status: 'NOT_FOUND' as const };
+
+    // A closed item is terminal. Reopening is its own explicit action so that
+    // "complete" can never quietly resurrect something that was cancelled.
+    const closed = ['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(existing.status);
+    if (closed && input.action !== 'REOPEN') {
+      return { status: 'CONFLICT' as const, currentState: existing.status };
+    }
+    if (!closed && input.action === 'REOPEN') {
+      return { status: 'CONFLICT' as const, currentState: existing.status };
+    }
+    if (input.action === 'COMPLETE' && !input.note) {
+      return {
+        status: 'INVALID' as const,
+        issues: [
+          { path: 'note', message: 'Completing work requires a note recording what was done' },
+        ],
+      };
+    }
+
+    const now = new Date();
+    const changes: Record<string, unknown> = { updatedAt: now };
+
+    switch (input.action) {
+      case 'ASSIGN':
+        if (!input.ownerId) {
+          return {
+            status: 'INVALID' as const,
+            issues: [{ path: 'ownerId', message: 'An owner is required' }],
+          };
+        }
+        changes.ownerId = input.ownerId;
+        changes.status = existing.status === 'OPEN' ? 'ASSIGNED' : existing.status;
+        break;
+      case 'START':
+        changes.status = 'IN_PROGRESS';
+        break;
+      case 'COMPLETE':
+        changes.status = 'COMPLETED';
+        changes.completedAt = now;
+        break;
+      case 'CANCEL':
+        changes.status = 'CANCELLED';
+        break;
+      case 'REOPEN':
+        changes.status = 'OPEN';
+        changes.completedAt = null;
+        break;
+      case 'RESCHEDULE':
+        if (!input.dueAt) {
+          return {
+            status: 'INVALID' as const,
+            issues: [{ path: 'dueAt', message: 'A new due time is required' }],
+          };
+        }
+        changes.dueAt = new Date(input.dueAt);
+        break;
+      case 'REPRIORITISE':
+        if (!input.priority) {
+          return {
+            status: 'INVALID' as const,
+            issues: [{ path: 'priority', message: 'A priority is required' }],
+          };
+        }
+        changes.priority = input.priority;
+        break;
+    }
+
+    const [updated] = await this.database.db
+      .update(table)
+      .set(changes)
+      .where(eq(table.id, input.id))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: `${input.kind === 'callback' ? 'CALLBACK' : 'STAFF_TASK'}_${input.action}`,
+      aggregateType: input.kind === 'callback' ? 'CallbackRequest' : 'StaffTask',
+      aggregateId: input.id,
+      purpose: 'OPERATIONS',
+      payload: {
+        from: existing.status,
+        to: changes.status ?? existing.status,
+        note: input.note ?? null,
+        conversationId: existing.conversationId,
+      },
+    });
+
+    return { status: 'UPDATED' as const, item: updated, from: existing.status };
+  }
+
+  /**
+   * Handoff outcomes. A transfer that nobody answered is recorded as failed and the
+   * caller is owed a callback, so failing one creates that callback rather than
+   * leaving the commitment implicit.
+   */
+  async transitionHandoff(input: {
+    id: string;
+    action: 'COMPLETE' | 'FAIL';
+    note?: string | undefined;
+  }) {
+    const [existing] = await this.database.db
+      .select()
+      .from(handoffs)
+      .where(eq(handoffs.id, input.id));
+    if (!existing) return { status: 'NOT_FOUND' as const };
+    if (existing.status === 'COMPLETED') {
+      return { status: 'CONFLICT' as const, currentState: existing.status };
+    }
+
+    const now = new Date();
+    const [updated] = await this.database.db
+      .update(handoffs)
+      .set({
+        status: input.action === 'COMPLETE' ? 'COMPLETED' : 'FAILED_NO_ANSWER',
+        completedAt: input.action === 'COMPLETE' ? now : null,
+      })
+      .where(eq(handoffs.id, input.id))
+      .returning();
+
+    let callbackCreated = false;
+    if (input.action === 'FAIL') {
+      // Idempotent on the conversation: retrying a failure must not promise the
+      // customer two call-backs.
+      const [callback] = await this.database.db
+        .insert(callbackRequests)
+        .values({
+          conversationId: existing.conversationId,
+          idempotencyKey: `handoff-fallback-${existing.id}`,
+          priority: 'HIGH',
+          reason: input.note ?? 'Transfer was not answered; caller is owed a call back',
+          status: 'OPEN',
+          dueAt: new Date(now.getTime() + 24 * 3_600_000),
+        })
+        .onConflictDoNothing({ target: callbackRequests.idempotencyKey })
+        .returning();
+      callbackCreated = Boolean(callback);
+    }
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: `HANDOFF_${input.action}`,
+      aggregateType: 'Handoff',
+      aggregateId: input.id,
+      purpose: 'OPERATIONS',
+      payload: { from: existing.status, routeKey: existing.routeKey, callbackCreated },
+    });
+
+    return { status: 'UPDATED' as const, handoff: updated, callbackCreated };
+  }
+
+  /**
+   * Message delivery actions.
+   *
+   * A retry creates a new delivery attempt rather than mutating the original, so the
+   * record of what was attempted and when survives. The idempotency key carries the
+   * attempt number, which is what stops a double-click sending two messages.
+   */
+  async transitionMessage(input: {
+    id: string;
+    action: 'RETRY' | 'CANCEL';
+    channel?: string | undefined;
+  }) {
+    const [existing] = await this.database.db
+      .select()
+      .from(messageDeliveries)
+      .where(eq(messageDeliveries.id, input.id));
+    if (!existing) return { status: 'NOT_FOUND' as const };
+
+    if (input.action === 'CANCEL') {
+      if (existing.status === 'DELIVERED') {
+        return { status: 'CONFLICT' as const, currentState: existing.status };
+      }
+      const [updated] = await this.database.db
+        .update(messageDeliveries)
+        .set({ status: 'CANCELLED', updatedAt: new Date() })
+        .where(eq(messageDeliveries.id, input.id))
+        .returning();
+      await this.audit.append({
+        actorType: 'USER',
+        actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+        action: 'MESSAGE_CANCELLED',
+        aggregateType: 'MessageDelivery',
+        aggregateId: input.id,
+        purpose: 'OPERATIONS',
+        payload: { from: existing.status },
+      });
+      return { status: 'UPDATED' as const, delivery: updated };
+    }
+
+    if (existing.status === 'DELIVERED') {
+      return { status: 'CONFLICT' as const, currentState: existing.status };
+    }
+
+    const attempts = await this.database.db
+      .select()
+      .from(messageDeliveries)
+      .where(eq(messageDeliveries.conversationId, existing.conversationId));
+    const attemptNumber = attempts.length + 1;
+    const channel = input.channel ?? existing.channel;
+
+    const [retry] = await this.database.db
+      .insert(messageDeliveries)
+      .values({
+        conversationId: existing.conversationId,
+        digitalLinkId: existing.digitalLinkId,
+        channel,
+        templateKey: existing.templateKey,
+        idempotencyKey: `${existing.idempotencyKey}-retry-${attemptNumber}`,
+        status: 'QUEUED',
+        sentAt: null,
+      })
+      .onConflictDoNothing({ target: messageDeliveries.idempotencyKey })
+      .returning();
+
+    if (!retry) return { status: 'CONFLICT' as const, currentState: 'RETRY_ALREADY_QUEUED' };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId,
+      action: 'MESSAGE_RETRIED',
+      aggregateType: 'MessageDelivery',
+      aggregateId: retry.id,
+      purpose: 'OPERATIONS',
+      payload: {
+        originalId: input.id,
+        attemptNumber,
+        channel,
+        channelChanged: channel !== existing.channel,
+      },
+    });
+
+    return {
+      status: 'RETRIED' as const,
+      delivery: retry,
+      attemptNumber,
+      channelChanged: channel !== existing.channel,
+    };
+  }
+
   async analyticsSeries(days: number) {
     const since = new Date();
     since.setHours(0, 0, 0, 0);

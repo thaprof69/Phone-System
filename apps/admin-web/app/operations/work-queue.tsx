@@ -14,6 +14,7 @@ import {
   type Tone,
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../domain-page';
+import { QueueActions } from './queue-actions';
 import { apiGet } from '../../lib/api';
 import { readParam, type SearchParams } from '../../lib/list-view';
 import type { Operations, WorkItem } from '../../lib/types';
@@ -136,6 +137,11 @@ export async function WorkQueue({
           </>
         );
       },
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row) => <QueueActions kind={kind} id={row.id} status={row.status} />,
     },
     {
       key: 'owner',

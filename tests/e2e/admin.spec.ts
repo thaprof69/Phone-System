@@ -362,3 +362,40 @@ test('drift is reported as evidence and never silently adopted', async ({ page }
     page.getByText(/the remedy is republishing, not adopting the remote value/),
   ).toBeVisible();
 });
+
+test('completing operations work requires evidence and refuses a repeat', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/operations/callbacks?due=open');
+
+  // Completing is gated on a note, so the control stays disabled until one is written.
+  const complete = page.getByRole('button', { name: 'Complete with evidence' }).first();
+  await expect(complete).toBeVisible();
+  await expect(complete).toBeDisabled();
+
+  await page.getByLabel('What was done').first().fill('Called the customer back and confirmed');
+  await expect(complete).toBeEnabled();
+  await complete.click();
+
+  await expect(page.getByText('Done').first()).toBeVisible({ timeout: 30_000 });
+});
+
+test('an unanswered transfer creates the callback the caller is owed', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/operations/handoffs');
+  await expect(
+    page.getByText(/Marking a transfer unanswered creates the callback the caller is owed/).first(),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Mark unanswered' }).first().click();
+  // The platform reports what it actually did, including the fallback it created.
+  await expect(page.getByText(/Recorded as unanswered/).first()).toBeVisible({ timeout: 30_000 });
+});
+
+test('a failed message can be retried on a different channel', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/operations/messages?status=FAILED');
+  await page.getByRole('button', { name: 'Retry on SMS' }).first().click();
+  await expect(page.getByText(/Queued on SMS instead|Attempt/).first()).toBeVisible({
+    timeout: 30_000,
+  });
+});

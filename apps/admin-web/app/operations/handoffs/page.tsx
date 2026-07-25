@@ -13,6 +13,7 @@ import {
   type Column,
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
+import { QueueActions } from '../queue-actions';
 import { apiGet } from '../../../lib/api';
 import type { HandoffRow, Operations } from '../../../lib/types';
 
@@ -73,6 +74,11 @@ export default async function HandoffsPage() {
         ) : (
           <span className="muted-cell">Never answered</span>
         ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row) => <QueueActions kind="handoffs" id={row.id} status={row.status} />,
     },
     {
       key: 'fallback',

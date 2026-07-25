@@ -11,6 +11,35 @@ type AuthenticatedRequest = { principal: Principal };
 
 const DraftFromVersionSchema = z.object({ sourceVersionId: z.uuid().optional() }).strict();
 const RollbackSchema = z.object({ targetVersionId: z.uuid() }).strict();
+const WorkItemTransitionSchema = z
+  .object({
+    action: z.enum([
+      'ASSIGN',
+      'START',
+      'COMPLETE',
+      'CANCEL',
+      'REOPEN',
+      'RESCHEDULE',
+      'REPRIORITISE',
+    ]),
+    ownerId: z.uuid().optional(),
+    dueAt: z.iso.datetime().optional(),
+    priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional(),
+    note: z.string().trim().min(4).max(500).optional(),
+  })
+  .strict();
+const HandoffTransitionSchema = z
+  .object({
+    action: z.enum(['COMPLETE', 'FAIL']),
+    note: z.string().trim().min(4).max(500).optional(),
+  })
+  .strict();
+const MessageTransitionSchema = z
+  .object({
+    action: z.enum(['RETRY', 'CANCEL']),
+    channel: z.enum(['WHATSAPP', 'SMS', 'EMAIL']).optional(),
+  })
+  .strict();
 const DriftResolutionSchema = z.object({ resolution: z.string().trim().min(8).max(500) }).strict();
 const ConfigurationSaveSchema = z
   .object({
@@ -392,6 +421,40 @@ export class ControlPlaneController {
   @Get('analytics/summary')
   analytics() {
     return this.platform.analyticsSummary();
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Post('operations/callbacks/:id/transition')
+  transitionCallback(@Param('id') id: string, @Body() body: unknown) {
+    return this.platform.transitionWorkItem({
+      kind: 'callback',
+      id: IdSchema.parse(id),
+      ...WorkItemTransitionSchema.parse(body),
+    });
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Post('operations/tasks/:id/transition')
+  transitionTask(@Param('id') id: string, @Body() body: unknown) {
+    return this.platform.transitionWorkItem({
+      kind: 'task',
+      id: IdSchema.parse(id),
+      ...WorkItemTransitionSchema.parse(body),
+    });
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Post('operations/handoffs/:id/transition')
+  transitionHandoff(@Param('id') id: string, @Body() body: unknown) {
+    return this.platform.transitionHandoff({
+      id: IdSchema.parse(id),
+      ...HandoffTransitionSchema.parse(body),
+    });
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Post('operations/messages/:id/transition')
+  transitionMessage(@Param('id') id: string, @Body() body: unknown) {
+    return this.platform.transitionMessage({
+      id: IdSchema.parse(id),
+      ...MessageTransitionSchema.parse(body),
+    });
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('analytics/series')
