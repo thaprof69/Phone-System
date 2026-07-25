@@ -100,3 +100,34 @@ export function runtimeSecret(
   }
   return developmentFallback;
 }
+
+/**
+ * Request rate limit per minute.
+ *
+ * The limit that matters is the caller-facing one, so it is the default: any
+ * environment that is not explicitly a local development or automated-test
+ * environment gets the strict production ceiling. Staging is deliberately included in
+ * that — a staging environment that behaves more permissively than production is not
+ * testing production.
+ *
+ * The relaxed ceiling exists because the browser suite issues far more than 120
+ * requests a minute; throttled pages then correctly render their degraded state and
+ * fail assertions for a reason unrelated to the code under test. It is raised, not
+ * removed, so the limiter is still exercised.
+ */
+export const PRODUCTION_RATE_LIMIT_PER_MINUTE = 120;
+export const RELAXED_RATE_LIMIT_PER_MINUTE = 5_000;
+
+export function rateLimitPerMinute(environment: NodeJS.ProcessEnv = process.env): number {
+  // Unset means unknown, and unknown is treated as production. Defaulting an absent
+  // `QP_ENVIRONMENT` to development would mean a production deployment that forgot to
+  // set it silently ran with a forty-fold weaker limit — the failure would be invisible
+  // until it was exploited.
+  const qpEnvironment = environment.QP_ENVIRONMENT ?? '';
+  const nodeEnvironment = environment.NODE_ENV ?? '';
+  const relaxed =
+    (qpEnvironment === 'development' || nodeEnvironment === 'test') &&
+    qpEnvironment !== 'production' &&
+    qpEnvironment !== 'staging';
+  return relaxed ? RELAXED_RATE_LIMIT_PER_MINUTE : PRODUCTION_RATE_LIMIT_PER_MINUTE;
+}

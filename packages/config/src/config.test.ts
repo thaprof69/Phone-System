@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigurationSchema, runtimeSecret } from './index.js';
+import {
+  ConfigurationSchema,
+  PRODUCTION_RATE_LIMIT_PER_MINUTE,
+  RELAXED_RATE_LIMIT_PER_MINUTE,
+  rateLimitPerMinute,
+  runtimeSecret,
+} from './index.js';
 
 const validEnvironment = {
   NODE_ENV: 'development',
@@ -50,5 +56,50 @@ describe('runtime configuration gates', () => {
     expect(() =>
       runtimeSecret('MISSING_SECRET', 'synthetic', { QP_ENVIRONMENT: 'production' }),
     ).toThrow('Required runtime secret MISSING_SECRET is unavailable');
+  });
+});
+
+describe('rateLimitPerMinute', () => {
+  it('keeps the strict ceiling in production', () => {
+    expect(rateLimitPerMinute({ QP_ENVIRONMENT: 'production' })).toBe(
+      PRODUCTION_RATE_LIMIT_PER_MINUTE,
+    );
+  });
+
+  it('keeps the strict ceiling in staging', () => {
+    // A staging environment that behaves more permissively than production is not
+    // testing production.
+    expect(rateLimitPerMinute({ QP_ENVIRONMENT: 'staging' })).toBe(
+      PRODUCTION_RATE_LIMIT_PER_MINUTE,
+    );
+  });
+
+  it('relaxes only for local development', () => {
+    expect(rateLimitPerMinute({ QP_ENVIRONMENT: 'development' })).toBe(
+      RELAXED_RATE_LIMIT_PER_MINUTE,
+    );
+  });
+
+  it('relaxes for an automated test run', () => {
+    expect(rateLimitPerMinute({ QP_ENVIRONMENT: 'development', NODE_ENV: 'test' })).toBe(
+      RELAXED_RATE_LIMIT_PER_MINUTE,
+    );
+  });
+
+  it('refuses to relax when NODE_ENV is test but the environment is production', () => {
+    // NODE_ENV must never be able to talk a production deployment into a weaker limit.
+    expect(rateLimitPerMinute({ QP_ENVIRONMENT: 'production', NODE_ENV: 'test' })).toBe(
+      PRODUCTION_RATE_LIMIT_PER_MINUTE,
+    );
+  });
+
+  it('defaults to the strict ceiling when nothing is set', () => {
+    // Unset means unknown, and unknown must fail closed: a deployment that forgot to
+    // declare its environment has to be treated as the one where a weak limit hurts.
+    expect(rateLimitPerMinute({})).toBe(PRODUCTION_RATE_LIMIT_PER_MINUTE);
+  });
+
+  it('does not relax on an unset environment alone', () => {
+    expect(rateLimitPerMinute({ NODE_ENV: 'production' })).toBe(PRODUCTION_RATE_LIMIT_PER_MINUTE);
   });
 });

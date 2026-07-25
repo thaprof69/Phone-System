@@ -1619,3 +1619,200 @@ td a {
     transition: none !important;
   }
 }
+
+/* ---------------------------------------------- AI infrastructure workspaces */
+.provider-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.provider-card + .provider-card {
+  margin-top: 14px;
+}
+.provider-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.provider-card-head strong {
+  display: block;
+  font-size: 15px;
+}
+.provider-card-head span {
+  display: block;
+  margin-top: 4px;
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 12px;
+}
+.provider-fields-heading {
+  margin: 4px 0 0;
+}
+.schema-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.schema-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+}
+.schema-list small {
+  flex: 1 1 22ch;
+  color: var(--muted);
+  font-size: 11px;
+}
+.schema-type {
+  color: var(--muted);
+  font: 600 10px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.capability-grid li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.candidate-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: candidate;
+}
+.candidate-list li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font: 600 12px var(--font-mono);
+}
+.candidate-list li small {
+  color: var(--muted);
+  font: 10px var(--font-mono);
+}
+.candidate-role {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--forest-soft);
+  color: var(--forest);
+  font: 650 10px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.inline-form {
+  display: grid;
+  gap: 12px;
+  max-width: 62ch;
+}
+.muted-cell {
+  color: var(--muted);
+  font-size: 12px;
+}
+.cell-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font: 10px var(--font-mono);
+}
+.row-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ------------------------------------------------------------- pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.pagination p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pagination-position {
+  color: var(--muted);
+  font: 600 11px var(--font-mono);
+}
+.button.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Row-level disclosures: the action lives with the record it changes. */
+.row-actions > summary {
+  cursor: pointer;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--forest);
+  font: 600 11px var(--font-mono);
+  white-space: nowrap;
+  width: fit-content;
+}
+.row-actions > summary:hover {
+  background: var(--forest-soft);
+}
+.row-actions-body {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.approval-history {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.approval-history li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.approval-history small {
+  color: var(--muted);
+  font: 10px var(--font-mono);
+}

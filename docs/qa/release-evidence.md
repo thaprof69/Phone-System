@@ -148,3 +148,90 @@ tab order. The table fallback remains the accessible representation.
 approval actions across Agent Studio, Knowledge and Test Studio; the visual capability
 route editor and the count-only Execution, Governance and Monitoring sections of the AI
 console; work-item status transitions in Operations; report scheduling actions.
+
+## 2026-07-25 — AI Infrastructure depth pass
+
+The AI console previously received full record arrays for providers, models, capabilities,
+routes, prompts, schemas, taxonomies and budgets and printed only `.length` for each. Every
+one of those is now a workspace over the real records, and the governance decisions behind
+them are made through the interface rather than only by the service.
+
+**Areas built**
+
+| Area         | What it does now                                                                                                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Providers    | Code-owned registry drives the connection contract; each adapter's declared credential fields are listed; uninstalled adapters report "Adapter not installed" and are given no action at all |
+| Models       | Availability, structured-output support, context window, GBP price and _observed_ latency from recorded runs; per-environment approve/refuse and availability toggle                         |
+| Capabilities | Contract, owner and recorded run count, drilling through to the filtered execution history                                                                                                   |
+| Routes       | Ordered candidates per version, limits, activation state; a version builder and pre-activation validation that is re-run server-side at activation                                           |
+| Governance   | Prompt, schema and taxonomy lifecycle transitions; GBP budgets showing spend against limit with breach and near-limit states; budget create and edit                                         |
+| Execution    | Seven filters (date range, capability, provider, model, result, fallback) and pagination over full provenance                                                                                |
+
+**Refusals verified through the browser's own proxy, not against the API directly**
+
+| Attempt                                               | Platform response                                                                             |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Approve a simulator model for production              | `BLOCKED` — "SIMULATOR is not eligible to serve production"; "This is a synthetic connection" |
+| Approve with a two-character reason                   | `INVALID` — `reason: Too small: expected string to have >=8 characters`                       |
+| Post an undeclared field alongside an approval        | `INVALID` — `Unrecognized key: "sneaky"`                                                      |
+| Activate a second development route version           | `BLOCKED` — `route.uniqueness: Version 1 is already active for development`                   |
+| Transition a code-owned schema at runtime             | `FORBIDDEN` — "registered by the build. It cannot be changed at runtime."                     |
+| Repeat a transition already made                      | `CONFLICT` — `currentState: ROLLED_BACK`                                                      |
+| Save a budget whose per-request ceiling exceeds daily | `BLOCKED` — "The per-request ceiling cannot exceed the daily limit"                           |
+| Reach an endpoint outside the proxy allowlist         | `404` from the browser proxy before the API is consulted                                      |
+
+**Defects found and fixed while doing this work**
+
+1. **Every malformed request body was a 500.** Controllers validate with `Schema.parse`,
+   which throws `ZodError`, and no exception filter existed anywhere in the API — so a
+   caller's mistake was indistinguishable from a server fault, in the response and in
+   monitoring. Added `ValidationExceptionFilter`, which answers `400` with the offending
+   field paths. It deliberately does not echo received values: a rejected body can contain
+   a credential.
+2. **Panels were not landmarks.** `Panel` rendered an unnamed `<section>`, which is not
+   exposed as a landmark at all, leaving screen-reader users nothing to navigate between
+   on pages carrying six or more panels. Now named from its title.
+3. **Five elements shared one DOM id.** Every budget policy renders a form, and a closed
+   `<details>` still contributes its controls to the document, so `id="budget-key"`
+   appeared once per policy and every label resolved to the first. Ids are now
+   per-instance.
+4. **The client read field names the platform does not send.** Route validation answers
+   with `failures: [{check, message}]`; the browser was reading `issues: [{rule}]`, so a
+   refused activation would have rendered "Refused" with an empty reason list — the exact
+   failure mode this remediation exists to remove.
+5. **A tiny spend rounded to "0%".** Real spend below half a percent of its limit read as
+   "nothing spent". It now reports "under 1%".
+
+6. **The budget "upsert" was not one.** Its unique index named `scope_id` directly, and
+   PostgreSQL treats nulls as distinct — so an environment-wide budget, the commonest
+   kind, was never covered and saving the same policy twice produced two rows that both
+   appeared to be enforced. Migration `0007` de-duplicates and rebuilds the index over
+   `coalesce(scope_id, '')`; the service now matches explicitly rather than relying on a
+   conflict target that cannot name an expression. Verified: three identical saves return
+   the same policy id and leave one row.
+7. **The rate limit failed open on an unset environment.** `rateLimitPerMinute` defaulted
+   an absent `QP_ENVIRONMENT` to development, so a production deployment that forgot to
+   declare its environment would have run with the 5,000/min ceiling instead of 120. It
+   now treats unset as unknown and unknown as production. Production and staging remain
+   strict, and `NODE_ENV=test` still cannot weaken either.
+
+**Verification**
+
+| Command                                             | Result                                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------ |
+| `pnpm check`                                        | 17 tasks successful — format, lint, architecture, typecheck, test, build |
+| `pnpm architecture:check`                           | `Architecture fitness checks passed.`                                    |
+| `pnpm traceability:check`                           | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                   |
+| `playwright test --project=admin-chromium`          | **46 passed**, twice consecutively on one freshly reseeded database      |
+| `playwright test --project=customer-chromium`       | 2 passed                                                                 |
+| `npx vitest run packages/config/src/config.test.ts` | 10 passed                                                                |
+
+The suite was run twice without reseeding between runs, deliberately: the second run
+re-exercises every mutation against the state the first left behind, which is what caught
+the budget duplication. Axe scans on the providers and models workspaces report zero
+violations.
+
+**Still outstanding** — recorded honestly rather than implied complete: Knowledge Hub
+authoring and approval, Voice Library comparison and assignment, Test Studio case editor
+and runs, call correction workflows, the remaining Administration areas, and report
+scheduling and lineage.

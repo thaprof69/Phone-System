@@ -77,7 +77,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [ ] 2.5 Test Studio (§11)
 - [ ] 2.6 Calls and Call Detail (§12)
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
-- [~] 2.8 AI Infrastructure (§14) — Execution, Governance and Monitoring rebuilt from real records with full provenance; adapter-driven provider registry, model registry with approvals, capability detail pages, route CRUD and prompt-library CRUD still to build
+- [x] 2.8 AI Infrastructure (§14) — eight areas, each rendered from real records: adapter-driven provider registry with connections, model registry with per-environment approval and availability, capability list drilling through to runs, route registry with a version builder and pre-activation validation, prompt/schema/taxonomy lifecycle, GBP budgets showing spend against limit, execution history with seven filters and pagination, and monitoring
 - [ ] 2.9 Administration (§15)
 - [ ] 2.10 Analytics and Reports (§16)
 
@@ -187,37 +187,45 @@ are updated as each module reaches full depth, not on the strength of a surface 
 
 ---
 
+### AI Infrastructure depth pass — 2026-07-25
+
+| Command                                             | Result                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------- |
+| `pnpm check`                                        | 17 tasks successful, 17 total                                       |
+| `pnpm architecture:check`                           | `Architecture fitness checks passed.`                               |
+| `pnpm traceability:check`                           | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`              |
+| `playwright test --project=admin-chromium`          | **46 passed**, twice consecutively on one freshly reseeded database |
+| `playwright test --project=customer-chromium`       | 2 passed                                                            |
+| `npx vitest run packages/config/src/config.test.ts` | 10 passed                                                           |
+| `pnpm db:migrate`                                   | `Database migrations complete.` (migration `0007`)                  |
+
+Fourteen new browser tests cover the adapter-driven registry, model approval and its
+refusals, route creation and pre-activation validation, code-owned schema protection,
+repeat-transition conflict, budget validation, budget idempotency, execution filtering
+and pagination, and capability drill-through.
+
+---
+
 ## 6a. Resume point
 
-Agent Studio (2.2) and Operations (2.7) are complete. AI Infrastructure (2.8) is partly
-complete: the three count-only screens are gone.
+Mission Control (2.1), Agent Studio (2.2), Operations (2.7) and AI Infrastructure (2.8)
+are complete.
 
-**The next unchecked item is the remainder of 2.8 — AI Infrastructure:**
+**The next unchecked item is 2.3 — Knowledge Hub (§9):**
 
-1. **Adapter-driven provider registry.** `aios-admin.controller.ts` still carries
-   `providerKey: z.literal('OPENAI')`. Replace it with an enum driven by the adapter
-   registry so provider forms are generated from capability metadata. Uninstalled
-   adapters already report "Adapter not installed" and must keep doing so — no fake
-   connect action.
-2. **Model registry.** List and detail, discovery, approval per environment, disable,
-   production eligibility, structured-output support, context window, deprecation,
-   cost metadata, region policy. The tables (`ai_models`, `ai_model_approvals`,
-   `ai_model_prices`) and seed data exist; the surface does not.
-3. **Capability detail pages.** One page per capability with its contract, active
-   version, prompt, schema, taxonomy, route, budget and execution history. The list
-   exists; the detail does not.
-4. **Route CRUD with pre-activation validation.** Ordered fallbacks, conditions,
-   timeouts, retries, circuit breaker, per-run ceiling and budgets — validating provider
-   enabled, model available and approved, structured output compatible, region and
-   privacy allowed, budget available and fallback valid before a route can activate.
-5. **Prompt library CRUD.** Draft, edit, diff, submit, approve, reject, activate,
-   rollback. `DiffView` and the compare pattern from `/receptionist/versions/compare`
-   are directly reusable.
+1. **Authoring and versioning.** Create and edit a knowledge asset as a new version with a
+   mandatory change reason; versions are immutable once submitted.
+2. **Approval queue.** Diff against the current active version, stated impact, and
+   two-person approval where the asset's policy requires it — an author may never approve
+   their own draft.
+3. **Synchronisation.** Local approved state and remote runtime state shown separately,
+   with retry on a failed sync. Divergence is drift, never silently adopted.
+4. **Assignment.** Which agents and languages an asset serves, and the tests linked to it.
+5. **Gap to draft.** Convert a detected knowledge gap into a draft asset. Never
+   auto-publish generated knowledge.
 
-Then continue in the order in section 3: Knowledge Hub (2.3) authoring, approval queue
-and synchronisation actions; Test Studio (2.5) case editor, suites and runs;
-Administration (2.9) remaining actions; Analytics and Reports (2.10) filtering, evidence
-drill-down and report definition CRUD.
+Then continue in the order in section 3: Voice Library (2.4), Test Studio (2.5), Calls and
+Call Detail (2.6), Administration (2.9), Analytics and Reports (2.10).
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

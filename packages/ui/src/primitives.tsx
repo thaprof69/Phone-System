@@ -110,7 +110,13 @@ export function Panel({
   id?: string;
 }) {
   return (
-    <section className={`panel ${className}`.trim()} {...(id ? { id } : {})}>
+    // Named, because an unnamed `<section>` is not exposed as a landmark at all — it
+    // gives screen-reader users nothing to navigate between on a page of many panels.
+    <section
+      className={`panel ${className}`.trim()}
+      {...(id ? { id } : {})}
+      {...(title ? { 'aria-label': title } : {})}
+    >
       {title || eyebrow || action ? (
         <header className="panel-header">
           <div>

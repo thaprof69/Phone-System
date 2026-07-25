@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -1925,11 +1926,15 @@ export const aiBudgetPolicies = pgTable(
     ...timestamps,
   },
   (table) => [
+    // `scope_id` is null for an environment-wide budget, and PostgreSQL treats nulls as
+    // distinct — so a plain unique index over these four columns never fires for the
+    // very case it most needs to, and the same environment budget could be created
+    // repeatedly. Coalescing gives every scope a comparable value.
     uniqueIndex('ai_budget_policy_scope').on(
       table.key,
       table.environment,
       table.scopeType,
-      table.scopeId,
+      sql`coalesce(${table.scopeId}, '')`,
     ),
   ],
 );

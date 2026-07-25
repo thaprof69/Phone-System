@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 /**
  * Browser coverage for the operator control plane.
@@ -21,6 +21,19 @@ const PRIMARY_DOMAINS = [
   'Intelligence',
   'Administration',
 ] as const;
+
+/**
+ * Opens a row-level disclosure and returns it, so the controls it reveals can be
+ * addressed without colliding with the identical controls in every other row.
+ *
+ * `<details>` is exposed as a group whose accessible name is *not* taken from its
+ * `<summary>`, so it cannot be found by role and name — the summary text is the handle.
+ */
+async function openDisclosure(scope: Page | Locator, label: string): Promise<Locator> {
+  const disclosure = scope.locator('details').filter({ hasText: label }).first();
+  await disclosure.locator('summary').filter({ hasText: label }).first().click();
+  return disclosure;
+}
 
 async function expectNoAxeViolations(page: Page) {
   const results = await new AxeBuilder({ page }).analyze();
@@ -443,4 +456,259 @@ test('AI governance shows prompts, schemas, taxonomies and GBP budgets', async (
   await expect(page.getByText(/cannot be edited at runtime/)).toBeVisible();
   // Money is shown in GBP with en-GB formatting.
   await expect(page.getByText(/£/).first()).toBeVisible();
+});
+
+test('the provider registry is adapter-driven and offers no fake connect action', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=providers');
+
+  await expect(page.getByRole('heading', { name: 'Installed adapters' })).toBeVisible();
+  // The connection form is generated from the adapter's declared fields.
+  await expect(page.getByText('apiKey')).toBeVisible();
+
+  // Providers with no adapter are listed honestly and given no action. A connect button
+  // here would promise a capability the platform does not have.
+  const notInstalled = page.getByRole('region', { name: 'Not installed' });
+  await expect(notInstalled.getByText('Anthropic')).toBeVisible();
+  await expect(notInstalled.getByText('Adapter not installed').first()).toBeVisible();
+  expect(await notInstalled.getByRole('button').count()).toBe(0);
+  expect(await notInstalled.getByRole('link').count()).toBe(0);
+
+  await expectNoAxeViolations(page);
+});
+
+test('a simulator model cannot be approved for production', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=models');
+
+  const decide = await openDisclosure(page, 'Decide');
+  await decide.getByLabel('Environment').selectOption('production');
+  await decide.getByLabel('Reason').fill('Attempting to approve a simulator model for production');
+  await decide.getByRole('button', { name: 'Approve' }).click();
+
+  // The refusal comes from the platform and states why, rather than the control simply
+  // being absent or the failure being swallowed.
+  await expect(page.getByText('Refused', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/not eligible to serve production/)).toBeVisible();
+});
+
+test('a model can be approved for development and the decision persists', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=models');
+
+  const decide = await openDisclosure(page, 'Decide');
+  await decide.getByLabel('Environment').selectOption('development');
+  await decide.getByLabel('Reason').fill('Approved for local development verification');
+  await decide.getByRole('button', { name: 'Approve' }).click();
+
+  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+
+  // Persisted, not merely displayed: it survives a reload of the page.
+  await page.reload();
+  const reopened = await openDisclosure(page, 'Decide');
+  await expect(reopened.getByText('Approved for local development verification')).toBeVisible();
+});
+
+test('a model approval is refused without a recorded reason', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=models');
+
+  const decide = await openDisclosure(page, 'Decide');
+  await decide.getByRole('button', { name: 'Approve' }).click();
+
+  await expect(page.getByText(/reason of at least eight characters is required/)).toBeVisible();
+});
+
+test('a route version is created as a draft and states what blocks activation', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=routes');
+
+  const builder = await openDisclosure(page, 'Create a new version');
+  await builder.getByLabel('Provider connection').selectOption({ index: 1 });
+  await builder.getByLabel('Model', { exact: true }).selectOption({ index: 1 });
+  await builder.getByRole('button', { name: 'Create draft version' }).click();
+
+  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+  // A draft is allowed to be invalid; what is not allowed is hiding that from its author.
+  await expect(page.getByText(/not serving traffic until it is activated/)).toBeVisible();
+});
+
+test('a route cannot be created without a primary candidate', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=routes');
+
+  const builder = await openDisclosure(page, 'Create a new version');
+  await builder.getByRole('button', { name: 'Create draft version' }).click();
+
+  await expect(page.getByText(/primary connection and model are required/)).toBeVisible();
+});
+
+test('activating a second route for one environment is refused with its reason', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=routes');
+
+  // The seeded route already has an active development version, so a *development*
+  // draft must not be able to take over silently. Pinning the environment keeps this
+  // asserting route uniqueness rather than production eligibility.
+  const draftRow = page
+    .locator('tbody tr')
+    .filter({ hasText: 'Draft' })
+    .filter({ hasText: 'Development' })
+    .first();
+  const manage = await openDisclosure(draftRow, 'Manage');
+  await manage.getByRole('button', { name: 'Check conditions' }).click();
+
+  await expect(page.getByText('This route cannot serve traffic yet')).toBeVisible();
+  await expect(page.getByText('route.uniqueness')).toBeVisible();
+
+  await manage.getByRole('button', { name: 'Activate' }).click();
+  await expect(page.getByText('Refused', { exact: true }).first()).toBeVisible();
+});
+
+test('a code-owned schema cannot be changed through the interface', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  // The lifecycle control is replaced by a statement of why there is none, rather than
+  // offering an action the platform would refuse.
+  const codeOwnedRow = page.locator('tbody tr').filter({ hasText: 'Code-owned' }).first();
+  const move = await openDisclosure(codeOwnedRow, 'Move');
+  await expect(move.getByRole('button', { name: 'Apply' })).toHaveCount(0);
+  await expect(move.getByText('Code-owned')).toBeVisible();
+});
+
+test('a governed prompt refuses a transition it has already made', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  const promptRow = page.getByRole('region', { name: 'Prompts' }).locator('tbody tr').first();
+  const move = await openDisclosure(promptRow, 'Move');
+  await move.getByLabel('Action').selectOption('ROLLBACK');
+  await move.getByLabel('Reason').fill('Rolling back for browser verification');
+  await move.getByRole('button', { name: 'Apply' }).click();
+
+  // Wait for the first attempt to report back before touching the form again. A
+  // successful transition clears the reason as it lands, so refilling before then would
+  // be undone mid-flight and the second attempt would fail the length check instead of
+  // reaching the state machine. Either outcome is legitimate here: the seeded version
+  // may already be rolled back.
+  await expect(move.getByText(/^(Saved|Refused)$/)).toBeVisible();
+
+  // The reason is cleared on success, so it has to be given again — the same rule the
+  // operator faces. What must hold is that the repeat is refused with the state the
+  // record is actually in, not accepted a second time.
+  await move.getByLabel('Reason').fill('Attempting the same transition again');
+  await move.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText(/already rolled back/i)).toBeVisible();
+});
+
+test('a budget whose per-request ceiling exceeds its daily limit is refused', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  const form = await openDisclosure(page, 'Add a budget policy');
+  await form.getByLabel('Key').fill('inverted-ceiling-check');
+  await form.getByLabel('Per request').fill('9');
+  await form.getByLabel('Daily', { exact: true }).fill('1');
+  await form.getByRole('button', { name: 'Save policy' }).click();
+
+  await expect(page.getByText('Refused', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/per-request ceiling cannot exceed the daily limit/)).toBeVisible();
+});
+
+test('a budget policy saves in GBP and shows spend against its limit', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  const form = await openDisclosure(page, 'Add a budget policy');
+  await form.getByLabel('Key').fill('browser-verified-budget');
+  await form.getByLabel('Per request').fill('0.02');
+  await form.getByLabel('Daily', { exact: true }).fill('6');
+  await form.getByLabel('Monthly').fill('120');
+  await form.getByRole('button', { name: 'Save policy' }).click();
+
+  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await page.reload();
+  // Scoped to the table: the key also appears in that row's own edit form legend.
+  await expect(
+    page.getByRole('rowheader').filter({ hasText: 'browser-verified-budget' }),
+  ).toHaveCount(1);
+  // Spend is reported against the limit, not as a limit alone.
+  await expect(page.getByText(/of £6\.00/)).toBeVisible();
+});
+
+test('execution history filters and paginates without losing its filter options', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=execution');
+
+  const unfiltered = await page.locator('tbody tr').count();
+  expect(unfiltered).toBeGreaterThan(0);
+
+  await page.getByLabel('Fallback').selectOption('yes');
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page).toHaveURL(/fallback=yes/);
+  await expect(page.getByText('Fallback path used').first()).toBeVisible();
+
+  // The filter that produced this view is still offered, so there is a way back.
+  await expect(page.getByLabel('Fallback')).toBeVisible();
+  await page.getByRole('link', { name: 'Clear' }).click();
+  expect(await page.locator('tbody tr').count()).toBe(unfiltered);
+
+  await page.getByRole('link', { name: 'Next' }).click();
+  await expect(page.getByText(/Showing 26/)).toBeVisible();
+});
+
+test('capabilities drill through to the runs that executed them', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=capabilities');
+
+  await expect(page.getByRole('columnheader', { name: 'Runs recorded' })).toBeVisible();
+  await page.getByRole('link', { name: 'View runs' }).first().click();
+
+  await expect(page).toHaveURL(/area=execution&capability=/);
+  await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
+});
+
+test('unverified model metadata is stated as missing rather than invented', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=models');
+
+  // A plausible-looking context window would be believed. Absence must be visible.
+  await expect(page.getByText('Not verified').first()).toBeVisible();
+  await expectNoAxeViolations(page);
+});
+
+test('saving the same budget twice updates it rather than duplicating it', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/ai?area=governance');
+
+  // An environment-wide budget has a null scope, and PostgreSQL treats nulls as distinct
+  // — so the obvious unique index over the scope columns silently failed to cover the
+  // commonest case. Two identical policies would then both appear to be enforced.
+  const save = async (daily: string) => {
+    const form = await openDisclosure(page, 'Add a budget policy');
+    await form.getByLabel('Key').fill('idempotent-through-the-ui');
+    await form.getByLabel('Per request').fill('0.01');
+    await form.getByLabel('Daily', { exact: true }).fill(daily);
+    await form.getByRole('button', { name: 'Save policy' }).click();
+    await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+  };
+
+  await save('5');
+  await page.reload();
+  await save('9');
+  await page.reload();
+
+  const rows = page.getByRole('rowheader').filter({ hasText: 'idempotent-through-the-ui' });
+  await expect(rows).toHaveCount(1);
+  // The second save changed the policy rather than creating a sibling.
+  await expect(page.getByText(/of £9\.00/)).toBeVisible();
 });

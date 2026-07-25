@@ -5,8 +5,9 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import { loadConfiguration, runtimeSecret } from '@quantum-parks/config';
+import { loadConfiguration, rateLimitPerMinute, runtimeSecret } from '@quantum-parks/config';
 import { AppModule } from './app.module.js';
+import { ValidationExceptionFilter } from './security/validation.filter.js';
 
 const configuration = loadConfiguration();
 runtimeSecret('LOCAL_ELEVENLABS_API_KEY', 'synthetic-api-key');
@@ -24,14 +25,12 @@ await app.register(cors, {
   origin: (process.env.CORS_ORIGINS ?? 'http://localhost:3000,http://localhost:3001').split(','),
   credentials: true,
 });
-// The production limit protects a caller-facing service from abuse. Outside production
-// the same ceiling throttles the browser suite, whose pages then correctly render their
-// degraded state and fail assertions for a reason that has nothing to do with the code
-// under test. The limit is raised, not removed, so the behaviour is still exercised.
-await app.register(rateLimit, {
-  max: configuration.QP_ENVIRONMENT === 'production' ? 120 : 5_000,
-  timeWindow: '1 minute',
-});
+// Strict by default: only an explicitly local or automated-test environment is
+// relaxed. See `rateLimitPerMinute` for why staging is treated as production.
+await app.register(rateLimit, { max: rateLimitPerMinute(), timeWindow: '1 minute' });
+// A body that fails its schema is the caller's mistake, so it answers 400 with the
+// offending fields rather than a 500 that says nothing.
+app.useGlobalFilters(new ValidationExceptionFilter());
 app.setGlobalPrefix('v1', { exclude: ['health', 'ready', 'metrics'] });
 app.enableShutdownHooks();
 const document = SwaggerModule.createDocument(

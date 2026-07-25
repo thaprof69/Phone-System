@@ -1,9 +1,13 @@
 import {
   DataTable,
+  DateRangeFields,
   EmptyState,
+  FilterBar,
   MetricCard,
   MetricGrid,
+  Pagination,
   Panel,
+  SelectField,
   StatusPill,
   TechnicalDetails,
   formatCurrencyFromMicros,
@@ -64,18 +68,93 @@ export type ExecutionRun = {
 
 const SUCCESS_STATES = ['SUCCESS', 'FALLBACK_USED'];
 
+export type ExecutionFilters = {
+  from?: string | undefined;
+  to?: string | undefined;
+  provider?: string | undefined;
+  model?: string | undefined;
+  capability?: string | undefined;
+  state?: string | undefined;
+  fallback?: string | undefined;
+};
+
+/**
+ * Applies the operator's filters to the run history.
+ *
+ * Exported so the same predicate is used to build the table, the counts above it and
+ * the pagination total. Deriving those from different code paths is how a page ends up
+ * claiming 40 results and showing 12.
+ */
+export function filterRuns(runs: ExecutionRun[], filters: ExecutionFilters): ExecutionRun[] {
+  const from = filters.from ? new Date(`${filters.from}T00:00:00`) : null;
+  const to = filters.to ? new Date(`${filters.to}T23:59:59.999`) : null;
+
+  return runs.filter((run) => {
+    const started = new Date(run.startedAt);
+    if (from && started < from) return false;
+    if (to && started > to) return false;
+    if (filters.provider && run.provider !== filters.provider) return false;
+    if (filters.model && run.model !== filters.model) return false;
+    if (filters.capability && run.capabilityKey !== filters.capability) return false;
+    if (filters.state && run.state !== filters.state) return false;
+    if (filters.fallback === 'yes' && !run.fallbackUsed) return false;
+    if (filters.fallback === 'no' && run.fallbackUsed) return false;
+    return true;
+  });
+}
+
+const PAGE_SIZE = 25;
+
+/**
+ * The choices offered in each filter, derived from the *unfiltered* history.
+ *
+ * Deriving them from the filtered rows would empty the dropdown that produced the
+ * current filter, leaving no way back except editing the URL.
+ */
+export function executionFilterOptions(runs: ExecutionRun[]) {
+  const distinct = (pick: (run: ExecutionRun) => string | null) =>
+    [...new Set(runs.map(pick).filter((value): value is string => Boolean(value)))].sort();
+  return {
+    providers: distinct((run) => run.provider),
+    models: distinct((run) => run.model),
+    capabilities: distinct((run) => run.capabilityKey),
+    states: distinct((run) => run.state),
+  };
+}
+
 export function ExecutionView({
   runs,
   services,
   routes,
+  filters,
+  options,
+  page,
+  basePath,
 }: {
+  /** Already filtered; the metrics and pagination below describe this same set. */
   runs: ExecutionRun[];
   services: number;
   routes: number;
+  filters: ExecutionFilters;
+  options: ReturnType<typeof executionFilterOptions>;
+  page: number;
+  basePath: string;
 }) {
   const failures = runs.filter((run) => !SUCCESS_STATES.includes(run.state));
   const fallbacks = runs.filter((run) => run.fallbackUsed);
   const totalCost = runs.reduce((sum, run) => sum + (run.costMicros ?? 0), 0);
+
+  const pageCount = Math.max(1, Math.ceil(runs.length / PAGE_SIZE));
+  const currentPage = Math.min(Math.max(page, 1), pageCount);
+  const visible = runs.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const buildHref = (next: Record<string, string | undefined>) => {
+    const query = new URLSearchParams({ area: 'execution' });
+    for (const [name, value] of Object.entries({ ...filters, ...next })) {
+      if (value) query.set(name, value);
+    }
+    return `${basePath}?${query.toString()}`;
+  };
 
   const columns: Column<ExecutionRun>[] = [
     {
@@ -182,17 +261,89 @@ export function ExecutionView({
         eyebrow="Most recent first"
         description="Every run carries its full provenance: capability, model, prompt, schema, taxonomy, route and the record it was about."
       >
+        <FilterBar
+          action={basePath}
+          hiddenFields={{ area: 'execution' }}
+          resetHref={`${basePath}?area=execution`}
+          label="Filter execution runs"
+        >
+          <DateRangeFields legend="Started between" fromValue={filters.from} toValue={filters.to} />
+          <SelectField
+            id="filter-capability"
+            name="capability"
+            label="Capability"
+            placeholder="Any capability"
+            defaultValue={filters.capability ?? ''}
+            options={options.capabilities.map((value) => ({
+              value,
+              label: humaniseState(value),
+            }))}
+          />
+          <SelectField
+            id="filter-provider"
+            name="provider"
+            label="Provider"
+            placeholder="Any provider"
+            defaultValue={filters.provider ?? ''}
+            options={options.providers.map((value) => ({ value, label: value }))}
+          />
+          <SelectField
+            id="filter-model"
+            name="model"
+            label="Model"
+            placeholder="Any model"
+            defaultValue={filters.model ?? ''}
+            options={options.models.map((value) => ({ value, label: value }))}
+          />
+          <SelectField
+            id="filter-state"
+            name="state"
+            label="Result"
+            placeholder="Any result"
+            defaultValue={filters.state ?? ''}
+            options={options.states.map((value) => ({
+              value,
+              label: humaniseState(value),
+            }))}
+          />
+          <SelectField
+            id="filter-fallback"
+            name="fallback"
+            label="Fallback"
+            placeholder="Either"
+            defaultValue={filters.fallback ?? ''}
+            options={[
+              { value: 'yes', label: 'Fallback was used' },
+              { value: 'no', label: 'Primary answered' },
+            ]}
+          />
+        </FilterBar>
+
         <DataTable
           caption="AI execution runs with their result, model, latency and cost"
           columns={columns}
-          rows={runs}
+          rows={visible}
           getRowKey={(run) => run.id}
           empty={
             <EmptyState
-              title="No runs recorded"
-              detail="Enrichment runs appear here once a call completes post-call processing."
+              title={
+                runs.length === 0 && Object.values(filters).some(Boolean)
+                  ? 'No runs match these filters'
+                  : 'No runs recorded'
+              }
+              detail={
+                Object.values(filters).some(Boolean)
+                  ? 'Widen the date range or clear a filter.'
+                  : 'Enrichment runs appear here once a call completes post-call processing.'
+              }
             />
           }
+        />
+        <Pagination
+          page={currentPage}
+          pageSize={PAGE_SIZE}
+          total={runs.length}
+          buildHref={(next) => buildHref({ page: String(next) })}
         />
       </Panel>
 

@@ -32,6 +32,8 @@ import {
   aiCapabilityVersions,
   aiContextManifests,
   aiEvidenceReferences,
+  aiModelApprovals,
+  aiModelPrices,
   aiModels,
   aiOutputSchemas,
   aiOutputSchemaVersions,
@@ -57,12 +59,18 @@ import {
 import { SummarySchema } from '@quantum-parks/intelligence';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from './database.service.js';
+import {
+  PROVIDER_DEFINITIONS,
+  findProviderDefinition,
+  validateCredentialPayload,
+} from './provider-registry.js';
 import { AuditService } from './audit.service.js';
 import { ProviderCredentialVaultService } from './provider-credential-vault.service.js';
 
 type Environment = 'development' | 'staging' | 'production';
 type ProviderInput = {
-  providerKey: 'OPENAI';
+  /** Validated against the provider registry at runtime, not narrowed to one vendor. */
+  providerKey: string;
   apiKey: string;
   connectionLabel: string;
   environment: Environment;
@@ -441,31 +449,26 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
         usage: overview.usage,
       },
       providers: {
-        installedAdapters: [
-          {
-            key: 'OPENAI',
-            label: 'OpenAI',
-            support: 'SUPPORTED',
-            description: 'First production-grade reference adapter.',
-          },
-          {
-            key: 'SIMULATOR',
-            label: 'Deterministic simulator',
-            support: 'NON_PRODUCTION_ONLY',
-            description: 'Synthetic validation adapter; never satisfies production readiness.',
-          },
-        ],
-        unavailableAdapters: [
-          'ANTHROPIC',
-          'GOOGLE_GEMINI',
-          'AZURE_OPENAI',
-          'AWS_BEDROCK',
-          'OPENAI_COMPATIBLE',
-        ].map((key) => ({
-          key,
-          support: 'UNSUPPORTED',
-          description: 'Adapter not installed.',
-        })),
+        // Rendered from the code-owned provider registry so the connection form is
+        // generated from each adapter's declared fields rather than written around
+        // one vendor.
+        definitions: PROVIDER_DEFINITIONS,
+        installedAdapters: PROVIDER_DEFINITIONS.filter((definition) => definition.installed).map(
+          (definition) => ({
+            key: definition.key,
+            label: definition.displayName,
+            support: definition.support,
+            description: definition.description,
+          }),
+        ),
+        unavailableAdapters: PROVIDER_DEFINITIONS.filter((definition) => !definition.installed).map(
+          (definition) => ({
+            key: definition.key,
+            label: definition.displayName,
+            support: definition.support,
+            description: definition.unavailableReason ?? 'Adapter not installed.',
+          }),
+        ),
         connections: catalogue.providers.map((provider) => ({
           ...provider,
           productionEligible:
@@ -500,8 +503,46 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
     };
   }
 
+  /**
+   * Rejects a provider the platform cannot actually serve, and a credential payload
+   * whose shape the provider never declared.
+   */
+  private guardProvider(input: ProviderInput) {
+    const definition = findProviderDefinition(input.providerKey);
+    if (!definition || !definition.installed) {
+      return {
+        verified: false as const,
+        state: 'PROVIDER_NOT_CONFIGURED' as const,
+        safeMessage: definition?.unavailableReason ?? 'Adapter not installed.',
+      };
+    }
+    const payload: Record<string, unknown> = { apiKey: input.apiKey };
+    if (input.organizationReference !== undefined) {
+      payload.organizationReference = input.organizationReference;
+    }
+    if (input.approvedDataRegion !== undefined) {
+      payload.approvedDataRegion = input.approvedDataRegion;
+    }
+    const validation = validateCredentialPayload(input.providerKey, payload);
+    if (!validation.valid) {
+      return {
+        verified: false as const,
+        state: 'VALIDATION_FAILED' as const,
+        safeMessage: validation.issues.map((issue) => issue.message).join(' · '),
+      };
+    }
+    return null;
+  }
+
   async testProvider(input: ProviderInput, principal: Principal) {
     this.enforceValidationLimit(principal.subject);
+
+    // Refused at runtime, not merely absent from the interface: a provider with no
+    // installed adapter has nothing to test against, and pretending otherwise would
+    // report a connection this platform cannot actually make.
+    const guard = this.guardProvider(input);
+    if (guard) return guard;
+
     const provider = new OpenAIIntelligenceProvider({
       resolveApiKey: async () => input.apiKey,
       timeoutMs: 10_000,
@@ -533,6 +574,11 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
   }
 
   async connectProvider(input: ProviderInput & { validationProof: string }, principal: Principal) {
+    // Guarded again on connect: a valid proof for an uninstalled adapter must still
+    // not create a connection.
+    const guard = this.guardProvider(input);
+    if (guard) return { status: 'REJECTED' as const, ...guard };
+
     const proofValid = this.vault.verifyProviderValidationProof(
       input.providerKey,
       input.validationProof,
@@ -611,6 +657,990 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
       saved: true,
       connection: this.safeConnection(saved.connection),
     };
+  }
+
+  /**
+   * The governed model registry.
+   *
+   * Only verified metadata is returned. Where the provider has not told us a context
+   * window or a price, the field is absent rather than filled with a plausible number:
+   * an invented limit is worse than a missing one because it will be believed.
+   */
+  async modelRegistry() {
+    const [models, approvals, prices, connections, usage] = await Promise.all([
+      this.database.db.select().from(aiModels),
+      this.database.db.select().from(aiModelApprovals),
+      this.database.db.select().from(aiModelPrices),
+      this.database.db.select().from(aiProviderConnections),
+      this.database.db.select().from(aiUsageRecords),
+    ]);
+
+    return {
+      items: models.map((model) => {
+        const connection = connections.find((row) => row.id === model.connectionId);
+        const modelApprovals = approvals.filter((row) => row.modelId === model.id);
+        const price = prices
+          .filter((row) => row.modelId === model.id)
+          .sort((left, right) => right.effectiveAt.getTime() - left.effectiveAt.getTime())[0];
+        const runs = usage.filter((row) => row.modelId === model.id);
+        const latencies = runs
+          .map((row) => row.latencyMs)
+          .filter((value): value is number => typeof value === 'number')
+          .sort((left, right) => left - right);
+
+        return {
+          id: model.id,
+          connectionId: model.connectionId,
+          providerKey: connection?.providerKey ?? 'UNKNOWN',
+          connectionLabel: connection?.connectionLabel ?? null,
+          providerModelId: model.providerModelId,
+          displayName: model.displayName,
+          available: model.available,
+          deprecated: model.deprecated,
+          retiredAt: model.retiredAt,
+          structuredOutput: model.structuredOutput,
+          jsonSchemaSupport: model.jsonSchemaSupport,
+          embeddingSupport: model.embeddingSupport,
+          contextLimit: model.contextLimit,
+          outputLimit: model.outputLimit,
+          regionRestrictions: model.regionRestrictions ?? [],
+          lastVerifiedAt: model.lastVerifiedAt,
+          approvals: modelApprovals.map((approval) => ({
+            environment: approval.environment,
+            approved: approval.approved,
+            approvedBy: approval.approvedBy,
+            reason: approval.reason,
+            approvedAt: approval.approvedAt,
+          })),
+          productionApproved: modelApprovals.some(
+            (approval) => approval.environment === 'production' && approval.approved,
+          ),
+          // Absent, not guessed, when no price has been recorded.
+          price: price
+            ? {
+                currency: price.currency,
+                inputMicrosPerMillion: price.inputMicrosPerMillion,
+                outputMicrosPerMillion: price.outputMicrosPerMillion,
+                sourceUrl: price.sourceUrl,
+                effectiveAt: price.effectiveAt,
+                approvedBy: price.approvedBy,
+              }
+            : null,
+          // Measured from recorded runs rather than quoted from a datasheet.
+          latencyProfile:
+            latencies.length > 0
+              ? {
+                  runs: latencies.length,
+                  p50Ms: latencies[Math.floor(latencies.length * 0.5)] ?? null,
+                  p95Ms: latencies[Math.floor(latencies.length * 0.95)] ?? null,
+                }
+              : null,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Approves or refuses a model for one environment.
+   *
+   * Production approval is a separate decision from availability: a model the provider
+   * offers is not thereby fit for caller-affecting work.
+   */
+  async decideModelApproval(input: {
+    modelId: string;
+    environment: Environment;
+    approved: boolean;
+    reason: string;
+    principal: Principal;
+  }) {
+    const model = await this.database.db.query.aiModels.findFirst({
+      where: eq(aiModels.id, input.modelId),
+    });
+    if (!model) return { status: 'NOT_FOUND' as const };
+
+    const blockers: string[] = [];
+    if (input.approved && !model.available) {
+      blockers.push('The provider does not currently offer this model');
+    }
+
+    // A model is only as production-eligible as the adapter behind it. The simulator
+    // is deliberately NON_PRODUCTION_ONLY, and approving one of its models for
+    // production would put a synthetic adapter on a caller-affecting path.
+    if (input.approved && input.environment === 'production') {
+      const connection = await this.database.db.query.aiProviderConnections.findFirst({
+        where: eq(aiProviderConnections.id, model.connectionId),
+      });
+      const definition = connection ? findProviderDefinition(connection.providerKey) : undefined;
+      if (!definition || definition.support !== 'SUPPORTED') {
+        blockers.push(
+          `${connection?.providerKey ?? 'This provider'} is not eligible to serve production, so its models cannot be approved for it`,
+        );
+      }
+      if (connection?.synthetic) {
+        blockers.push('This is a synthetic connection and can never serve production');
+      }
+    }
+    if (input.approved && model.deprecated) {
+      blockers.push('This model is deprecated and cannot be approved');
+    }
+    // Every production capability requires a schema-valid response, so an unverified
+    // structured-output capability cannot be approved for production.
+    if (
+      input.approved &&
+      input.environment === 'production' &&
+      model.structuredOutput !== 'SUPPORTED'
+    ) {
+      blockers.push(
+        `Structured output is ${model.structuredOutput.toLowerCase()}, so this model cannot be approved for production`,
+      );
+    }
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
+    const actor = input.principal.subject;
+    const [approval] = await this.database.db
+      .insert(aiModelApprovals)
+      .values({
+        modelId: input.modelId,
+        environment: input.environment,
+        approved: input.approved,
+        approvedBy: actor,
+        reason: input.reason,
+      })
+      .onConflictDoUpdate({
+        target: [aiModelApprovals.modelId, aiModelApprovals.environment],
+        set: {
+          approved: input.approved,
+          approvedBy: actor,
+          reason: input.reason,
+          approvedAt: new Date(),
+        },
+      })
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: actor,
+      action: input.approved ? 'AI_MODEL_APPROVED' : 'AI_MODEL_APPROVAL_WITHDRAWN',
+      aggregateType: 'AiModel',
+      aggregateId: input.modelId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        environment: input.environment,
+        approved: input.approved,
+        reason: input.reason,
+        providerModelId: model.providerModelId,
+      },
+    });
+
+    return { status: 'RECORDED' as const, approval };
+  }
+
+  /** Enables or disables a model for use, independently of approval. */
+  async setModelAvailability(modelId: string, available: boolean, principal: Principal) {
+    const model = await this.database.db.query.aiModels.findFirst({
+      where: eq(aiModels.id, modelId),
+    });
+    if (!model) return { status: 'NOT_FOUND' as const };
+
+    const [updated] = await this.database.db
+      .update(aiModels)
+      .set({ available, updatedAt: new Date() })
+      .where(eq(aiModels.id, modelId))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: available ? 'AI_MODEL_ENABLED' : 'AI_MODEL_DISABLED',
+      aggregateType: 'AiModel',
+      aggregateId: modelId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { providerModelId: model.providerModelId, available },
+    });
+
+    return { status: 'UPDATED' as const, model: updated };
+  }
+
+  /* ------------------------------------------------- governed artefacts */
+
+  /**
+   * Prompt, schema and taxonomy versions share one lifecycle, so they share this
+   * implementation. Versions are immutable once they leave draft: activating a new one
+   * supersedes the previous rather than editing what is already in use.
+   */
+  async governedArtefacts(kind: 'prompt' | 'schema' | 'taxonomy') {
+    if (kind === 'prompt') {
+      const [parents, versions] = await Promise.all([
+        this.database.db.select().from(aiPrompts),
+        this.database.db.select().from(aiPromptVersions),
+      ]);
+      return {
+        items: parents.map((parent) => ({
+          id: parent.id,
+          key: parent.key,
+          purpose: parent.purpose,
+          versions: versions
+            .filter((version) => version.promptId === parent.id)
+            .sort((left, right) => right.version - left.version)
+            .map((version) => ({
+              id: version.id,
+              version: version.version,
+              state: version.state,
+              content: version.content,
+              checksum: version.checksum,
+              authorId: version.authorId,
+              approvedBy: version.approvedBy,
+              activatedAt: version.activatedAt,
+              createdAt: version.createdAt,
+            })),
+        })),
+      };
+    }
+    if (kind === 'schema') {
+      const [parents, versions] = await Promise.all([
+        this.database.db.select().from(aiOutputSchemas),
+        this.database.db.select().from(aiOutputSchemaVersions),
+      ]);
+      return {
+        items: parents.map((parent) => ({
+          id: parent.id,
+          key: parent.key,
+          purpose: parent.purpose,
+          versions: versions
+            .filter((version) => version.schemaId === parent.id)
+            .sort((left, right) => right.version - left.version)
+            .map((version) => ({
+              id: version.id,
+              version: version.version,
+              state: version.state,
+              content: JSON.stringify(version.jsonSchema, null, 2),
+              checksum: version.checksum,
+              // Code-owned schemas are registered by the build. Editing one at runtime
+              // would let a model widen its own output contract.
+              codeOwned: version.codeOwned,
+              registeredByBuild: version.registeredByBuild,
+              approvedBy: version.approvedBy,
+              // This table records activation through state alone, so the column is
+              // reported as absent rather than invented.
+              activatedAt: null,
+              createdAt: version.createdAt,
+            })),
+        })),
+      };
+    }
+    const [parents, versions] = await Promise.all([
+      this.database.db.select().from(aiTaxonomies),
+      this.database.db.select().from(aiTaxonomyVersions),
+    ]);
+    return {
+      items: parents.map((parent) => ({
+        id: parent.id,
+        key: parent.key,
+        purpose: parent.purpose,
+        versions: versions
+          .filter((version) => version.taxonomyId === parent.id)
+          .sort((left, right) => right.version - left.version)
+          .map((version) => ({
+            id: version.id,
+            version: version.version,
+            state: version.state,
+            values: version.values,
+            content: (version.values ?? []).join('\n'),
+            checksum: version.checksum,
+            authorId: version.authorId,
+            approvedBy: version.approvedBy,
+            activatedAt: null,
+            createdAt: version.createdAt,
+          })),
+      })),
+    };
+  }
+
+  /**
+   * Advances a governed artefact through its lifecycle.
+   *
+   * Code-owned schemas are refused outright: they are registered by the build, and a
+   * runtime edit would let a model's output contract be widened without review.
+   */
+  async transitionGovernedArtefact(input: {
+    kind: 'prompt' | 'schema' | 'taxonomy';
+    versionId: string;
+    action: 'SUBMIT' | 'APPROVE' | 'REJECT' | 'ACTIVATE' | 'ROLLBACK';
+    reason: string;
+    principal: Principal;
+  }) {
+    const table =
+      input.kind === 'prompt'
+        ? aiPromptVersions
+        : input.kind === 'schema'
+          ? aiOutputSchemaVersions
+          : aiTaxonomyVersions;
+
+    const [version] = await this.database.db
+      .select()
+      .from(table)
+      .where(eq(table.id, input.versionId));
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    if (input.kind === 'schema' && 'codeOwned' in version && version.codeOwned) {
+      return {
+        status: 'FORBIDDEN' as const,
+        message:
+          'This schema is code-owned and registered by the build. It cannot be changed at runtime.',
+      };
+    }
+
+    const transitions: Record<string, { from: string[]; to: string }> = {
+      SUBMIT: { from: ['DRAFT'], to: 'IN_REVIEW' },
+      APPROVE: { from: ['IN_REVIEW'], to: 'APPROVED' },
+      REJECT: { from: ['IN_REVIEW'], to: 'DRAFT' },
+      ACTIVATE: { from: ['APPROVED'], to: 'ACTIVE' },
+      ROLLBACK: { from: ['ACTIVE'], to: 'ROLLED_BACK' },
+    };
+    const transition = transitions[input.action];
+    if (!transition || !transition.from.includes(version.state)) {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    // Approving your own draft defeats the point of a second pair of eyes.
+    if (
+      input.action === 'APPROVE' &&
+      'authorId' in version &&
+      version.authorId === input.principal.subject
+    ) {
+      return {
+        status: 'BLOCKED' as const,
+        blockers: ['A version cannot be approved by the person who authored it'],
+      };
+    }
+
+    const changes: Record<string, unknown> = { state: transition.to, updatedAt: new Date() };
+    if (input.action === 'APPROVE') changes.approvedBy = input.principal.subject;
+    if (input.action === 'ACTIVATE' && input.kind === 'prompt') changes.activatedAt = new Date();
+
+    await this.database.db.transaction(async (tx) => {
+      if (input.action === 'ACTIVATE') {
+        // Exactly one active version per artefact, so resolution is unambiguous.
+        const parentColumn =
+          input.kind === 'prompt'
+            ? aiPromptVersions.promptId
+            : input.kind === 'schema'
+              ? aiOutputSchemaVersions.schemaId
+              : aiTaxonomyVersions.taxonomyId;
+        const parentId = (version as Record<string, unknown>)[
+          input.kind === 'prompt' ? 'promptId' : input.kind === 'schema' ? 'schemaId' : 'taxonomyId'
+        ] as string;
+        await tx
+          .update(table)
+          .set({ state: 'SUPERSEDED', updatedAt: new Date() })
+          .where(and(eq(parentColumn, parentId), eq(table.state, 'ACTIVE')));
+      }
+      await tx.update(table).set(changes).where(eq(table.id, input.versionId));
+    });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: `AI_${input.kind.toUpperCase()}_${input.action}`,
+      aggregateType:
+        input.kind === 'prompt'
+          ? 'AiPromptVersion'
+          : input.kind === 'schema'
+            ? 'AiOutputSchemaVersion'
+            : 'AiTaxonomyVersion',
+      aggregateId: input.versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { from: version.state, to: transition.to, reason: input.reason },
+    });
+
+    return { status: 'UPDATED' as const, from: version.state, to: transition.to };
+  }
+
+  /* --------------------------------------------------------------- budgets */
+
+  async upsertBudgetPolicy(input: {
+    key: string;
+    environment: Environment;
+    scopeType: string;
+    scopeId?: string | undefined;
+    perRequestLimitMicros?: number | undefined;
+    dailyLimitMicros?: number | undefined;
+    monthlyLimitMicros?: number | undefined;
+    currency: string;
+    active: boolean;
+    principal: Principal;
+  }) {
+    const blockers: string[] = [];
+    // A per-request ceiling above the daily limit cannot bind, and a daily above the
+    // monthly is the same mistake a level up.
+    if (
+      input.perRequestLimitMicros !== undefined &&
+      input.dailyLimitMicros !== undefined &&
+      input.perRequestLimitMicros > input.dailyLimitMicros
+    ) {
+      blockers.push('The per-request ceiling cannot exceed the daily limit');
+    }
+    if (
+      input.dailyLimitMicros !== undefined &&
+      input.monthlyLimitMicros !== undefined &&
+      input.dailyLimitMicros > input.monthlyLimitMicros
+    ) {
+      blockers.push('The daily limit cannot exceed the monthly limit');
+    }
+    if (
+      input.active &&
+      input.perRequestLimitMicros === undefined &&
+      input.dailyLimitMicros === undefined &&
+      input.monthlyLimitMicros === undefined
+    ) {
+      blockers.push('An active budget must set at least one limit');
+    }
+    if (blockers.length > 0) return { status: 'BLOCKED' as const, blockers };
+
+    const limits = {
+      perRequestLimitMicros: input.perRequestLimitMicros ?? null,
+      dailyLimitMicros: input.dailyLimitMicros ?? null,
+      monthlyLimitMicros: input.monthlyLimitMicros ?? null,
+      currency: input.currency,
+      active: input.active,
+      approvedBy: input.principal.subject,
+    };
+
+    // Matched explicitly rather than through `onConflictDoUpdate`. The uniqueness rule is
+    // an expression index over `coalesce(scope_id, '')` — because an environment-wide
+    // budget has a null scope and nulls do not collide — and a conflict target cannot
+    // name that. The index still backs this: a concurrent duplicate is rejected by the
+    // database rather than quietly inserted.
+    const scopeId = input.scopeId ?? null;
+    const [existing] = await this.database.db
+      .select()
+      .from(aiBudgetPolicies)
+      .where(
+        and(
+          eq(aiBudgetPolicies.key, input.key),
+          eq(aiBudgetPolicies.environment, input.environment),
+          eq(aiBudgetPolicies.scopeType, input.scopeType),
+          scopeId === null
+            ? isNull(aiBudgetPolicies.scopeId)
+            : eq(aiBudgetPolicies.scopeId, scopeId),
+        ),
+      )
+      .limit(1);
+
+    const [policy] = existing
+      ? await this.database.db
+          .update(aiBudgetPolicies)
+          .set({ ...limits, updatedAt: new Date() })
+          .where(eq(aiBudgetPolicies.id, existing.id))
+          .returning()
+      : await this.database.db
+          .insert(aiBudgetPolicies)
+          .values({
+            key: input.key,
+            environment: input.environment,
+            scopeType: input.scopeType,
+            scopeId,
+            ...limits,
+          })
+          .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'AI_BUDGET_POLICY_SET',
+      aggregateType: 'AiBudgetPolicy',
+      aggregateId: policy?.id ?? input.key,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        key: input.key,
+        environment: input.environment,
+        scopeType: input.scopeType,
+        active: input.active,
+        currency: input.currency,
+      },
+    });
+
+    return { status: 'SAVED' as const, policy };
+  }
+
+  /**
+   * Spend against each active budget, and any breach.
+   *
+   * Breaches are computed from recorded usage rather than tracked as a flag, so the
+   * figure cannot drift away from what actually happened.
+   */
+  async budgetStatus() {
+    const [budgets, usage, connections] = await Promise.all([
+      this.database.db.select().from(aiBudgetPolicies),
+      this.database.db.select().from(aiUsageRecords),
+      this.database.db.select().from(aiProviderConnections),
+    ]);
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
+
+    return {
+      items: budgets.map((budget) => {
+        const scoped = usage.filter((record) => {
+          if (budget.scopeType === 'PROVIDER')
+            return record.providerConnectionId === budget.scopeId;
+          if (budget.scopeType === 'MODEL') return record.modelId === budget.scopeId;
+          if (budget.scopeType === 'CAPABILITY') return record.capabilityKey === budget.scopeId;
+          return true;
+        });
+        const spend = (since: Date) =>
+          scoped
+            .filter((record) => record.createdAt >= since)
+            .reduce((sum, record) => sum + (record.costMicros ?? 0), 0);
+
+        const dailySpend = spend(startOfDay);
+        const monthlySpend = spend(startOfMonth);
+        const perRequestBreaches = scoped.filter(
+          (record) =>
+            budget.perRequestLimitMicros !== null &&
+            (record.costMicros ?? 0) > budget.perRequestLimitMicros,
+        );
+
+        return {
+          id: budget.id,
+          key: budget.key,
+          environment: budget.environment,
+          scopeType: budget.scopeType,
+          scopeId: budget.scopeId,
+          scopeLabel:
+            budget.scopeType === 'PROVIDER'
+              ? (connections.find((row) => row.id === budget.scopeId)?.connectionLabel ?? null)
+              : budget.scopeId,
+          currency: budget.currency,
+          active: budget.active,
+          approvedBy: budget.approvedBy,
+          perRequestLimitMicros: budget.perRequestLimitMicros,
+          dailyLimitMicros: budget.dailyLimitMicros,
+          monthlyLimitMicros: budget.monthlyLimitMicros,
+          dailySpendMicros: dailySpend,
+          monthlySpendMicros: monthlySpend,
+          dailyBreached: budget.dailyLimitMicros !== null && dailySpend > budget.dailyLimitMicros,
+          monthlyBreached:
+            budget.monthlyLimitMicros !== null && monthlySpend > budget.monthlyLimitMicros,
+          perRequestBreaches: perRequestBreaches.length,
+          // A warning at four-fifths gives an operator time to act before the hard stop.
+          warningThresholdReached:
+            budget.dailyLimitMicros !== null && dailySpend >= budget.dailyLimitMicros * 0.8,
+        };
+      }),
+    };
+  }
+
+  /* --------------------------------------------------------------- routes */
+
+  async routeRegistry() {
+    const [routes, versions, connections, models, budgets] = await Promise.all([
+      this.database.db.select().from(aiRoutes),
+      this.database.db.select().from(aiRouteVersions),
+      this.database.db.select().from(aiProviderConnections),
+      this.database.db.select().from(aiModels),
+      this.database.db.select().from(aiBudgetPolicies),
+    ]);
+
+    const describe = (connectionId: string | null, modelId: string | null) => {
+      if (!connectionId || !modelId) return null;
+      const connection = connections.find((row) => row.id === connectionId);
+      const model = models.find((row) => row.id === modelId);
+      return {
+        connectionId,
+        modelId,
+        providerKey: connection?.providerKey ?? 'UNKNOWN',
+        connectionLabel: connection?.connectionLabel ?? null,
+        providerModelId: model?.providerModelId ?? null,
+        available: model?.available ?? false,
+      };
+    };
+
+    return {
+      items: routes.map((route) => ({
+        id: route.id,
+        key: route.key,
+        purpose: route.purpose,
+        versions: versions
+          .filter((version) => version.routeId === route.id)
+          .sort((left, right) => right.version - left.version)
+          .map((version) => ({
+            id: version.id,
+            version: version.version,
+            state: version.state,
+            environment: version.environment,
+            // Candidates are ordered: primary first, then fallback. The order is the
+            // behaviour, so it is preserved rather than presented as a set.
+            candidates: [
+              {
+                position: 0,
+                role: 'PRIMARY',
+                ...describe(version.providerConnectionId, version.modelId),
+              },
+              ...(version.fallbackProviderConnectionId && version.fallbackModelId
+                ? [
+                    {
+                      position: 1,
+                      role: 'FALLBACK',
+                      ...describe(version.fallbackProviderConnectionId, version.fallbackModelId),
+                    },
+                  ]
+                : []),
+            ],
+            timeoutMs: version.timeoutMs,
+            maximumRetries: version.maximumRetries,
+            confidenceThreshold: version.confidenceThreshold,
+            maximumCostMicros: version.maximumCostMicros,
+            layers: version.layers,
+            authorId: version.authorId,
+            approvedBy: version.approvedBy,
+            createdAt: version.createdAt,
+          })),
+      })),
+      budgets,
+      connections: connections.map((connection) => this.safeConnection(connection)),
+      models: models.map((model) => ({
+        id: model.id,
+        connectionId: model.connectionId,
+        providerModelId: model.providerModelId,
+        available: model.available,
+        deprecated: model.deprecated,
+        structuredOutput: model.structuredOutput,
+      })),
+    };
+  }
+
+  /**
+   * Validates a route version against everything that must hold before it may serve
+   * traffic.
+   *
+   * Run both as a preview and again at activation: a route that passed when it was
+   * drafted may not pass now, because a model can be deprecated or an approval
+   * withdrawn in between.
+   */
+  async validateRouteVersion(routeVersionId: string) {
+    const version = await this.database.db.query.aiRouteVersions.findFirst({
+      where: eq(aiRouteVersions.id, routeVersionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    const [connections, models, approvals, budgets, siblings] = await Promise.all([
+      this.database.db.select().from(aiProviderConnections),
+      this.database.db.select().from(aiModels),
+      this.database.db.select().from(aiModelApprovals),
+      this.database.db.select().from(aiBudgetPolicies),
+      this.database.db
+        .select()
+        .from(aiRouteVersions)
+        .where(eq(aiRouteVersions.routeId, version.routeId)),
+    ]);
+
+    const failures: Array<{ check: string; message: string }> = [];
+    const production = version.environment === 'production';
+
+    const checkCandidate = (
+      role: 'primary' | 'fallback',
+      connectionId: string | null,
+      modelId: string | null,
+    ) => {
+      if (!connectionId || !modelId) return;
+      const connection = connections.find((row) => row.id === connectionId);
+      const model = models.find((row) => row.id === modelId);
+
+      if (!connection) {
+        failures.push({
+          check: `${role}.provider`,
+          message: 'The provider connection no longer exists',
+        });
+        return;
+      }
+      const definition = PROVIDER_DEFINITIONS.find((row) => row.key === connection.providerKey);
+      if (!definition?.installed) {
+        failures.push({
+          check: `${role}.adapter`,
+          message: `No adapter is installed for ${connection.providerKey}`,
+        });
+      }
+      if (!connection.enabled) {
+        failures.push({ check: `${role}.enabled`, message: 'The provider connection is disabled' });
+      }
+      if (connection.status !== 'CONNECTED') {
+        failures.push({
+          check: `${role}.status`,
+          message: `The provider connection is ${connection.status.toLowerCase()}`,
+        });
+      }
+      if (!model) {
+        failures.push({ check: `${role}.model`, message: 'The model no longer exists' });
+        return;
+      }
+      if (!model.available) {
+        failures.push({ check: `${role}.availability`, message: 'The model is not available' });
+      }
+      if (model.deprecated) {
+        failures.push({ check: `${role}.deprecation`, message: 'The model is deprecated' });
+      }
+      // Every governed capability requires a schema-valid response.
+      if (model.structuredOutput !== 'SUPPORTED') {
+        failures.push({
+          check: `${role}.structuredOutput`,
+          message: `Structured output is ${model.structuredOutput.toLowerCase()} for this model`,
+        });
+      }
+      if (model.connectionId !== connectionId) {
+        failures.push({
+          check: `${role}.consistency`,
+          message: 'The model belongs to a different provider connection',
+        });
+      }
+
+      if (production) {
+        const approved = approvals.some(
+          (row) => row.modelId === modelId && row.environment === 'production' && row.approved,
+        );
+        if (!approved) {
+          failures.push({
+            check: `${role}.productionApproval`,
+            message: 'The model is not approved for production',
+          });
+        }
+        if (definition?.support !== 'SUPPORTED') {
+          failures.push({
+            check: `${role}.productionEligibility`,
+            message: `${connection.providerKey} is not eligible to serve production`,
+          });
+        }
+        if (!connection.approvedDataRegion) {
+          failures.push({
+            check: `${role}.region`,
+            message: 'No approved data region is recorded on this connection',
+          });
+        }
+        const regions = model.regionRestrictions ?? [];
+        if (
+          regions.length > 0 &&
+          connection.approvedDataRegion &&
+          !regions.includes(connection.approvedDataRegion)
+        ) {
+          failures.push({
+            check: `${role}.regionPolicy`,
+            message: `The model is restricted to ${regions.join(', ')}`,
+          });
+        }
+      }
+    };
+
+    checkCandidate('primary', version.providerConnectionId, version.modelId);
+    checkCandidate('fallback', version.fallbackProviderConnectionId, version.fallbackModelId);
+
+    // Fallback integrity: a fallback identical to the primary is not a fallback, it is
+    // the same failure twice.
+    if (
+      version.fallbackProviderConnectionId &&
+      version.fallbackProviderConnectionId === version.providerConnectionId &&
+      version.fallbackModelId === version.modelId
+    ) {
+      failures.push({
+        check: 'fallback.integrity',
+        message: 'The fallback is identical to the primary candidate, so it adds no resilience',
+      });
+    }
+
+    // A route that both is and is not the active one for its environment would make
+    // resolution ambiguous.
+    const otherActive = siblings.filter(
+      (row) =>
+        row.id !== version.id && row.state === 'ACTIVE' && row.environment === version.environment,
+    );
+    if (otherActive.length > 0) {
+      failures.push({
+        check: 'route.uniqueness',
+        message: `Version ${otherActive[0]?.version} is already active for ${version.environment}`,
+      });
+    }
+
+    if (version.timeoutMs <= 0) {
+      failures.push({ check: 'route.timeout', message: 'A positive timeout is required' });
+    }
+    if (version.maximumRetries < 0 || version.maximumRetries > 5) {
+      failures.push({ check: 'route.retries', message: 'Retries must be between 0 and 5' });
+    }
+
+    // A cost limit must exist somewhere, or nothing stops a runaway spend.
+    const applicableBudgets = budgets.filter(
+      (budget) => budget.environment === version.environment && budget.active,
+    );
+    if (version.maximumCostMicros === null && applicableBudgets.length === 0) {
+      failures.push({
+        check: 'route.budget',
+        message: 'No per-run ceiling and no active budget policy for this environment',
+      });
+    }
+    const perRequestCeiling = applicableBudgets
+      .map((budget) => budget.perRequestLimitMicros)
+      .filter((value): value is number => typeof value === 'number');
+    if (
+      version.maximumCostMicros !== null &&
+      perRequestCeiling.length > 0 &&
+      version.maximumCostMicros > Math.min(...perRequestCeiling)
+    ) {
+      failures.push({
+        check: 'route.budgetCeiling',
+        message: 'The per-run ceiling exceeds the active per-request budget limit',
+      });
+    }
+
+    return {
+      status: 'VALIDATED' as const,
+      routeVersionId,
+      environment: version.environment,
+      valid: failures.length === 0,
+      failures,
+    };
+  }
+
+  /** Creates a new draft route version, cloning an existing one when asked. */
+  async createRouteVersion(input: {
+    routeId: string;
+    environment: Environment;
+    providerConnectionId: string;
+    modelId: string;
+    fallbackProviderConnectionId?: string | undefined;
+    fallbackModelId?: string | undefined;
+    timeoutMs: number;
+    maximumRetries: number;
+    confidenceThreshold: number;
+    maximumCostMicros?: number | undefined;
+    principal: Principal;
+  }) {
+    const existing = await this.database.db
+      .select()
+      .from(aiRouteVersions)
+      .where(eq(aiRouteVersions.routeId, input.routeId));
+    if (existing.length === 0) {
+      const route = await this.database.db.query.aiRoutes.findFirst({
+        where: eq(aiRoutes.id, input.routeId),
+      });
+      if (!route) return { status: 'NOT_FOUND' as const };
+    }
+
+    const nextVersion = Math.max(0, ...existing.map((row) => row.version)) + 1;
+    const [created] = await this.database.db
+      .insert(aiRouteVersions)
+      .values({
+        routeId: input.routeId,
+        version: nextVersion,
+        state: 'DRAFT',
+        environment: input.environment,
+        providerConnectionId: input.providerConnectionId,
+        modelId: input.modelId,
+        fallbackProviderConnectionId: input.fallbackProviderConnectionId ?? null,
+        fallbackModelId: input.fallbackModelId ?? null,
+        timeoutMs: input.timeoutMs,
+        maximumRetries: input.maximumRetries,
+        confidenceThreshold: input.confidenceThreshold.toFixed(4),
+        maximumCostMicros: input.maximumCostMicros ?? null,
+        layers: [],
+        authorId: input.principal.subject,
+      })
+      .returning();
+    if (!created) return { status: 'FAILED' as const };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'AI_ROUTE_VERSION_CREATED',
+      aggregateType: 'AiRouteVersion',
+      aggregateId: created.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { routeId: input.routeId, version: nextVersion, environment: input.environment },
+    });
+
+    // Returned with the validation result so the author sees immediately what would
+    // stop it activating, rather than discovering it at activation.
+    const validation = await this.validateRouteVersion(created.id);
+    return { status: 'CREATED' as const, routeVersion: created, validation };
+  }
+
+  /**
+   * Activates a route version, but only if it revalidates now. The interface cannot
+   * bypass this: activation is refused here, not merely discouraged in the UI.
+   */
+  async activateRouteVersion(routeVersionId: string, principal: Principal) {
+    const validation = await this.validateRouteVersion(routeVersionId);
+    if (validation.status === 'NOT_FOUND') return validation;
+    if (!validation.valid) {
+      return { status: 'BLOCKED' as const, failures: validation.failures };
+    }
+
+    const version = await this.database.db.query.aiRouteVersions.findFirst({
+      where: eq(aiRouteVersions.id, routeVersionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+
+    await this.database.db.transaction(async (tx) => {
+      // Supersede whatever was active for this environment so resolution stays
+      // unambiguous.
+      await tx
+        .update(aiRouteVersions)
+        .set({ state: 'SUPERSEDED', updatedAt: new Date() })
+        .where(
+          and(
+            eq(aiRouteVersions.routeId, version.routeId),
+            eq(aiRouteVersions.environment, version.environment),
+            eq(aiRouteVersions.state, 'ACTIVE'),
+          ),
+        );
+      await tx
+        .update(aiRouteVersions)
+        .set({ state: 'ACTIVE', approvedBy: principal.subject, updatedAt: new Date() })
+        .where(eq(aiRouteVersions.id, routeVersionId));
+    });
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'AI_ROUTE_VERSION_ACTIVATED',
+      aggregateType: 'AiRouteVersion',
+      aggregateId: routeVersionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        routeId: version.routeId,
+        version: version.version,
+        environment: version.environment,
+      },
+    });
+
+    return { status: 'ACTIVATED' as const, routeVersionId };
+  }
+
+  async disableRouteVersion(routeVersionId: string, principal: Principal) {
+    const version = await this.database.db.query.aiRouteVersions.findFirst({
+      where: eq(aiRouteVersions.id, routeVersionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+    if (version.state !== 'ACTIVE') {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    const [updated] = await this.database.db
+      .update(aiRouteVersions)
+      .set({ state: 'ROLLED_BACK', updatedAt: new Date() })
+      .where(eq(aiRouteVersions.id, routeVersionId))
+      .returning();
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'AI_ROUTE_VERSION_DISABLED',
+      aggregateType: 'AiRouteVersion',
+      aggregateId: routeVersionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { routeId: version.routeId, version: version.version },
+    });
+
+    return { status: 'DISABLED' as const, routeVersion: updated };
   }
 
   async discoverModels(connectionId: string, principal: Principal) {

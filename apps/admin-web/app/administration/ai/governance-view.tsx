@@ -9,9 +9,11 @@ import {
   formatDateTime,
   formatNumber,
   humaniseState,
+  ratio,
   toneForState,
   type Column,
 } from '@quantum-parks/ui';
+import { ArtefactActions, BudgetForm } from './ai-actions';
 
 /**
  * Governance: prompts, schemas, taxonomies and budgets as real records.
@@ -69,20 +71,48 @@ export type BudgetPolicy = {
   approvedBy: string | null;
 };
 
+/**
+ * Spend as a share of its limit.
+ *
+ * Rounding a real but tiny spend to "0%" reads as "nothing has been spent", which is a
+ * different claim. Anything above zero that rounds down reports "under 1%" instead.
+ */
+function percentOfLimit(spendMicros: number, limitMicros: number): string {
+  const share = ratio(spendMicros, limitMicros);
+  if (share === null) return 'no limit set';
+  const percent = share * 100;
+  if (percent > 0 && percent < 1) return 'under 1%';
+  return `${Math.round(percent)}%`;
+}
+
+/** A budget policy with the spend actually recorded against its scope. */
+export type BudgetStatusRow = BudgetPolicy & {
+  scopeLabel: string | null;
+  dailySpendMicros: number;
+  monthlySpendMicros: number;
+  dailyBreached: boolean;
+  monthlyBreached: boolean;
+  perRequestBreaches: number;
+  warningThresholdReached: boolean;
+};
+
 export function GovernanceView({
   prompts,
   schemas,
   taxonomies,
-  budgets,
+  budgetStatus,
+  scopeOptions,
   spendMicros,
 }: {
   prompts: PromptVersion[];
   schemas: SchemaVersion[];
   taxonomies: TaxonomyVersion[];
-  budgets: BudgetPolicy[];
+  budgetStatus: BudgetStatusRow[];
+  /** What a provider-, model- or capability-scoped budget may point at. */
+  scopeOptions: Array<{ value: string; label: string }>;
   spendMicros: number;
 }) {
-  const activeDailyBudget = budgets
+  const activeDailyBudget = budgetStatus
     .filter((budget) => budget.active && budget.dailyLimitMicros)
     .reduce((lowest, budget) => Math.min(lowest, budget.dailyLimitMicros ?? Infinity), Infinity);
   const dailyLimit = Number.isFinite(activeDailyBudget) ? activeDailyBudget : null;
@@ -117,6 +147,18 @@ export function GovernanceView({
       header: 'Checksum',
       render: (row) => <code className="inline-code">{formatChecksum(row.checksum)}</code>,
       priority: 'secondary',
+    },
+    {
+      key: 'actions',
+      header: 'Lifecycle',
+      render: (row) => (
+        <details className="row-actions">
+          <summary>Move</summary>
+          <div className="row-actions-body">
+            <ArtefactActions kind="prompt" versionId={row.id} state={row.state} />
+          </div>
+        </details>
+      ),
     },
   ];
 
@@ -153,6 +195,23 @@ export function GovernanceView({
       render: (row) => <code className="inline-code">{formatChecksum(row.checksum)}</code>,
       priority: 'secondary',
     },
+    {
+      key: 'actions',
+      header: 'Lifecycle',
+      render: (row) => (
+        <details className="row-actions">
+          <summary>Move</summary>
+          <div className="row-actions-body">
+            <ArtefactActions
+              kind="schema"
+              versionId={row.id}
+              state={row.state}
+              codeOwned={row.codeOwned}
+            />
+          </div>
+        </details>
+      ),
+    },
   ];
 
   const taxonomyColumns: Column<TaxonomyVersion>[] = [
@@ -175,17 +234,32 @@ export function GovernanceView({
       render: (row) => row.approvedBy ?? <span className="muted-cell">Not approved</span>,
       priority: 'secondary',
     },
+    {
+      key: 'actions',
+      header: 'Lifecycle',
+      render: (row) => (
+        <details className="row-actions">
+          <summary>Move</summary>
+          <div className="row-actions-body">
+            <ArtefactActions kind="taxonomy" versionId={row.id} state={row.state} />
+          </div>
+        </details>
+      ),
+    },
   ];
 
-  const budgetColumns: Column<BudgetPolicy>[] = [
+  const budgetColumns: Column<BudgetStatusRow>[] = [
     {
       key: 'key',
       header: 'Budget',
+      // The key is shown verbatim: it is the stable identifier an operator types into the
+      // form, so prettifying it here would stop the two matching.
       render: (row) => (
         <>
-          {humaniseState(row.key)}
+          <code className="inline-code">{row.key}</code>
           <small className="cell-sub">
-            {humaniseState(row.scopeType)} · {humaniseState(row.environment)}
+            {humaniseState(row.scopeType)}
+            {row.scopeLabel ? ` · ${row.scopeLabel}` : ''} · {humaniseState(row.environment)}
           </small>
         </>
       ),
@@ -194,41 +268,78 @@ export function GovernanceView({
       key: 'perRequest',
       header: 'Per request',
       align: 'end',
-      render: (row) => formatCurrencyFromMicros(row.perRequestLimitMicros, row.currency),
+      render: (row) => (
+        <>
+          {formatCurrencyFromMicros(row.perRequestLimitMicros, row.currency)}
+          {row.perRequestBreaches > 0 ? (
+            <small className="cell-sub">
+              {formatNumber(row.perRequestBreaches)} runs exceeded it
+            </small>
+          ) : null}
+        </>
+      ),
     },
     {
       key: 'daily',
-      header: 'Daily',
+      header: 'Today',
       align: 'end',
-      render: (row) => formatCurrencyFromMicros(row.dailyLimitMicros, row.currency),
+      // Spend against limit, because a limit with no spend beside it answers nothing.
+      render: (row) => (
+        <>
+          {formatCurrencyFromMicros(row.dailySpendMicros, row.currency)}
+          <small className="cell-sub">
+            of {formatCurrencyFromMicros(row.dailyLimitMicros, row.currency)}
+            {row.dailyLimitMicros
+              ? ` · ${percentOfLimit(row.dailySpendMicros, row.dailyLimitMicros)}`
+              : ''}
+          </small>
+        </>
+      ),
     },
     {
       key: 'monthly',
-      header: 'Monthly',
+      header: 'This month',
       align: 'end',
-      render: (row) => formatCurrencyFromMicros(row.monthlyLimitMicros, row.currency),
+      render: (row) => (
+        <>
+          {formatCurrencyFromMicros(row.monthlySpendMicros, row.currency)}
+          <small className="cell-sub">
+            of {formatCurrencyFromMicros(row.monthlyLimitMicros, row.currency)}
+          </small>
+        </>
+      ),
     },
     {
       key: 'active',
       header: 'Enforced',
       render: (row) =>
-        row.active ? (
+        row.dailyBreached || row.monthlyBreached ? (
+          <StatusPill tone="danger">Breached</StatusPill>
+        ) : row.warningThresholdReached ? (
+          <StatusPill tone="warning">Near limit</StatusPill>
+        ) : row.active ? (
           <StatusPill tone="good">Active</StatusPill>
         ) : (
           <StatusPill tone="warning">Not active</StatusPill>
         ),
     },
     {
-      key: 'approval',
-      header: 'Approved by',
-      render: (row) => row.approvedBy ?? <span className="muted-cell">Not approved</span>,
-      priority: 'secondary',
+      key: 'edit',
+      header: 'Edit',
+      render: (row) => (
+        <details className="row-actions">
+          <summary>Change limits</summary>
+          <div className="row-actions-body">
+            <BudgetForm existing={row} scopeOptions={scopeOptions} />
+          </div>
+        </details>
+      ),
     },
   ];
 
   return (
     <>
-      {budgets.length === 0 ? (
+      {budgetStatus.length === 0 ? (
         <Banner tone="warning" title="No cost limit is configured">
           A missing cost limit is one of the blockers the readiness evaluation raises, because
           nothing would stop a runaway spend.
@@ -243,13 +354,13 @@ export function GovernanceView({
 
       <Panel
         title="Budgets"
-        eyebrow={`${formatNumber(budgets.length)} policies`}
-        description="A per-request ceiling sits well below the daily limit so a single runaway call cannot exhaust the day."
+        eyebrow={`${formatNumber(budgetStatus.length)} policies`}
+        description="A per-request ceiling sits below the daily limit so a single runaway call cannot exhaust the day. The platform refuses a policy that inverts that."
       >
         <DataTable
-          caption="Budget policies with their per-request, daily and monthly limits"
+          caption="Budget policies with their limits and the spend recorded against them"
           columns={budgetColumns}
-          rows={budgets}
+          rows={budgetStatus}
           getRowKey={(row) => row.id}
           empty={
             <EmptyState
@@ -258,6 +369,12 @@ export function GovernanceView({
             />
           }
         />
+        <details className="row-actions">
+          <summary>Add a budget policy</summary>
+          <div className="row-actions-body">
+            <BudgetForm scopeOptions={scopeOptions} />
+          </div>
+        </details>
       </Panel>
 
       <Panel
