@@ -15,6 +15,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { RunReconciliationButton } from '../call-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -149,6 +150,13 @@ export default async function ReconciliationPage() {
         processing failure never loses the evidence and the work can be replayed without contacting
         the provider again.
       </Banner>
+
+      <Panel
+        title="Run reconciliation"
+        description="Dispatches the reconciliation workflow against the workflow engine. Reported honestly if the engine cannot be reached — nothing here is assumed to have queued."
+      >
+        <RunReconciliationButton />
+      </Panel>
 
       <Panel
         title="Calls needing reconciliation"

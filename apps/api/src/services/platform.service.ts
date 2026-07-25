@@ -2775,6 +2775,7 @@ export class PlatformService {
       targetRecordId: string;
       reason: string;
       proposedValue: Record<string, unknown>;
+      principal: Principal;
     },
   ) {
     const targetExists = await this.correctionTargetBelongsToConversation(
@@ -2790,7 +2791,7 @@ export class PlatformService {
       ),
       orderBy: desc(corrections.revision),
     });
-    const actorId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+    const actorId = await this.actorId(input.principal);
     return this.database.db.transaction(async (tx) => {
       const [correction] = await tx
         .insert(corrections)
@@ -2817,14 +2818,19 @@ export class PlatformService {
     });
   }
 
-  async decideCorrection(id: string, decision: 'APPROVE' | 'REJECT', reason: string) {
+  async decideCorrection(
+    id: string,
+    decision: 'APPROVE' | 'REJECT',
+    reason: string,
+    principal: Principal,
+  ) {
     const correction = await this.database.db.query.corrections.findFirst({
       where: eq(corrections.id, id),
     });
     if (!correction) return { status: 'NOT_FOUND' };
     if (correction.status !== 'PROPOSED')
       return { status: 'CONFLICT', currentStatus: correction.status };
-    const actorId = process.env.QP_SYSTEM_ACTOR_ID ?? developmentActorId;
+    const actorId = await this.actorId(principal);
     const nextStatus = decision === 'APPROVE' ? ('APPROVED' as const) : ('REJECTED' as const);
     return this.database.db.transaction(async (tx) => {
       const [updated] = await tx

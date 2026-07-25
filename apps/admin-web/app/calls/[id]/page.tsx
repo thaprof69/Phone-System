@@ -20,6 +20,7 @@ import {
 } from '@quantum-parks/ui';
 import { AppShell } from '../../shell';
 import { apiGet } from '../../../lib/api';
+import { ProposeCorrectionForm, type CorrectionTarget } from '../call-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,6 +109,34 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
   const summary = call.summaries[0];
   const classification = call.classifications[0];
   const outcome = call.deterministicOutcomes[0];
+
+  // A correction targets whichever artefacts this specific call actually has. Offering
+  // a target that does not exist here would be refused server-side anyway, but naming
+  // only the real ones is what the operator actually needs to choose between.
+  const correctionTargets: CorrectionTarget[] = [
+    ...(call.transcriptRevision
+      ? [
+          {
+            value: `${call.transcriptRevision.revisionType === 'REDACTED' ? 'REDACTED_TRANSCRIPT' : 'CANONICAL_TRANSCRIPT'}:${call.transcriptRevision.id}`,
+            label: `Transcript (${humaniseState(call.transcriptRevision.revisionType)})`,
+            recordId: call.transcriptRevision.id,
+          },
+        ]
+      : []),
+    ...(summary
+      ? [{ value: `SUMMARY:${summary.id}`, label: 'Summary', recordId: summary.id }]
+      : []),
+    ...(classification
+      ? [
+          {
+            value: `CLASSIFICATION:${classification.id}`,
+            label: 'Classification',
+            recordId: classification.id,
+          },
+        ]
+      : []),
+  ];
+
   const durationSeconds =
     typeof call.providerMetadata?.call_duration_secs === 'number'
       ? call.providerMetadata.call_duration_secs
@@ -361,6 +390,13 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
                 </div>
               </dl>
             </TechnicalDetails>
+          </Panel>
+
+          <Panel
+            title="Propose a correction"
+            description="Reviewed independently before it changes anything. Approving records the decision permanently; it does not itself rewrite the transcript, summary or classification."
+          >
+            <ProposeCorrectionForm conversationId={call.id} targets={correctionTargets} />
           </Panel>
         </aside>
       </div>

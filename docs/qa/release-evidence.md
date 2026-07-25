@@ -367,3 +367,45 @@ concurrent budget-policy writes and asserts the chain still reports intact.
 **Still outstanding** — recorded honestly rather than implied complete: Calls and Call
 Detail's correction and reconciliation depth, the remaining Administration areas, and
 report scheduling and lineage.
+
+## 2026-07-25 — Calls and Call Detail depth pass
+
+Correction proposal and decision, and a reconciliation trigger, over the existing
+`corrections`, `correctionHistory` tables and the already-real `proposeCorrection` /
+`decideCorrection` / `requestReconciliation` service methods, which previously had no
+interface calling them.
+
+**Workflows built**
+
+| Workflow               | What it enforces                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Correction proposal    | Scoped to whichever artefacts a specific call actually has — a call with no summary is never offered "correct the summary" |
+| Correction decision    | A second decision on an already-decided correction is refused with its current status, not silently accepted               |
+| Reconciliation trigger | Reports `QUEUED` or `TEMPORARILY_UNAVAILABLE` honestly, matching whatever the workflow engine actually returns             |
+
+**A deliberate scope boundary, stated rather than left ambiguous**: approving a
+correction records the decision permanently; it does not rewrite the transcript,
+summary or classification it targets. `callSummaries` and `callClassifications` require
+genuine AI-attribution columns (`provider`, `model`, `promptVersion`, `schemaVersion`) —
+inventing those for a human edit would misrepresent whose judgement produced the
+content. Propose → decide → recorded history is the complete real workflow this pass
+delivers; `corrections.appliedRecordId` intentionally remains unset.
+
+**A third occurrence of the same defect class, found and fixed**: the corrections
+list's decision control rendered only while status was `PROPOSED`, so
+`router.refresh()` after a successful decision unmounted the very control showing its
+own "Saved" confirmation in the same render — the identical failure already fixed twice
+this session (Operations message retry, Knowledge authoring). Fixed by always mounting
+the control and letting its own just-succeeded state take precedence.
+
+**Verification**
+
+| Command                                    | Result                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `pnpm check`                               | 17 tasks successful                                                              |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                            |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                           |
+| `playwright test --project=admin-chromium` | **65 passed, twice consecutively** on one freshly reseeded database (1.1m, 1.0m) |
+
+**Still outstanding** — recorded honestly rather than implied complete: the remaining
+Administration areas, and report scheduling and lineage.

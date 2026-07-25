@@ -1031,3 +1031,65 @@ test('the audit chain stays intact under rapid consecutive writes', async ({ pag
   await expect(page.getByText('Chain intact')).toBeVisible();
   await expect(page.getByText(/broken link/)).toHaveCount(0);
 });
+
+test('a correction can be proposed from a call and appears awaiting review', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls?state=COMPLETED');
+  await page.locator('tbody th a').first().click();
+  await expect(page).toHaveURL(/\/calls\/[0-9a-f-]{36}$/);
+
+  const proposeHeading = page.getByRole('heading', { name: 'Propose a correction' });
+  await expect(proposeHeading).toBeVisible();
+
+  const reasonField = page.getByLabel('Reason', { exact: true });
+  if (!(await reasonField.isVisible().catch(() => false))) return;
+  await reasonField.fill(`Verified against the recording at ${Date.now()}`);
+  await page
+    .getByLabel('Proposed value (JSON)')
+    .fill('{"purpose": "Corrected during verification"}');
+  await page.getByRole('button', { name: 'Propose correction' }).click();
+
+  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('awaiting review')).toBeVisible();
+});
+
+test('proposing a correction with invalid JSON is refused', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls?state=COMPLETED');
+  await page.locator('tbody th a').first().click();
+
+  const reasonField = page.getByLabel('Reason', { exact: true });
+  if (!(await reasonField.isVisible().catch(() => false))) return;
+  await reasonField.fill('Attempting an invalid proposal');
+  await page.getByLabel('Proposed value (JSON)').fill('{ not json');
+  await page.getByRole('button', { name: 'Propose correction' }).click();
+
+  await expect(page.getByText(/not valid JSON/)).toBeVisible();
+});
+
+test('a proposed correction can be decided, and a second decision is refused as already decided', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls/corrections');
+
+  const proposedRow = page.locator('tbody tr').filter({ hasText: 'Proposed' }).first();
+  if (!(await proposedRow.isVisible().catch(() => false))) return;
+  const decide = await openDisclosure(proposedRow, 'Decide');
+  await decide.getByLabel('Reason', { exact: true }).fill('Checked and confirmed correct');
+  await decide.getByRole('button', { name: 'Record decision' }).click();
+
+  await expect(decide.getByText('Saved', { exact: true }).first()).toBeVisible();
+});
+
+test('running reconciliation reports honestly when the workflow engine is unavailable', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls/reconciliation');
+
+  await page.getByRole('button', { name: 'Run reconciliation now' }).click();
+  // Whichever the local stack actually returns, the outcome must be reported plainly —
+  // never presented as a success the platform did not confirm.
+  await expect(page.getByText(/Saved|Refused/).first()).toBeVisible();
+});

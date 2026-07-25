@@ -418,14 +418,28 @@ export class ControlPlaneController {
   }
   @RequirePermission('corrections:write', 'QUALITY_REVIEW')
   @Post('calls/:id/corrections')
-  proposeCorrection(@Param('id') id: string, @Body() body: unknown) {
-    return this.platform.proposeCorrection(id, CorrectionSchema.parse(body));
+  proposeCorrection(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = CorrectionSchema.parse(body);
+    return this.platform.proposeCorrection(id, { ...input, principal: request.principal });
   }
   @RequirePermission('corrections:write', 'QUALITY_REVIEW')
   @Post('corrections/:id/decision')
-  decideCorrection(@Param('id') id: string, @Body() body: unknown) {
+  decideCorrection(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
     const input = CorrectionDecisionSchema.parse(body);
-    return this.platform.decideCorrection(id, input.decision, input.reason);
+    return this.platform.decideCorrection(id, input.decision, input.reason, request.principal);
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Post('calls-reconciliation/run')
+  runReconciliation() {
+    return this.platform.requestReconciliation();
   }
   @RequirePermission('provider:manage')
   @Get('readiness')

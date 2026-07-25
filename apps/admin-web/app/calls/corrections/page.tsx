@@ -12,6 +12,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { DecideCorrectionForm } from '../call-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -105,6 +106,22 @@ export default async function CorrectionsPage() {
       align: 'end',
       render: (row) => `${formatNumber(row.historyCount)} entries`,
       priority: 'secondary',
+    },
+    {
+      key: 'decide',
+      header: 'Decision',
+      // Always mounted, never swapped for a plain status label: a successful decision
+      // flips `row.status` away from PROPOSED on the very next server render, and a
+      // component that gets unmounted the instant it succeeds takes its own "Saved"
+      // confirmation down with it.
+      render: (row) => (
+        <details className="row-actions">
+          <summary>Decide</summary>
+          <div className="row-actions-body">
+            <DecideCorrectionForm correctionId={row.id} alreadyDecided={row.status} />
+          </div>
+        </details>
+      ),
     },
   ];
 

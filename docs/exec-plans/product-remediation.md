@@ -75,7 +75,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [x] 2.3 Knowledge Hub (§9) — authoring as immutable new versions with a checksum-based identical-edit refusal, submit/review with a genuinely independent approver (resolved from the real principal via `admin_users`, not a shared system identity), sync retry that re-sends local state and never adopts the remote copy, language-validated agent assignment, and gap-to-draft conversion that never auto-publishes
 - [x] 2.4 Voice Library (§10) — side-by-side comparison of real per-voice metadata (language, category, accent, use case, availability, approval, consent, assignments); assignment by agent version × language × environment × fallback with the existing production native-language check; a consent-gated approval that refuses a cloned voice with no currently valid consent record; catalogue refresh
 - [x] 2.5 Test Studio (§11) — test case authoring saved as an immutable version 1; a run trigger over agent version x test selection x repeat count, reusing the existing provider test creation, mapping and evidence-recording workflow; provider sync for a run still in progress; release-gate wording verified unchanged
-- [ ] 2.6 Calls and Call Detail (§12)
+- [x] 2.6 Calls and Call Detail (§12) — correction proposal scoped to whichever artefacts a call actually has (transcript, summary, classification), independent decision with a genuinely refused repeat decision, and a reconciliation trigger that reports honestly when the workflow engine cannot be reached rather than assuming success
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
 - [x] 2.8 AI Infrastructure (§14) — eight areas, each rendered from real records: adapter-driven provider registry with connections, model registry with per-environment approval and availability, capability list drilling through to runs, route registry with a version builder and pre-activation validation, prompt/schema/taxonomy lifecycle, GBP budgets showing spend against limit, execution history with seven filters and pagination, and monitoring
 - [ ] 2.9 Administration (§15)
@@ -271,27 +271,63 @@ concurrent budget-policy writes and asserts the chain still reports intact.
 
 ---
 
+### Calls and Call Detail depth pass — 2026-07-25
+
+| Command                                    | Result                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| `pnpm check`                               | 17 tasks successful, 17 total                                                  |
+| `pnpm architecture:check`                  | `Architecture fitness checks passed.`                                          |
+| `pnpm traceability:check`                  | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                         |
+| `playwright test --project=admin-chromium` | **65 passed, twice consecutively**, one freshly reseeded database (1.1m, 1.0m) |
+
+Four new browser tests cover correction proposal, JSON validation, decision (with a
+genuinely refused repeat decision), and the reconciliation trigger's honest reporting
+when the workflow engine is unreachable.
+
+**A deliberate scope boundary, stated rather than silently left ambiguous**: approving a
+correction records the decision and reason permanently; it does not itself rewrite the
+transcript, summary or classification it targets. `callSummaries` and
+`callClassifications` require `provider`, `model`, `promptVersion` and
+`schemaVersion` — genuine AI-attribution columns — and splicing a human edit into them
+under a fabricated provider and model would misrepresent whose judgement produced the
+content, which is exactly the kind of fabrication this remediation exists to prevent.
+`corrections.appliedRecordId` and `appliedAt` remain unset; propose → decide → recorded
+history is the complete, real, permissioned and audited workflow this pass delivers.
+
+**A third occurrence of the same defect class found and fixed**: the corrections list's
+decision control was conditionally rendered only while a correction's status was
+`PROPOSED`, so `router.refresh()` after a successful decision flipped the status away
+from `PROPOSED` and unmounted the very control showing the "Saved" confirmation, in the
+same render the confirmation appeared — the identical failure mode already fixed twice
+this session (message retry in Operations, the knowledge authoring panel). Fixed the
+same way: the control is always mounted, and its own just-succeeded local state takes
+precedence over what the next server render says.
+
+---
+
 ## 6a. Resume point
 
 Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8),
-Knowledge Hub (2.3), Voice Library (2.4) and Test Studio (2.5) are complete.
+Knowledge Hub (2.3), Voice Library (2.4), Test Studio (2.5) and Calls/Call Detail (2.6)
+are complete — every module in the fixed order except Administration and Analytics.
 
-**The next unchecked item is 2.6 — Calls and Call Detail (§12):**
+**The next unchecked item is 2.9 — Administration (§15):**
 
-1. **Call workspace depth.** `/calls` and `/calls/[id]` already exist with real
-   filtering and a provider-vs-canonical transcript distinction (verified by an
-   existing passing test). Extend to full depth: corrections editor wired to the
-   existing `corrections` / `correctionHistory` tables and `CorrectionSchema` in
-   `control-plane.controller.ts`, and the reconciliation view at `/calls/reconciliation`.
-2. **Correction workflow.** Propose a correction (already has a schema:
-   `targetType`, `targetRecordId`, `reason`, `proposedValue`), decide it
-   (`CorrectionDecisionSchema`), and show correction history preserved rather than
-   overwritten.
-3. **Reconciliation.** `listReconciliation()` already exists in `platform.service.ts` —
-   verify the UI surfaces it with real actions, not only a read view.
+1. **Users and roles.** `/administration/users` already shows separation-of-duty
+   conflicts (a passing test verifies this) — check for actual role-assignment mutation,
+   not only the read view.
+2. **Feature flags.** `listFeatureFlags()` exists in `platform.service.ts` — verify a
+   mutation endpoint exists and is wired to the UI; add one if it does not.
+3. **Retention and legal holds.** Verify retention policy display has a real action
+   (not just a table), and that a legal hold can actually be placed and lifted.
+4. **Voice runtime, business integrations, security and privacy.** Audit each remaining
+   `/administration/*` route for read-only placeholders versus real actions.
+5. **Per-domain production readiness and release administration.** Already substantially
+   real per earlier passes — verify no regressions, extend only where a real gap exists.
 
-Then continue in the order in section 3: Administration (2.9), Analytics and Reports
-(2.10).
+Then finish with 2.10 — Analytics and Reports: filters, evidence drill-down,
+verified-vs-inferred labelling, export controls; report definition CRUD, scheduling,
+run-now, retry, lineage, delivery.
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir
