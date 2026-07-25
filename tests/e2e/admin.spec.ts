@@ -1093,3 +1093,181 @@ test('running reconciliation reports honestly when the workflow engine is unavai
   // never presented as a success the platform did not confirm.
   await expect(page.getByText(/Saved|Refused/).first()).toBeVisible();
 });
+
+test('a feature flag gate can be toggled and the reason is recorded', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/feature-flags');
+
+  // Reads the row's own current action rather than assuming it starts disabled, so
+  // the test is safe to run twice in a row against the same database without an
+  // intervening reseed.
+  const row = page.locator('tbody tr').filter({ hasText: 'Custom voice enabled' }).first();
+  await expect(row).toBeVisible();
+  const action = ((await row.locator('summary').textContent()) ?? '').trim();
+  expect(['Enable', 'Disable']).toContain(action);
+  const manage = await openDisclosure(row, action);
+  await manage.getByLabel('Reason').fill('Toggling for a pilot with recorded speaker consent');
+  await manage.getByRole('button', { name: action }).click();
+
+  await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(
+    row.getByText(action === 'Enable' ? 'Enabled' : 'Disabled', { exact: true }),
+  ).toBeVisible();
+});
+
+test('a feature flag can be disabled again after enabling, surviving the server refresh', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/feature-flags');
+
+  // Seasonal variations is seeded disabled. Enabling it and then reloading and
+  // disabling it again exercises both toggle directions and confirms the "Saved"
+  // banner survives the `router.refresh()` that flips the row's own displayed state
+  // out from under the still-open disclosure — the same bug class fixed elsewhere
+  // in this interface.
+  const row = page.locator('tbody tr').filter({ hasText: 'Seasonal variations' }).first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Enable');
+  await manage.getByLabel('Reason').fill('Enabling seasonal variations for verification');
+  await manage.getByRole('button', { name: 'Enable' }).click();
+  await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+
+  await page.reload();
+  const disableManage = await openDisclosure(row, 'Disable');
+  await disableManage.getByLabel('Reason').fill('Reverting seasonal variations after verification');
+  await disableManage.getByRole('button', { name: 'Disable' }).click();
+  await expect(disableManage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(row.getByText('Disabled', { exact: true })).toBeVisible();
+});
+
+test('an unapproved retention policy cannot be activated, and approving it unlocks enforcement', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/retention');
+
+  const row = page
+    .locator('tbody tr')
+    .filter({ hasText: 'Raw provider evidence' })
+    .filter({ hasText: 'Production' })
+    .first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Manage');
+
+  // Approval has no "unapprove" — it is a one-way, recorded sign-off, so a rerun
+  // against the same database (no reseed between the two required passes) finds it
+  // already approved. The blocked-while-unapproved gate only has a fresh-seed window
+  // to prove itself in; once approved, the test just keeps exercising the active
+  // toggle, which is safely reversible either direction.
+  const alreadyApproved = await manage
+    .getByText('Already approved.')
+    .isVisible()
+    .catch(() => false);
+
+  if (!alreadyApproved) {
+    await expect(manage.getByRole('button', { name: 'Activate enforcement' })).toBeVisible();
+    await expect(manage.getByText(/cannot be enforced/)).toBeVisible();
+
+    await manage
+      .getByLabel('Approval reason')
+      .fill('Signed off by the privacy officer per the DPIA on file');
+    await manage.getByRole('button', { name: 'Approve' }).click();
+    await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  }
+
+  const activeAction = ((await manage.getByRole('button').last().textContent()) ?? '').trim();
+  expect(['Activate enforcement', 'Deactivate enforcement']).toContain(activeAction);
+  await manage
+    .getByLabel('Reason', { exact: true })
+    .fill('Toggling production enforcement for verification');
+  await manage.getByRole('button', { name: activeAction }).click();
+  await expect(manage.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(
+    row.getByText(activeAction === 'Activate enforcement' ? 'Active' : 'Inactive', {
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
+test('a legal hold can be placed on a call and later released', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/calls?state=COMPLETED');
+  await page.locator('tbody th a').first().click();
+  await expect(page).toHaveURL(/\/calls\/([0-9a-f-]{36})$/);
+  const conversationId = new URL(page.url()).pathname.split('/').pop() as string;
+
+  await page.goto('/administration/retention');
+  const placeForm = page.locator('.inline-form').filter({ hasText: 'Place legal hold' });
+  await placeForm.getByLabel('What this covers').selectOption('CONVERSATION');
+  await placeForm.getByLabel('Record ID').fill(conversationId);
+  await placeForm
+    .getByLabel('Reason', { exact: true })
+    .fill('Subject to a pending litigation request');
+  await placeForm.getByRole('button', { name: 'Place legal hold' }).click();
+  await expect(placeForm.getByText('Legal hold placed.')).toBeVisible();
+
+  const holdRow = page.locator('tbody tr').filter({ hasText: conversationId }).first();
+  await expect(holdRow).toBeVisible();
+  await expect(holdRow.getByText('Active hold')).toBeVisible();
+
+  const release = await openDisclosure(holdRow, 'Release');
+  await release
+    .getByLabel('Release reason')
+    .fill('Litigation hold lifted per counsel confirmation');
+  await release.getByRole('button', { name: 'Release hold' }).click();
+  await expect(release.getByText('Saved', { exact: true }).first()).toBeVisible();
+  await expect(holdRow.locator('.status-pill').filter({ hasText: 'Released' })).toBeVisible();
+});
+
+test('placing a legal hold on a record that does not exist is refused', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/retention');
+
+  const placeForm = page.locator('.inline-form').filter({ hasText: 'Place legal hold' });
+  await placeForm.getByLabel('What this covers').selectOption('CONVERSATION');
+  await placeForm.getByLabel('Record ID').fill('00000000-0000-0000-0000-000000000000');
+  await placeForm
+    .getByLabel('Reason', { exact: true })
+    .fill('Testing a hold against a missing record');
+  await placeForm.getByRole('button', { name: 'Place legal hold' }).click();
+
+  await expect(placeForm.getByText('Refused', { exact: true }).first()).toBeVisible();
+  await expect(placeForm.getByText('That record no longer exists.')).toBeVisible();
+});
+
+test('granting a role that would let one person author and approve the same knowledge is refused', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/users');
+
+  const row = page.locator('tbody tr').filter({ hasText: 'Carla Dias' }).first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Manage roles');
+
+  await manage
+    .locator('li')
+    .filter({ hasText: 'Knowledge approver' })
+    .getByRole('button', { name: 'Grant' })
+    .click();
+
+  await expect(manage.getByText('Refused', { exact: true }).first()).toBeVisible();
+  await expect(manage.getByText('Can author and approve the same knowledge')).toBeVisible();
+});
+
+test('a role can be granted to a user and then revoked', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/administration/users');
+
+  const row = page.locator('tbody tr').filter({ hasText: 'Elena Rocha' }).first();
+  await expect(row).toBeVisible();
+  const manage = await openDisclosure(row, 'Manage roles');
+
+  const roleItem = manage.locator('li').filter({ hasText: 'Customer service operator' });
+  await roleItem.getByRole('button', { name: 'Grant' }).click();
+  await expect(manage.getByText('Role granted.')).toBeVisible();
+
+  await roleItem.getByRole('button', { name: 'Revoke' }).click();
+  await expect(manage.getByText('Role revoked.')).toBeVisible();
+});

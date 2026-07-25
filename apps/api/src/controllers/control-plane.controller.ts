@@ -87,6 +87,41 @@ const KnowledgeAssignmentSchema = z
     active: z.boolean(),
   })
   .strict();
+const FeatureFlagUpdateSchema = z
+  .object({
+    enabled: z.boolean(),
+    reason: z.string().trim().min(8).max(500),
+  })
+  .strict();
+const RetentionActiveSchema = z
+  .object({
+    active: z.boolean(),
+    reason: z.string().trim().min(8).max(500),
+  })
+  .strict();
+const RetentionApprovalSchema = z
+  .object({
+    reason: z.string().trim().min(8).max(500),
+  })
+  .strict();
+const LegalHoldCreateSchema = z
+  .object({
+    scopeType: z.string().trim().min(2).max(50),
+    scopeId: z.uuid(),
+    reason: z.string().trim().min(8).max(500),
+  })
+  .strict();
+const LegalHoldReleaseSchema = z
+  .object({
+    reason: z.string().trim().min(8).max(500),
+  })
+  .strict();
+const RoleAssignmentSchema = z
+  .object({
+    userId: z.uuid(),
+    roleId: z.uuid(),
+  })
+  .strict();
 const CorrectionSchema = z
   .object({
     targetType: z.enum([
@@ -599,5 +634,73 @@ export class ControlPlaneController {
   @Get('retention-policies')
   retention() {
     return this.platform.listRetentionPolicies();
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Post('administration/feature-flags/:id')
+  setFeatureFlag(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = FeatureFlagUpdateSchema.parse(body);
+    return this.platform.setFeatureFlag(id, input.enabled, input.reason, request.principal);
+  }
+  @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
+  @Post('retention-policies/:id/approve')
+  approveRetentionPolicy(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = RetentionApprovalSchema.parse(body);
+    return this.platform.approveRetentionPolicy(id, input.reason, request.principal);
+  }
+  @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
+  @Post('retention-policies/:id/active')
+  setRetentionPolicyActive(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = RetentionActiveSchema.parse(body);
+    return this.platform.setRetentionPolicyActive(
+      id,
+      input.active,
+      input.reason,
+      request.principal,
+    );
+  }
+  @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
+  @Get('legal-holds')
+  legalHolds() {
+    return this.platform.listLegalHolds();
+  }
+  @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
+  @Post('legal-holds')
+  placeLegalHold(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = LegalHoldCreateSchema.parse(body);
+    return this.platform.placeLegalHold(input, request.principal);
+  }
+  @RequirePermission('retention:manage', 'PRIVACY_AUDIT')
+  @Post('legal-holds/:id/release')
+  releaseLegalHold(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = LegalHoldReleaseSchema.parse(body);
+    return this.platform.releaseLegalHold(id, input.reason, request.principal);
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Post('administration/roles/assign')
+  assignRole(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = RoleAssignmentSchema.parse(body);
+    return this.platform.assignRole(input.userId, input.roleId, request.principal);
+  }
+  @RequirePermission('administration.integrations.manage', 'RELEASE_MANAGEMENT')
+  @Post('administration/roles/revoke')
+  revokeRole(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = RoleAssignmentSchema.parse(body);
+    return this.platform.revokeRole(input.userId, input.roleId, request.principal);
   }
 }

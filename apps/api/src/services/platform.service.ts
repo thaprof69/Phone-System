@@ -31,6 +31,7 @@ import {
   knowledgeGaps,
   knowledgeSyncs,
   knowledgeVersions,
+  legalHolds,
   messageDeliveries,
   providerConversations,
   providerTestMappings,
@@ -88,6 +89,15 @@ export class PlatformService {
     private readonly aios: AiosPlatformService,
     private readonly audit: AuditService,
   ) {}
+
+  // Authoring and approving the same artefact class is the combination the release
+  // gates exist to prevent, so it is blocked at grant time and also surfaced for
+  // combinations that predate this check.
+  private static readonly ROLE_CONFLICTS: Array<[string, string, string]> = [
+    ['KNOWLEDGE_EDITOR', 'KNOWLEDGE_APPROVER', 'Can author and approve the same knowledge'],
+    ['AGENT_ADMIN', 'PLATFORM_OWNER', 'Can author agent configuration and publish it'],
+    ['AI_INTELLIGENCE_ADMIN', 'AI_GOVERNANCE_APPROVER', 'Can change AI routing and approve it'],
+  ];
 
   /**
    * Resolves a principal to the `admin_users` row that represents them.
@@ -2694,13 +2704,7 @@ export class PlatformService {
       permissionRows.map((permission) => [permission.id, permission]),
     );
 
-    // Separation of duties: authoring and approving the same artefact class is the
-    // combination the release gates exist to prevent, so it is surfaced explicitly.
-    const conflictingPairs: Array<[string, string, string]> = [
-      ['KNOWLEDGE_EDITOR', 'KNOWLEDGE_APPROVER', 'Can author and approve the same knowledge'],
-      ['AGENT_ADMIN', 'PLATFORM_OWNER', 'Can author agent configuration and publish it'],
-      ['AI_INTELLIGENCE_ADMIN', 'AI_GOVERNANCE_APPROVER', 'Can change AI routing and approve it'],
-    ];
+    const conflictingPairs = PlatformService.ROLE_CONFLICTS;
 
     return {
       users: users.map((user) => {
@@ -2760,6 +2764,234 @@ export class PlatformService {
         .from(retentionPolicies)
         .orderBy(desc(retentionPolicies.createdAt)),
     };
+  }
+
+  async setFeatureFlag(id: string, enabled: boolean, reason: string, principal: Principal) {
+    const flag = await this.database.db.query.featureFlags.findFirst({
+      where: eq(featureFlags.id, id),
+    });
+    if (!flag) return { status: 'NOT_FOUND' as const };
+    if (flag.enabled === enabled) {
+      return {
+        status: 'CONFLICT' as const,
+        message: `Already ${enabled ? 'enabled' : 'disabled'}`,
+      };
+    }
+    const [updated] = await this.database.db
+      .update(featureFlags)
+      .set({ enabled, updatedAt: new Date() })
+      .where(eq(featureFlags.id, id))
+      .returning();
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: enabled ? 'FEATURE_FLAG_ENABLED' : 'FEATURE_FLAG_DISABLED',
+      aggregateType: 'FeatureFlag',
+      aggregateId: id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { key: flag.key, environment: flag.environment, reason },
+    });
+    return { status: 'UPDATED' as const, flag: updated };
+  }
+
+  async approveRetentionPolicy(id: string, reason: string, principal: Principal) {
+    const policy = await this.database.db.query.retentionPolicies.findFirst({
+      where: eq(retentionPolicies.id, id),
+    });
+    if (!policy) return { status: 'NOT_FOUND' as const };
+    if (policy.approvedAt) return { status: 'CONFLICT' as const, message: 'Already approved' };
+    const actorId = await this.actorId(principal);
+    const [updated] = await this.database.db
+      .update(retentionPolicies)
+      .set({ approvedBy: actorId, approvedAt: new Date(), updatedAt: new Date() })
+      .where(eq(retentionPolicies.id, id))
+      .returning();
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'RETENTION_POLICY_APPROVED',
+      aggregateType: 'RetentionPolicy',
+      aggregateId: id,
+      purpose: 'PRIVACY_AUDIT',
+      payload: { dataType: policy.dataType, environment: policy.environment, reason },
+    });
+    return { status: 'APPROVED' as const, policy: updated };
+  }
+
+  async setRetentionPolicyActive(
+    id: string,
+    active: boolean,
+    reason: string,
+    principal: Principal,
+  ) {
+    const policy = await this.database.db.query.retentionPolicies.findFirst({
+      where: eq(retentionPolicies.id, id),
+    });
+    if (!policy) return { status: 'NOT_FOUND' as const };
+    if (active && !policy.approvedAt) {
+      return {
+        status: 'BLOCKED' as const,
+        blockers: ['An unapproved retention policy cannot be enforced'],
+      };
+    }
+    if (policy.active === active) {
+      return { status: 'CONFLICT' as const, message: `Already ${active ? 'active' : 'inactive'}` };
+    }
+    const [updated] = await this.database.db
+      .update(retentionPolicies)
+      .set({ active, updatedAt: new Date() })
+      .where(eq(retentionPolicies.id, id))
+      .returning();
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: active ? 'RETENTION_POLICY_ACTIVATED' : 'RETENTION_POLICY_DEACTIVATED',
+      aggregateType: 'RetentionPolicy',
+      aggregateId: id,
+      purpose: 'PRIVACY_AUDIT',
+      payload: { dataType: policy.dataType, environment: policy.environment, reason },
+    });
+    return { status: active ? ('ACTIVATED' as const) : ('DEACTIVATED' as const), policy: updated };
+  }
+
+  async listLegalHolds() {
+    return {
+      items: await this.database.db.select().from(legalHolds).orderBy(desc(legalHolds.createdAt)),
+    };
+  }
+
+  private static readonly LEGAL_HOLD_SCOPES = ['CONVERSATION', 'KNOWLEDGE_ASSET'] as const;
+
+  async placeLegalHold(
+    input: { scopeType: string; scopeId: string; reason: string },
+    principal: Principal,
+  ) {
+    if (!(PlatformService.LEGAL_HOLD_SCOPES as readonly string[]).includes(input.scopeType)) {
+      return {
+        status: 'INVALID' as const,
+        issues: [
+          {
+            field: 'scopeType',
+            message: `Must be one of ${PlatformService.LEGAL_HOLD_SCOPES.join(', ')}`,
+          },
+        ],
+      };
+    }
+    const exists =
+      input.scopeType === 'CONVERSATION'
+        ? await this.database.db.query.conversations.findFirst({
+            where: eq(conversations.id, input.scopeId),
+          })
+        : await this.database.db.query.knowledgeAssets.findFirst({
+            where: eq(knowledgeAssets.id, input.scopeId),
+          });
+    if (!exists) return { status: 'NOT_FOUND' as const };
+    const actorId = await this.actorId(principal);
+    const [hold] = await this.database.db
+      .insert(legalHolds)
+      .values({
+        scopeType: input.scopeType,
+        scopeId: input.scopeId,
+        reason: input.reason,
+        placedBy: actorId,
+      })
+      .returning();
+    if (!hold) throw new Error('Legal hold was not persisted');
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'LEGAL_HOLD_PLACED',
+      aggregateType: 'LegalHold',
+      aggregateId: hold.id,
+      purpose: 'PRIVACY_AUDIT',
+      payload: { scopeType: input.scopeType, scopeId: input.scopeId, reason: input.reason },
+    });
+    return { status: 'PLACED' as const, hold };
+  }
+
+  async releaseLegalHold(id: string, reason: string, principal: Principal) {
+    const hold = await this.database.db.query.legalHolds.findFirst({
+      where: eq(legalHolds.id, id),
+    });
+    if (!hold) return { status: 'NOT_FOUND' as const };
+    if (hold.releasedAt) return { status: 'CONFLICT' as const, message: 'Already released' };
+    const actorId = await this.actorId(principal);
+    const [updated] = await this.database.db
+      .update(legalHolds)
+      .set({ releasedBy: actorId, releasedAt: new Date(), updatedAt: new Date() })
+      .where(eq(legalHolds.id, id))
+      .returning();
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'LEGAL_HOLD_RELEASED',
+      aggregateType: 'LegalHold',
+      aggregateId: id,
+      purpose: 'PRIVACY_AUDIT',
+      payload: { scopeType: hold.scopeType, scopeId: hold.scopeId, reason },
+    });
+    return { status: 'RELEASED' as const, hold: updated };
+  }
+
+  async assignRole(userId: string, roleId: string, principal: Principal) {
+    const [user, role] = await Promise.all([
+      this.database.db.query.adminUsers.findFirst({ where: eq(adminUsers.id, userId) }),
+      this.database.db.query.roles.findFirst({ where: eq(roles.id, roleId) }),
+    ]);
+    if (!user || !role) return { status: 'NOT_FOUND' as const };
+    const existing = await this.database.db.query.userRoles.findFirst({
+      where: and(eq(userRoles.userId, userId), eq(userRoles.roleId, roleId)),
+    });
+    if (existing) return { status: 'CONFLICT' as const, message: 'Already holds this role' };
+
+    const [heldAssignments, allRoles] = await Promise.all([
+      this.database.db.select().from(userRoles).where(eq(userRoles.userId, userId)),
+      this.database.db.select().from(roles),
+    ]);
+    const rolesById = new Map(allRoles.map((row) => [row.id, row.key]));
+    const heldKeys = new Set(
+      heldAssignments
+        .map((assignment) => rolesById.get(assignment.roleId))
+        .filter((key): key is string => Boolean(key)),
+    );
+    heldKeys.add(role.key);
+    const conflict = PlatformService.ROLE_CONFLICTS.find(
+      ([left, right]) => heldKeys.has(left) && heldKeys.has(right),
+    );
+    if (conflict) return { status: 'BLOCKED' as const, blockers: [conflict[2]] };
+
+    await this.database.db.insert(userRoles).values({ userId, roleId });
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'ROLE_ASSIGNED',
+      aggregateType: 'AdminUser',
+      aggregateId: userId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { role: role.key },
+    });
+    return { status: 'ASSIGNED' as const };
+  }
+
+  async revokeRole(userId: string, roleId: string, principal: Principal) {
+    const existing = await this.database.db.query.userRoles.findFirst({
+      where: and(eq(userRoles.userId, userId), eq(userRoles.roleId, roleId)),
+    });
+    if (!existing) return { status: 'NOT_FOUND' as const };
+    const role = await this.database.db.query.roles.findFirst({ where: eq(roles.id, roleId) });
+    await this.database.db
+      .delete(userRoles)
+      .where(and(eq(userRoles.userId, userId), eq(userRoles.roleId, roleId)));
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'ROLE_REVOKED',
+      aggregateType: 'AdminUser',
+      aggregateId: userId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { role: role?.key ?? roleId },
+    });
+    return { status: 'REVOKED' as const };
   }
 
   async proposeCorrection(

@@ -78,7 +78,7 @@ operations, analytics, security and readiness. This remediation adds no runtime 
 - [x] 2.6 Calls and Call Detail (§12) — correction proposal scoped to whichever artefacts a call actually has (transcript, summary, classification), independent decision with a genuinely refused repeat decision, and a reconciliation trigger that reports honestly when the workflow engine cannot be reached rather than assuming success
 - [x] 2.7 Operations (§13) — mutating transitions on handoffs, callbacks, staff tasks and messaging, all permissioned, audited and idempotent
 - [x] 2.8 AI Infrastructure (§14) — eight areas, each rendered from real records: adapter-driven provider registry with connections, model registry with per-environment approval and availability, capability list drilling through to runs, route registry with a version builder and pre-activation validation, prompt/schema/taxonomy lifecycle, GBP budgets showing spend against limit, execution history with seven filters and pagination, and monitoring
-- [ ] 2.9 Administration (§15)
+- [x] 2.9 Administration (§15) — feature-flag toggle with a mandatory recorded reason, retention-policy approval and an enforcement toggle that a server-side gate refuses while unapproved, legal-hold placement and release scoped to real calls and knowledge assets, and role assignment that enforces the same separation-of-duty rule the access page already surfaced as a read-only warning
 - [ ] 2.10 Analytics and Reports (§16)
 
 ### Phase 3 — Verification and documentation
@@ -305,29 +305,112 @@ precedence over what the next server render says.
 
 ---
 
+### Administration depth pass — 2026-07-25
+
+Surveyed all eleven `/administration/*` routes before writing any code. Six —
+General, Voice runtime, Business integrations, Security and privacy, Production
+readiness, Release administration — are, by design, statements of server-computed
+fact or documented policy with no mutation to add: readiness is recomputed on every
+request and the interface cannot override it; release authority is a description of
+who holds which permission, not a form; the voice-runtime connection card and the
+integrations table already report real adapter state with no fake connect action
+offered for an adapter that is not installed. Extending these with mutations would
+have been exactly the kind of speculative surface this remediation avoids.
+
+The remaining four had a real, well-scoped gap — schema present, permission matrix
+present, zero mutation methods — and got one:
+
+- **Feature flags.** `setFeatureFlag(id, enabled, reason, principal)` — refuses a
+  flag already in the requested state as a conflict, otherwise flips it and writes
+  an audited `FEATURE_FLAG_ENABLED`/`DISABLED` event with the reason in the payload.
+- **Retention.** `approveRetentionPolicy` records `approvedBy`/`approvedAt` once,
+  refusing a second approval as a conflict — approval has no "unapprove", matching
+  how a recorded compliance sign-off actually works. `setRetentionPolicyActive`
+  refuses to activate enforcement on a policy with no recorded approval
+  (`BLOCKED`, "An unapproved retention policy cannot be enforced") — this is the
+  same gate the Security and Retention pages already described as blocking
+  production; it can now actually be cleared.
+- **Legal holds.** `legal_holds` existed in the schema since the first migration
+  with no route, no service method, and no page section. Added
+  `placeLegalHold`/`releaseLegalHold`, scoped to an explicit allow-list
+  (`CONVERSATION`, `KNOWLEDGE_ASSET`) with existence checked against the real
+  table before insert — refusing a hold on a `scopeId` that is not an actual
+  conversation or knowledge asset, rather than recording an unverifiable
+  reference. A new "Legal holds" panel on the Retention page lists them and
+  offers placement and release.
+- **Users and roles.** `assignRole`/`revokeRole` reuse the exact
+  `ROLE_CONFLICTS` pairs the access page already computed read-only
+  (`KNOWLEDGE_EDITOR`+`KNOWLEDGE_APPROVER`, `AGENT_ADMIN`+`PLATFORM_OWNER`,
+  `AI_INTELLIGENCE_ADMIN`+`AI_GOVERNANCE_APPROVER`) — hoisted to a shared
+  constant so the enforcement and the warning can never drift apart. Granting a
+  role that would create one of these combinations is refused as `BLOCKED` with
+  the same explanation the read view already showed.
+
+All four follow the established pattern: Zod-validated body, `@RequirePermission`
+(`administration.integrations.manage` for flags and roles, `retention:manage` for
+retention and legal holds — both already gating the corresponding read routes, so
+no new permission was invented), audited via `AuditService.append`, a discriminated
+`Outcome` client component with the shared `refusalFrom` mapper, and the
+refresh-safe pattern (component always mounted, local success state overrides the
+server-refreshed prop) applied to `ApproveRetentionPolicyForm` and
+`ReleaseLegalHoldForm` — the same defect class fixed three times earlier this
+session recurring nowhere new because the pattern was applied on the first write
+this time, not discovered by a failing test.
+
+**Server-side test-idempotency correction.** The first full two-pass run failed two
+of the eight new browser tests on the *second* pass: they hard-coded the
+freshly-seeded starting state (a disabled flag, an unapproved policy), which the
+first pass's successful mutation had already changed, and the two required passes
+run back-to-back with no reseed between them — matching how every other test in
+this suite is written. Rewrote both to read the row's current action/approval
+state and act on whichever state is actually present, rather than assuming the
+seed's initial values; reran the pair three times consecutively against the same
+unreseeded database to confirm.
+
+**Out-of-scope defect found, not fixed here**: a pre-existing React duplicate-key
+warning for one seeded `knowledge_assets` row, unrelated to any file this pass
+touched. Flagged as a separate task rather than pulled into this change.
+
+| Command                                    | Result                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm check`                                | 17 tasks successful, 17 total                                                     |
+| `pnpm traceability:check`                   | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                            |
+| `playwright test --project=admin-chromium`  | **72 passed, twice consecutively**, one freshly reseeded database (3.6m, 2.7m)   |
+
+Eight new browser tests cover: enabling a gate flag, the enable/disable round trip
+surviving a server refresh, the unapproved-policy activation gate plus the approval
+that unlocks it, placing and releasing a legal hold on a real call, refusing a hold
+against a record that does not exist, refusing a role grant that would create a
+separation-of-duty conflict, and a plain grant/revoke round trip.
+
+---
+
 ## 6a. Resume point
 
-Mission Control (2.1), Agent Studio (2.2), Operations (2.7), AI Infrastructure (2.8),
-Knowledge Hub (2.3), Voice Library (2.4), Test Studio (2.5) and Calls/Call Detail (2.6)
-are complete — every module in the fixed order except Administration and Analytics.
+Mission Control (2.1), Agent Studio (2.2), Knowledge Hub (2.3), Voice Library (2.4),
+Test Studio (2.5), Calls/Call Detail (2.6), Operations (2.7), AI Infrastructure (2.8)
+and Administration (2.9) are complete — every module in the fixed order except
+Analytics and Reports.
 
-**The next unchecked item is 2.9 — Administration (§15):**
+**The next unchecked item is 2.10 — Analytics and Reports (§16):**
 
-1. **Users and roles.** `/administration/users` already shows separation-of-duty
-   conflicts (a passing test verifies this) — check for actual role-assignment mutation,
-   not only the read view.
-2. **Feature flags.** `listFeatureFlags()` exists in `platform.service.ts` — verify a
-   mutation endpoint exists and is wired to the UI; add one if it does not.
-3. **Retention and legal holds.** Verify retention policy display has a real action
-   (not just a table), and that a legal hold can actually be placed and lifted.
-4. **Voice runtime, business integrations, security and privacy.** Audit each remaining
-   `/administration/*` route for read-only placeholders versus real actions.
-5. **Per-domain production readiness and release administration.** Already substantially
-   real per earlier passes — verify no regressions, extend only where a real gap exists.
+1. **Filters and date ranges** on the analytics charts (`/intelligence/analytics`),
+   currently rendering fixed-window data with no operator control over the period.
+2. **Evidence drill-down** from a chart or aggregate figure to the underlying calls
+   or records it was computed from.
+3. **Verified-vs-inferred labelling** wherever a figure comes from a generated
+   classification rather than a directly observed fact.
+4. **Export controls** for analytics views.
+5. **Report definitions**: `listReports()`/`createReportDefinition()` already exist
+   in `platform.service.ts` (`/intelligence/reports` reads them) — verify whether
+   scheduling, run-now, retry and delivery have real mutation methods or only the
+   definition-creation path exercised in the AI Infrastructure pass' budget-adjacent
+   work; add whichever of scheduling/run-now/retry/delivery/lineage-drill-down do
+   not yet exist.
 
-Then finish with 2.10 — Analytics and Reports: filters, evidence drill-down,
-verified-vs-inferred labelling, export controls; report definition CRUD, scheduling,
-run-now, retry, lineage, delivery.
+Then Phase 3: final full-repo verification (`pnpm check`, `pnpm traceability:check`,
+`pnpm test:e2e` twice on a fresh reseed) and the documentation pass (traceability
+matrix, compliance matrix, release evidence, README, admin user guide).
 
 **Local stack note.** Docker became unresponsive mid-session, so the dependency stack now
 runs natively: PostgreSQL 17 via Homebrew on port 15432 (socket dir `/tmp/qp-pg`, data dir

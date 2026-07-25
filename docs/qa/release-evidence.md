@@ -409,3 +409,50 @@ the control and letting its own just-succeeded state take precedence.
 
 **Still outstanding** — recorded honestly rather than implied complete: the remaining
 Administration areas, and report scheduling and lineage.
+
+## 2026-07-25 — Administration depth pass
+
+Surveyed all eleven `/administration/*` routes before writing code. Six — General,
+Voice runtime, Business integrations, Security and privacy, Production readiness,
+Release administration — are read-only by design (server-computed readiness state,
+documented release-authority policy, an integrations table that correctly offers no
+fake connect action for an adapter that is not installed) and were left as-is. The
+remaining four had a real, schema-backed gap and got one.
+
+**Workflows built**
+
+| Workflow                    | What it enforces                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Feature-flag toggle         | Refuses a flag already in the requested state as a conflict; records the reason on an audited event                          |
+| Retention-policy approval   | One-way — approving twice is refused as already approved, matching how a recorded sign-off actually works                    |
+| Retention enforcement toggle| Refuses to activate enforcement on a policy with no recorded approval (`BLOCKED`)                                             |
+| Legal-hold placement        | Refuses a hold on a `scopeId` that is not an actual conversation or knowledge asset, rather than recording an unverifiable reference |
+| Legal-hold release          | A second release is refused as already released                                                                               |
+| Role grant                  | Refuses a grant that would create a separation-of-duty conflict the access page already showed as a read-only warning         |
+| Role revoke                 | Refuses to revoke a role the user does not hold                                                                                |
+
+**A defect class not repeated**: `ApproveRetentionPolicyForm` and
+`ReleaseLegalHoldForm` apply the always-mounted, local-state-wins pattern already
+found and fixed three times earlier this session (Operations message retry,
+Knowledge authoring, Calls corrections) — applied on the first write this time
+rather than discovered by a failing test.
+
+**A test-idempotency defect found and fixed**: the first full two-pass run failed
+two of the eight new tests on the second pass because they assumed the fresh seed's
+starting state (a disabled flag, an unapproved policy) rather than reading the
+row's actual current state — which the first pass's own successful mutation had
+already changed, and the required two passes run back-to-back with no reseed
+between them. Rewrote both tests to read and act on whatever state is actually
+present; reran three times consecutively against the same unreseeded database to
+confirm.
+
+**Verification**
+
+| Command                                    | Result                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm check`                                | 17 tasks successful                                                              |
+| `pnpm traceability:check`                   | `Traceability contains FR-01–FR-82 and NFR-01–NFR-18.`                            |
+| `playwright test --project=admin-chromium`  | **72 passed, twice consecutively** on one freshly reseeded database (3.6m, 2.7m) |
+
+**Still outstanding** — recorded honestly rather than implied complete: report
+scheduling, run-now, retry, lineage and delivery (Analytics and Reports, 2.10).

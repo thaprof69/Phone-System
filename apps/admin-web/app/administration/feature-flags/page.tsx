@@ -12,6 +12,7 @@ import {
 } from '@quantum-parks/ui';
 import { AdministrationShell } from '../admin-shell';
 import { apiGet } from '../../../lib/api';
+import { ToggleFeatureFlagForm } from '../administration-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -98,6 +99,21 @@ export default async function FeatureFlagsPage() {
           <span className="muted-cell">Behaviour flag</span>
         ),
       priority: 'secondary',
+    },
+    {
+      key: 'manage',
+      header: 'Change',
+      // Always mounted: `ToggleFeatureFlagForm` reads its own success state, so it
+      // stays correct even after the table row it lives in re-renders with the new
+      // `enabled` value.
+      render: (flag) => (
+        <details className="row-actions">
+          <summary>{flag.enabled ? 'Disable' : 'Enable'}</summary>
+          <div className="row-actions-body">
+            <ToggleFeatureFlagForm flagId={flag.id} enabled={flag.enabled} />
+          </div>
+        </details>
+      ),
     },
   ];
 

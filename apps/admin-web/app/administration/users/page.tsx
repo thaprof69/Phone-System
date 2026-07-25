@@ -10,6 +10,7 @@ import {
 } from '@quantum-parks/ui';
 import { AdministrationShell } from '../admin-shell';
 import { apiGet } from '../../../lib/api';
+import { UserRoleManager } from '../administration-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,6 +56,8 @@ export default async function UsersPage() {
 
   const { users, roles } = response.data;
   const conflicts = users.filter((user) => user.separationOfDutyWarnings.length > 0);
+  const roleIdByKey = new Map(roles.map((role) => [role.key, role.id]));
+  const roleOptions = roles.map((role) => ({ id: role.id, name: role.name }));
 
   const userColumns: Column<AccessUser>[] = [
     {
@@ -115,6 +118,24 @@ export default async function UsersPage() {
           <StatusPill tone="neutral">Disabled</StatusPill>
         ),
       priority: 'secondary',
+    },
+    {
+      key: 'manage',
+      header: 'Roles',
+      render: (user) => (
+        <details className="row-actions">
+          <summary>Manage roles</summary>
+          <div className="row-actions-body">
+            <UserRoleManager
+              userId={user.id}
+              roleOptions={roleOptions}
+              heldRoleIds={user.roles
+                .map((key) => roleIdByKey.get(key))
+                .filter((id): id is string => Boolean(id))}
+            />
+          </div>
+        </details>
+      ),
     },
   ];
 

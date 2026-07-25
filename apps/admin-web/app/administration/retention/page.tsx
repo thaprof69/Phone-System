@@ -5,6 +5,7 @@ import {
   Panel,
   StatusPill,
   formatDate,
+  formatDateTime,
   formatNumber,
   humaniseState,
   type Column,
@@ -12,6 +13,12 @@ import {
 } from '@quantum-parks/ui';
 import { AdministrationShell } from '../admin-shell';
 import { apiGet } from '../../../lib/api';
+import {
+  ApproveRetentionPolicyForm,
+  PlaceLegalHoldForm,
+  ReleaseLegalHoldForm,
+  SetRetentionActiveForm,
+} from '../administration-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +33,17 @@ type RetentionPolicy = {
   active: boolean;
 };
 
+type LegalHold = {
+  id: string;
+  scopeType: string;
+  scopeId: string;
+  reason: string;
+  placedBy: string;
+  releasedBy: string | null;
+  releasedAt: string | null;
+  createdAt: string;
+};
+
 function classificationTone(classification: string): Tone {
   if (classification === 'RESTRICTED') return 'danger';
   if (classification === 'CONFIDENTIAL') return 'warning';
@@ -33,9 +51,10 @@ function classificationTone(classification: string): Tone {
 }
 
 export default async function RetentionPage() {
-  const response = await apiGet<{ items: RetentionPolicy[] }>('/retention-policies', {
-    purpose: 'PRIVACY_AUDIT',
-  });
+  const [response, holdsResponse] = await Promise.all([
+    apiGet<{ items: RetentionPolicy[] }>('/retention-policies', { purpose: 'PRIVACY_AUDIT' }),
+    apiGet<{ items: LegalHold[] }>('/legal-holds', { purpose: 'PRIVACY_AUDIT' }),
+  ]);
 
   if (!response.ok) {
     return (
@@ -52,6 +71,8 @@ export default async function RetentionPage() {
   }
 
   const policies = response.data.items;
+  const holds = holdsResponse.ok ? holdsResponse.data.items : [];
+  const activeHolds = holds.filter((hold) => hold.releasedAt === null);
   const unapproved = policies.filter((policy) => policy.approvedAt === null);
   const productionInactive = policies.filter(
     (policy) => policy.environment === 'production' && !policy.active,
@@ -106,6 +127,68 @@ export default async function RetentionPage() {
           <StatusPill tone="neutral">Inactive</StatusPill>
         ),
     },
+    {
+      key: 'manage',
+      header: 'Change',
+      render: (policy) => (
+        <details className="row-actions">
+          <summary>Manage</summary>
+          <div className="row-actions-body">
+            <ApproveRetentionPolicyForm
+              policyId={policy.id}
+              approved={policy.approvedAt !== null}
+            />
+            <SetRetentionActiveForm
+              policyId={policy.id}
+              active={policy.active}
+              approved={policy.approvedAt !== null}
+            />
+          </div>
+        </details>
+      ),
+    },
+  ];
+
+  const holdColumns: Column<LegalHold>[] = [
+    {
+      key: 'scope',
+      header: 'Covers',
+      render: (hold) => (
+        <>
+          {humaniseState(hold.scopeType)}
+          <small className="cell-sub">{hold.scopeId}</small>
+        </>
+      ),
+    },
+    { key: 'reason', header: 'Reason', render: (hold) => hold.reason },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (hold) =>
+        hold.releasedAt ? (
+          <StatusPill tone="neutral">Released</StatusPill>
+        ) : (
+          <StatusPill tone="warning">Active hold</StatusPill>
+        ),
+    },
+    {
+      key: 'placed',
+      header: 'Placed',
+      render: (hold) => formatDateTime(hold.createdAt),
+      priority: 'secondary',
+    },
+    {
+      key: 'manage',
+      header: 'Change',
+      render: (hold) => (
+        <details className="row-actions">
+          <summary>{hold.releasedAt ? 'Released' : 'Release'}</summary>
+          <div className="row-actions-body">
+            <ReleaseLegalHoldForm holdId={hold.id} released={hold.releasedAt !== null} />
+          </div>
+        </details>
+      ),
+    },
   ];
 
   return (
@@ -143,6 +226,26 @@ export default async function RetentionPage() {
             />
           }
         />
+      </Panel>
+
+      <Panel
+        title="Legal holds"
+        eyebrow={`${formatNumber(activeHolds.length)} active`}
+        description="A legal hold overrides retention for a specific call or knowledge asset. It is not enforced by a schedule — it is released explicitly, by a person, with a reason."
+      >
+        <DataTable
+          caption="Legal holds with their scope, status and placement date"
+          columns={holdColumns}
+          rows={holds}
+          getRowKey={(hold) => hold.id}
+          empty={
+            <EmptyState
+              title="No legal holds"
+              detail="Place one when a call or knowledge asset must be preserved regardless of its retention schedule."
+            />
+          }
+        />
+        <PlaceLegalHoldForm />
       </Panel>
     </AdministrationShell>
   );
