@@ -39,7 +39,7 @@ const DOMAINS = [
     key: 'platform',
     label: 'Platform',
     detail: 'Approvals, mandatory tests, identity, operator queues and messaging templates.',
-    href: '/settings/simulation/release-checks',
+    href: '/settings/advanced/release-checks',
     match: (blocker: string) =>
       blocker.toLowerCase().includes('test') ||
       blocker.toLowerCase().includes('approval') ||

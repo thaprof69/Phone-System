@@ -242,34 +242,22 @@ export const SETTINGS_GROUPS = [
   },
   {
     key: 'simulation',
-    href: '/settings/simulation/results',
+    href: '/settings/simulation',
     label: 'Simulation Lab',
-    description: 'Scenario testing, results and the gates a release must clear.',
+    description:
+      'Test the receptionist live, against the real published agent and evaluation pipeline.',
     areas: [
       {
-        href: '/settings/simulation/scenarios',
-        label: 'Scenarios',
-        description: 'What each scenario asserts, at what risk level, in which language.',
+        href: '/settings/simulation',
+        label: 'Live test',
+        description:
+          'Start a session, send preset scenarios or a typed message, and inspect the transcript and Quantum Result.',
       },
       {
-        href: '/settings/simulation/collections',
-        label: 'Test collections',
-        description: 'Grouped scenarios, including the collections mandatory for release.',
-      },
-      {
-        href: '/settings/simulation/results',
-        label: 'Interactive test',
-        description: 'Run a collection now, and see provider output beside internal evaluation.',
-      },
-      {
-        href: '/settings/simulation/release-checks',
-        label: 'Release checks',
-        description: 'Each gate evaluated independently by the server.',
-      },
-      {
-        href: '/settings/simulation/reviews',
-        label: 'Reviews',
-        description: 'Human quality scoring against the review rubric.',
+        href: '/settings/simulation/sessions',
+        label: 'Sessions',
+        description:
+          'Every persisted receptionist test session, with its transcript and evaluation.',
       },
     ],
   },
@@ -440,6 +428,40 @@ export const SETTINGS_GROUPS = [
         href: '/settings/administration/release',
         label: 'Release administration',
         description: 'Release authority, evidence and rollback control.',
+      },
+    ],
+  },
+  {
+    key: 'advanced',
+    href: '/settings/advanced',
+    label: 'Advanced',
+    description:
+      'Engineering and QA tooling for the receptionist: scenario authoring, release gates and provider test runs. For live testing, operators should use the primary live-test workflow instead; this group is for building and gating releases.',
+    areas: [
+      {
+        href: '/settings/advanced/scenarios',
+        label: 'Scenarios',
+        description: 'What each scenario asserts, at what risk level, in which language.',
+      },
+      {
+        href: '/settings/advanced/collections',
+        label: 'Test collections',
+        description: 'Grouped scenarios, including the collections mandatory for release.',
+      },
+      {
+        href: '/settings/advanced/provider-test-runs',
+        label: 'Provider test runs',
+        description: 'Run a collection now, and see provider output beside internal evaluation.',
+      },
+      {
+        href: '/settings/advanced/release-checks',
+        label: 'Release checks',
+        description: 'Each gate evaluated independently by the server.',
+      },
+      {
+        href: '/settings/advanced/reviews',
+        label: 'Reviews',
+        description: 'Human quality scoring against the review rubric.',
       },
     ],
   },

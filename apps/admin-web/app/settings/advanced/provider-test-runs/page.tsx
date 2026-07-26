@@ -21,7 +21,6 @@ import { SettingsPage as DomainPage, LoadFailure } from '../../settings-page';
 import { apiGet } from '../../../../lib/api';
 import type { AgentListRow, TestRow, TestRunRow } from '../../../../lib/types';
 import { RunTestsForm, SyncRunButton } from '../test-actions';
-import { VoiceSessionPanel } from '../voice-session-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +35,8 @@ export default async function TestRunsPage() {
   if (!response.ok) {
     return (
       <DomainPage
-        eyebrow="Simulation Lab"
-        title="Interactive test"
+        eyebrow="Advanced"
+        title="Provider test runs"
         description="Provider output beside internal evaluation, with failure evidence."
       >
         <LoadFailure subject="Test runs" reason={response.reason} />
@@ -132,9 +131,9 @@ export default async function TestRunsPage() {
 
   return (
     <DomainPage
-      eyebrow="Simulation Lab"
-      title="Interactive test"
-      description="Each run executes the suites against a specific agent version. Provider output and the platform's own evaluation are recorded separately."
+      eyebrow="Advanced"
+      title="Provider test runs"
+      description="Each run executes the suites against a specific agent version. Provider output and the platform's own evaluation are recorded separately. For a live conversation with the real agent, use Simulation Lab's Live Receptionist Test."
       meta={
         <StatusPill tone={failing.length > 0 ? 'danger' : 'good'}>
           {formatNumber(failing.length)} runs with failures
@@ -210,14 +209,6 @@ export default async function TestRunsPage() {
             riskLevel: test.riskLevel,
           }))}
         />
-      </Panel>
-
-      <Panel
-        title="Live voice call"
-        eyebrow="Real ElevenLabs session"
-        description="Places an actual live voice call to the selected agent version through ElevenLabs Conversational AI, using a short-lived session credential issued by the server. This is a live production-grade capability, not a test."
-      >
-        <VoiceSessionPanel agentVersions={agentOptions} />
       </Panel>
 
       <Panel title="All runs" eyebrow="Most recent first">

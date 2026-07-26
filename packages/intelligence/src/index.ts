@@ -46,8 +46,37 @@ export const ClassificationSchema = z
   })
   .strict();
 
+/**
+ * Evidence, not a decision: every field is an observation the model is allowed to make about
+ * an interaction (any channel — phone, WhatsApp, email, chat), never a business decision. There
+ * is deliberately no `recommended_route` or `proposed_action` field — routing and action planning
+ * are computed downstream by deterministic engines from `possible_routes`/`risk_signals`, never
+ * chosen by the model itself.
+ */
+const EvidenceItemSchema = z
+  .object({
+    text: z.string().min(1),
+    evidence_ids: z.array(z.string()).min(1),
+  })
+  .strict();
+export const InteractionEvidenceSchema = z
+  .object({
+    intent: z.string().min(1),
+    entities: z.array(EvidenceItemSchema),
+    sentiment: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']),
+    urgency: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+    requested_actions: z.array(EvidenceItemSchema),
+    knowledge_requests: z.array(EvidenceItemSchema),
+    possible_routes: z.array(EvidenceItemSchema),
+    risk_signals: z.array(EvidenceItemSchema),
+    confidence: z.number().min(0).max(1),
+    evidence_ids: z.array(z.string()).min(1),
+  })
+  .strict();
+
 export type Summary = z.infer<typeof SummarySchema>;
 export type Classification = z.infer<typeof ClassificationSchema>;
+export type InteractionEvidence = z.infer<typeof InteractionEvidenceSchema>;
 export interface EnrichmentInput {
   turns: Array<{ id: string; speaker: string; content: string }>;
   languageHint?: string;

@@ -25,7 +25,7 @@ const GATE_DEFINITIONS = [
     key: 'tests',
     label: 'Mandatory tests pass',
     detail: 'Every high-risk case in a mandatory suite passed on its last completed run.',
-    href: '/settings/simulation/results',
+    href: '/settings/advanced/provider-test-runs',
     match: (blocker: string) => blocker.toLowerCase().includes('test'),
   },
   {
@@ -79,7 +79,7 @@ export default async function ReleaseGatesPage() {
   if (!readinessResponse.ok) {
     return (
       <DomainPage
-        eyebrow="Simulation Lab"
+        eyebrow="Advanced"
         title="Release checks"
         description="Each gate evaluated independently by the server."
       >
@@ -107,7 +107,7 @@ export default async function ReleaseGatesPage() {
 
   return (
     <DomainPage
-      eyebrow="Simulation Lab"
+      eyebrow="Advanced"
       title="Release checks"
       description="Every condition a release must satisfy before it can reach callers, each reported on its own."
       meta={

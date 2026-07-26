@@ -375,29 +375,42 @@ export class SimulatorIntelligenceProvider implements IntelligenceProvider {
       this.mode === 'MALFORMED_OUTPUT'
         ? 'not-an-object'
         : this.mode === 'EVIDENCE_FREE'
-          ? { purpose: { text: 'Synthetic purpose', evidence_ids: [] } }
+          ? request.schemaName === 'INTERACTION_ANALYSIS'
+            ? { intent: 'unknown', evidence_ids: [] }
+            : { purpose: { text: 'Synthetic purpose', evidence_ids: [] } }
           : this.mode === 'FALSE_COMPLETION'
-            ? {
-                purpose: { text: 'Synthetic purpose', evidence_ids: evidenceIds },
-                confirmed_actions: [
-                  { text: 'Payment received', result_status: 'SUCCESS', evidence_ids: evidenceIds },
-                ],
-              }
-            : {
-                purpose: {
-                  text: first?.content ?? 'Synthetic call intelligence',
-                  evidence_ids: evidenceIds,
-                  confidence: 1,
-                },
-                caller_requests: [],
-                information_provided: [],
-                confirmed_actions: [],
-                unconfirmed_requests: [],
-                unresolved_items: [],
-                handoff: null,
-                quality_flags: ['SYNTHETIC_AI_PROVIDER'],
-                evidence_coverage: first ? 1 : 0,
-              };
+            ? request.schemaName === 'INTERACTION_ANALYSIS'
+              ? // The Evidence Pack schema has no field capable of representing a completed
+                // business action at all — an attempted false completion is rejected as an
+                // invalid shape (SCHEMA_REJECTED) rather than needing a dedicated guard.
+                { intent: 'booking', evidence_ids: evidenceIds, booking_changed: true }
+              : {
+                  purpose: { text: 'Synthetic purpose', evidence_ids: evidenceIds },
+                  confirmed_actions: [
+                    {
+                      text: 'Payment received',
+                      result_status: 'SUCCESS',
+                      evidence_ids: evidenceIds,
+                    },
+                  ],
+                }
+            : request.schemaName === 'INTERACTION_ANALYSIS'
+              ? this.interactionEvidencePack(first?.content, evidenceIds)
+              : {
+                  purpose: {
+                    text: first?.content ?? 'Synthetic call intelligence',
+                    evidence_ids: evidenceIds,
+                    confidence: 1,
+                  },
+                  caller_requests: [],
+                  information_provided: [],
+                  confirmed_actions: [],
+                  unconfirmed_requests: [],
+                  unresolved_items: [],
+                  handoff: null,
+                  quality_flags: ['SYNTHETIC_AI_PROVIDER'],
+                  evidence_coverage: first ? 1 : 0,
+                };
     if (this.mode === 'PARTIAL')
       return {
         state: 'PARTIAL',
@@ -415,6 +428,59 @@ export class SimulatorIntelligenceProvider implements IntelligenceProvider {
         usage: { inputTokens: request.context.totalTokenEstimate, outputTokens: 32 },
         latencyMs: 1,
       },
+    };
+  }
+
+  /**
+   * Deterministic stand-in for the `INTERACTION_ANALYSIS` capability, used only when no real
+   * provider connection is configured (dev/CI). Every field is an observation grounded in the
+   * real transcript content passed in, never a routing or business decision — those are computed
+   * downstream by the deterministic policy/routing engines from `possible_routes`/`risk_signals`.
+   */
+  private interactionEvidencePack(content: string | undefined, evidenceIds: string[]) {
+    const text = (content ?? '').toLowerCase();
+    const riskSignal = (signal: string) => ({ text: signal, evidence_ids: evidenceIds });
+    const riskSignals = [
+      /complain|unhappy|angry|awful|terrible/.test(text) ? riskSignal('complaint') : null,
+      /refund|money back|chargeback/.test(text) ? riskSignal('refund_request') : null,
+      /hurt|unsafe|injury|accident|safety/.test(text) ? riskSignal('safety_concern') : null,
+      /legal|lawyer|solicitor|sue/.test(text) ? riskSignal('legal_threat') : null,
+    ].filter((item): item is { text: string; evidence_ids: string[] } => item !== null);
+    const bookingIntent = /book|booking|availability|birthday|party|school group/.test(text);
+    const pricingIntent = /price|pricing|cost|package/.test(text);
+    const callbackIntent = /call me back|callback|phone me/.test(text);
+    const intent = riskSignals.length
+      ? riskSignals[0]!.text
+      : bookingIntent
+        ? 'booking_enquiry'
+        : pricingIntent
+          ? 'pricing_question'
+          : callbackIntent
+            ? 'callback_request'
+            : 'general_enquiry';
+    return {
+      intent,
+      entities: [],
+      sentiment: riskSignals.length ? 'NEGATIVE' : 'NEUTRAL',
+      urgency: riskSignals.length ? 'HIGH' : 'LOW',
+      requested_actions: bookingIntent
+        ? [{ text: 'check_availability', evidence_ids: evidenceIds }]
+        : [],
+      knowledge_requests: pricingIntent
+        ? [{ text: 'approved_pricing', evidence_ids: evidenceIds }]
+        : [],
+      possible_routes: [
+        riskSignals.length
+          ? { text: 'ESCALATION_QUEUE', evidence_ids: evidenceIds }
+          : bookingIntent
+            ? { text: 'BOOKING_TEAM', evidence_ids: evidenceIds }
+            : callbackIntent
+              ? { text: 'CALLBACK_QUEUE', evidence_ids: evidenceIds }
+              : { text: 'AI_RECEPTIONIST', evidence_ids: evidenceIds },
+      ],
+      risk_signals: riskSignals,
+      confidence: content ? 0.8 : 0,
+      evidence_ids: evidenceIds,
     };
   }
 }

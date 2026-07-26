@@ -297,7 +297,7 @@ export default async function MissionControlPage() {
               : 'No failing checks on the last completed run'
           }
           tone={today.testFailures > 0 ? 'danger' : toneForState(today.testStatus)}
-          href="/settings/simulation/results"
+          href="/settings/advanced/provider-test-runs"
         />
       </MetricGrid>
 

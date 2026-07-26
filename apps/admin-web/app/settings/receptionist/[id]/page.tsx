@@ -367,7 +367,7 @@ export default async function AgentDetailPage({ params }: { params: Promise<{ id
                 title="Test runs"
                 eyebrow="Against this agent"
                 action={
-                  <Link className="button ghost small" href="/settings/simulation/results">
+                  <Link className="button ghost small" href="/settings/advanced/provider-test-runs">
                     All runs
                   </Link>
                 }

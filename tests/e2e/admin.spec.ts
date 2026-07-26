@@ -95,13 +95,7 @@ test('sub-navigation tabs navigate rather than sitting inert', async ({ page }) 
 
 test('no navigation element looks like a tab without being one', async ({ page }) => {
   test.setTimeout(120_000);
-  for (const path of [
-    '/',
-    '/calls',
-    '/settings/knowledge',
-    '/settings/simulation/results',
-    '/calls/sla',
-  ]) {
+  for (const path of ['/', '/calls', '/settings/knowledge', '/settings/simulation', '/calls/sla']) {
     await page.goto(path);
     // `.tabs span` was the old inert pattern; it must not reappear anywhere.
     await expect(page.locator('.tabs span')).toHaveCount(0);
@@ -151,7 +145,7 @@ test('a call opens a workspace keeping provider and canonical records distinct',
 });
 
 test('release gates are reported individually and cannot be bypassed here', async ({ page }) => {
-  await page.goto('/settings/simulation/release-checks');
+  await page.goto('/settings/advanced/release-checks');
   await expect(page.getByText('Gates are enforced by the server')).toBeVisible();
 
   // Each gate is its own decision rather than one combined score.
@@ -281,7 +275,8 @@ test('no provider secret reaches the browser', async ({ page }) => {
   for (const path of [
     '/settings/ai-providers/elevenlabs',
     '/settings/ai-routing',
-    '/settings/simulation/results',
+    '/settings/simulation',
+    '/settings/advanced/provider-test-runs',
   ]) {
     await page.goto(path);
     const body = (await page.locator('body').textContent()) ?? '';
@@ -291,15 +286,15 @@ test('no provider secret reaches the browser', async ({ page }) => {
   }
 });
 
-test('a live voice session response never carries the permanent provider API key', async ({
+test('a live receptionist session response never carries the permanent provider API key', async ({
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/results');
+  await page.goto('/settings/simulation');
 
   const responses: string[] = [];
   page.on('response', (response) => {
-    if (response.url().includes('/api/admin/voice-sessions')) {
+    if (response.url().includes('/api/admin/receptionist-sessions')) {
       response
         .text()
         .then((text) => responses.push(text))
@@ -307,10 +302,10 @@ test('a live voice session response never carries the permanent provider API key
     }
   });
 
-  const liveCall = page.getByRole('region', { name: 'Live voice call' });
-  await liveCall.getByLabel('Agent version').selectOption({ index: 1 });
-  await liveCall.getByRole('button', { name: 'Start voice call' }).click();
-  await expect(liveCall.getByText('Refused', { exact: true })).toBeVisible();
+  const liveTest = page.getByRole('region', { name: 'Live Receptionist Test' });
+  await liveTest.getByLabel('Agent version').selectOption({ index: 1 });
+  await liveTest.getByRole('button', { name: 'Start Voice Call' }).click();
+  await expect(liveTest.getByText('Refused', { exact: true })).toBeVisible();
 
   for (const body of responses) {
     expect(body).not.toContain('xi-api-key');
@@ -335,7 +330,9 @@ test('mobile navigation reaches every domain', async ({ page }) => {
   await mobileNavigation.getByRole('link', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Simulation Lab' }).click();
-  await expect(page.getByRole('heading', { name: 'Interactive test' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Live Receptionist Test', level: 1 }),
+  ).toBeVisible();
 });
 
 test('a domain workspace is reachable by keyboard alone', async ({ page }) => {
@@ -1039,7 +1036,7 @@ test('the voice catalogue can be refreshed from the provider', async ({ page }) 
 
 test('a test case can be created and appears immediately in the list', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/scenarios');
+  await page.goto('/settings/advanced/scenarios');
 
   const name = `Verification case ${Date.now()}`;
   await page.getByLabel('Name').fill(name);
@@ -1052,7 +1049,7 @@ test('a test case can be created and appears immediately in the list', async ({ 
 
 test('creating a test case with invalid JSON in its definition is refused', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/scenarios');
+  await page.goto('/settings/advanced/scenarios');
 
   await page.getByLabel('Name').fill(`Invalid definition ${Date.now()}`);
   await page.getByLabel('Definition (JSON)').fill('{ this is not json');
@@ -1065,7 +1062,7 @@ test('starting a test run against a release that is not staged for testing is re
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/results');
+  await page.goto('/settings/advanced/provider-test-runs');
 
   const runTests = page.getByRole('region', { name: 'Run tests' });
   await runTests.getByLabel('Agent version').selectOption({ index: 1 });
@@ -1081,48 +1078,59 @@ test('starting a test run against a release that is not staged for testing is re
   await expect(page.getByText(/Refused|Saved/).first()).toBeVisible();
 });
 
-test('the live voice call panel is a real, distinct capability from provider test evaluation', async ({
+test('the Live Receptionist Test is a real, distinct capability from provider test evaluation', async ({
   page,
 }) => {
-  await page.goto('/settings/simulation/results');
+  await page.goto('/settings/advanced/provider-test-runs');
 
   const runTests = page.getByRole('region', { name: 'Run tests' });
   await expect(
     runTests.getByText(/provider-judged evaluation, not a live conversation/),
   ).toBeVisible();
+  // The engineering test-run console points operators at the real live-conversation
+  // workflow rather than duplicating it here.
+  await expect(page.getByText(/Live Receptionist Test/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Live voice call' })).toHaveCount(0);
 
-  const liveCall = page.getByRole('region', { name: 'Live voice call' });
-  await expect(liveCall).toBeVisible();
-  await expect(
-    liveCall.getByText(/real, live ElevenLabs voice call over your microphone/),
-  ).toBeVisible();
-  await expect(liveCall.getByRole('button', { name: 'Start voice call' })).toBeVisible();
+  await page.goto('/settings/simulation');
+  const liveTest = page.getByRole('region', { name: 'Live Receptionist Test' });
+  await expect(liveTest).toBeVisible();
+  await expect(liveTest.getByRole('button', { name: 'Start Voice Call' })).toBeVisible();
+  await expect(liveTest.getByRole('button', { name: 'Booking enquiry' })).toBeVisible();
 });
 
-test('starting a live voice call against an agent with no in-sync provider mapping is refused honestly', async ({
+test('starting a live receptionist session against an agent with no in-sync provider mapping is refused honestly', async ({
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/results');
+  await page.goto('/settings/simulation');
 
-  const liveCall = page.getByRole('region', { name: 'Live voice call' });
-  await liveCall.getByLabel('Agent version').selectOption({ index: 1 });
-  await liveCall.getByRole('button', { name: 'Start voice call' }).click();
+  const liveTest = page.getByRole('region', { name: 'Live Receptionist Test' });
+  await liveTest.getByLabel('Agent version').selectOption({ index: 1 });
+  await liveTest.getByRole('button', { name: 'Start Voice Call' }).click();
 
   // The seeded synthetic agent versions have no genuinely in-sync ElevenLabs
   // deployment, so this must fail with the real server-stated reason — never a
   // silently fabricated session.
-  await expect(liveCall.getByText('Refused', { exact: true })).toBeVisible();
+  await expect(liveTest.getByText('Refused', { exact: true })).toBeVisible();
   await expect(
-    liveCall.getByText(/no in-sync provider mapping|could not be retrieved/),
+    liveTest.getByText(/no in-sync provider mapping|could not be retrieved/),
   ).toBeVisible();
+});
+
+test('the receptionist Sessions list is reachable and reports no error state before any session exists', async ({
+  page,
+}) => {
+  await page.goto('/settings/simulation/sessions');
+  await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
+  await expect(page.getByText(/could not be loaded/)).toHaveCount(0);
 });
 
 test('a running test can be synced with the provider, and a completed run offers no such action', async ({
   page,
 }) => {
   test.setTimeout(120_000);
-  await page.goto('/settings/simulation/results');
+  await page.goto('/settings/advanced/provider-test-runs');
 
   const runningRow = page
     .locator('tbody tr')
@@ -1488,7 +1496,9 @@ test('old routes redirect to their new information architecture location', async
   const redirects: Array<[string, RegExp]> = [
     ['/receptionist/agents', /\/settings\/receptionist$/],
     ['/knowledge/library', /\/settings\/knowledge$/],
-    ['/quality/test-cases', /\/settings\/simulation\/scenarios$/],
+    ['/quality/test-cases', /\/settings\/advanced\/scenarios$/],
+    ['/settings/simulation/scenarios', /\/settings\/advanced\/scenarios$/],
+    ['/settings/simulation/results', /\/settings\/advanced\/provider-test-runs$/],
     ['/operations/handoffs', /\/calls\/handoffs$/],
     ['/calls/partial', /\/calls\/live$/],
     ['/intelligence/analytics', /\/intelligence$/],
@@ -1515,6 +1525,7 @@ test('the Settings landing page groups every configuration area', async ({ page 
     'AI Routing',
     'Integrations',
     'Administration',
+    'Advanced',
   ]) {
     await expect(page.getByRole('link', { name: new RegExp(`^${group}`) })).toBeVisible();
   }

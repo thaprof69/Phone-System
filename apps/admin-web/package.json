@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@elevenlabs/client": "1.15.2",
+    "@quantum-parks/domain": "workspace:*",
     "@quantum-parks/ui": "workspace:*",
     "lucide-react": "0.575.0",
     "next": "16.2.11",

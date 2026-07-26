@@ -371,9 +371,129 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
     .returning();
   if (!serviceVersion) throw new Error('AIOS sandbox service version was not seeded');
 
+  // A dedicated prompt, schema and service for INTERACTION_ANALYSIS — deliberately not reusing
+  // CALL_SUMMARY's. This capability observes an interaction (any channel: phone, WhatsApp,
+  // email, chat) and returns evidence only; it must never decide a route, escalation or
+  // business action — those are computed downstream by deterministic policy/routing engines.
+  const interactionEvidenceSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'intent',
+      'entities',
+      'sentiment',
+      'urgency',
+      'requested_actions',
+      'knowledge_requests',
+      'possible_routes',
+      'risk_signals',
+      'confidence',
+      'evidence_ids',
+    ],
+    properties: {
+      intent: { type: 'string', minLength: 1 },
+      entities: { type: 'array' },
+      sentiment: { type: 'string', enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'] },
+      urgency: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
+      requested_actions: { type: 'array' },
+      knowledge_requests: { type: 'array' },
+      possible_routes: { type: 'array' },
+      risk_signals: { type: 'array' },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      evidence_ids: { type: 'array', minItems: 1, items: { type: 'string' } },
+    },
+  };
+  const interactionPromptContent = [
+    'You observe one interaction turn (any channel: phone, WhatsApp, email, chat) and extract',
+    'evidence only. You never decide a route, an escalation, or a business action — you surface',
+    'candidates and signals for a deterministic policy and routing engine to act on.',
+    'Every claim must cite the evidence_ids of the context it was grounded in.',
+    'Never establish that a business action has been completed.',
+  ].join('\n');
+  const [interactionPrompt] = await db
+    .insert(aiPrompts)
+    .values({ key: 'INTERACTION_ANALYSIS', purpose: 'Evidence-only interaction observation' })
+    .onConflictDoUpdate({ target: aiPrompts.key, set: { updatedAt: new Date() } })
+    .returning();
+  const [interactionSchema] = await db
+    .insert(aiOutputSchemas)
+    .values({ key: 'INTERACTION_ANALYSIS', purpose: 'Channel-agnostic interaction evidence pack' })
+    .onConflictDoUpdate({ target: aiOutputSchemas.key, set: { updatedAt: new Date() } })
+    .returning();
+  const [interactionService] = await db
+    .insert(aiServices)
+    .values({
+      key: 'INTERACTION_INTELLIGENCE',
+      displayName: 'Interaction intelligence',
+      purpose: 'Evidence-only interaction observation across channels',
+      createdBy: developmentActor,
+    })
+    .onConflictDoUpdate({ target: aiServices.key, set: { updatedAt: new Date() } })
+    .returning();
+  if (!interactionPrompt || !interactionSchema || !interactionService)
+    throw new Error('AIOS interaction-analysis definitions were not seeded');
+  const [interactionPromptVersion] = await db
+    .insert(aiPromptVersions)
+    .values({
+      promptId: interactionPrompt.id,
+      version: 1,
+      state: 'ACTIVE',
+      content: interactionPromptContent,
+      checksum: checksum(interactionPromptContent),
+      authorId: developmentActor,
+      approvedBy: developmentActor,
+      activatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [aiPromptVersions.promptId, aiPromptVersions.version],
+      set: { state: 'ACTIVE', updatedAt: new Date() },
+    })
+    .returning();
+  const [interactionSchemaVersion] = await db
+    .insert(aiOutputSchemaVersions)
+    .values({
+      schemaId: interactionSchema.id,
+      version: 1,
+      state: 'ACTIVE',
+      jsonSchema: interactionEvidenceSchema,
+      checksum: checksum(interactionEvidenceSchema),
+      codeOwned: true,
+      registeredByBuild: 'aios-interaction-analysis-v1',
+      approvedBy: developmentActor,
+    })
+    .onConflictDoUpdate({
+      target: [aiOutputSchemaVersions.schemaId, aiOutputSchemaVersions.version],
+      set: { state: 'ACTIVE', updatedAt: new Date() },
+    })
+    .returning();
+  if (!interactionPromptVersion || !interactionSchemaVersion)
+    throw new Error('AIOS interaction-analysis versions were not seeded');
+  const [interactionServiceVersion] = await db
+    .insert(aiServiceVersions)
+    .values({
+      serviceId: interactionService.id,
+      version: 1,
+      state: 'ACTIVE',
+      pipelineVersionId: pipelineVersion.id,
+      routeVersionId: routeVersion.id,
+      promptVersionId: interactionPromptVersion.id,
+      schemaVersionId: interactionSchemaVersion.id,
+      policyProfile: { synthetic: true, evidenceOnly: true },
+      authorId: developmentActor,
+      approvedBy: developmentActor,
+    })
+    .onConflictDoUpdate({
+      target: [aiServiceVersions.serviceId, aiServiceVersions.version],
+      set: { state: 'ACTIVE', updatedAt: new Date() },
+    })
+    .returning();
+  if (!interactionServiceVersion)
+    throw new Error('AIOS interaction-analysis service version was not seeded');
+
   const capabilityDefinitions = [
     'CALL_SUMMARY',
     'CALL_PURPOSE',
+    'INTERACTION_ANALYSIS',
     'PRIMARY_INTENT_CLASSIFICATION',
     'SECONDARY_TOPIC_CLASSIFICATION',
     'ENTITY_EXTRACTION',
@@ -414,14 +534,15 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
       .onConflictDoUpdate({ target: aiCapabilities.key, set: { updatedAt: new Date() } })
       .returning();
     if (!definition) throw new Error(`AIOS capability ${key} was not seeded`);
-    const active = key === 'CALL_SUMMARY';
+    const active = key === 'CALL_SUMMARY' || key === 'INTERACTION_ANALYSIS';
     const [version] = await db
       .insert(aiCapabilityVersions)
       .values({
         capabilityId: definition.id,
         version: 1,
         state: active ? 'ACTIVE' : 'DRAFT',
-        serviceVersionId: serviceVersion.id,
+        serviceVersionId:
+          key === 'INTERACTION_ANALYSIS' ? interactionServiceVersion.id : serviceVersion.id,
         contextPolicyVersionId: contextVersion.id,
         allowedCallers: ['worker', 'api'],
         allowedPurposes: ['OPERATIONS', 'QUALITY_REVIEW', 'ANALYTICS'],
@@ -430,6 +551,7 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
         confidenceThreshold: '0.8000',
         critical: [
           'CALL_SUMMARY',
+          'INTERACTION_ANALYSIS',
           'PRIMARY_INTENT_CLASSIFICATION',
           'ENTITY_EXTRACTION',
           'KNOWLEDGE_GAP_DETECTION',

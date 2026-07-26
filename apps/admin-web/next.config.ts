@@ -33,17 +33,21 @@ const legacyRedirects: NextConfig['redirects'] = async () => [
   { source: '/knowledge/:id', destination: '/settings/knowledge/:id', permanent: true },
   {
     source: '/quality/test-cases',
-    destination: '/settings/simulation/scenarios',
+    destination: '/settings/advanced/scenarios',
     permanent: true,
   },
-  { source: '/quality/suites', destination: '/settings/simulation/collections', permanent: true },
-  { source: '/quality/runs', destination: '/settings/simulation/results', permanent: true },
+  { source: '/quality/suites', destination: '/settings/advanced/collections', permanent: true },
+  {
+    source: '/quality/runs',
+    destination: '/settings/advanced/provider-test-runs',
+    permanent: true,
+  },
   {
     source: '/quality/gates',
-    destination: '/settings/simulation/release-checks',
+    destination: '/settings/advanced/release-checks',
     permanent: true,
   },
-  { source: '/quality/reviews', destination: '/settings/simulation/reviews', permanent: true },
+  { source: '/quality/reviews', destination: '/settings/advanced/reviews', permanent: true },
   { source: '/operations/handoffs', destination: '/calls/handoffs', permanent: true },
   { source: '/operations/callbacks', destination: '/calls/callbacks', permanent: true },
   { source: '/operations/tasks', destination: '/calls/tasks', permanent: true },
@@ -107,6 +111,38 @@ const legacyRedirects: NextConfig['redirects'] = async () => [
   // Bare /administration must resolve after the more specific rules above, or it
   // would shadow every /administration/* rewrite.
   { source: '/administration', destination: '/settings/administration', permanent: true },
+
+  // 2026-07-26 Simulation Lab restructure: the operator-facing workflow that used to
+  // live at /settings/simulation/results (a fake keyword-matched "Quantum Result" and
+  // a voice-call button that never opened ElevenLabs) is replaced by the real Live
+  // Receptionist Test at /settings/simulation. The QA-engineering surfaces that used
+  // to sit alongside it move to Settings -> Advanced, demoted out of the primary
+  // operator path but still fully functional.
+  {
+    source: '/settings/simulation/scenarios',
+    destination: '/settings/advanced/scenarios',
+    permanent: true,
+  },
+  {
+    source: '/settings/simulation/collections',
+    destination: '/settings/advanced/collections',
+    permanent: true,
+  },
+  {
+    source: '/settings/simulation/results',
+    destination: '/settings/advanced/provider-test-runs',
+    permanent: true,
+  },
+  {
+    source: '/settings/simulation/release-checks',
+    destination: '/settings/advanced/release-checks',
+    permanent: true,
+  },
+  {
+    source: '/settings/simulation/reviews',
+    destination: '/settings/advanced/reviews',
+    permanent: true,
+  },
 ];
 
 const config: NextConfig = {

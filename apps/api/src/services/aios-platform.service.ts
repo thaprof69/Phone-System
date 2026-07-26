@@ -57,7 +57,7 @@ import {
   transcriptRevisions,
   transcriptTurns,
 } from '@quantum-parks/db';
-import { SummarySchema } from '@quantum-parks/intelligence';
+import { InteractionEvidenceSchema, SummarySchema } from '@quantum-parks/intelligence';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { DatabaseService } from './database.service.js';
 import {
@@ -2202,8 +2202,12 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
       key: row.schema.key,
       version: row.version.version,
       jsonSchema: row.version.jsonSchema,
-      validate: (value: unknown) =>
-        row.schema.key === 'CALL_SUMMARY' ? SummarySchema.safeParse(value).success : false,
+      validate: (value: unknown) => {
+        if (row.schema.key === 'CALL_SUMMARY') return SummarySchema.safeParse(value).success;
+        if (row.schema.key === 'INTERACTION_ANALYSIS')
+          return InteractionEvidenceSchema.safeParse(value).success;
+        return false;
+      },
     };
   }
 
@@ -2296,6 +2300,10 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
           modelId: route.modelId,
           resultState: input.state,
           result: input.artifact.result as Record<string, unknown>,
+          confidence:
+            typeof (input.artifact.result as Record<string, unknown>)?.confidence === 'number'
+              ? String((input.artifact.result as Record<string, unknown>).confidence)
+              : null,
           fallbackUsed: input.state === 'FALLBACK_USED',
         })
         .returning();

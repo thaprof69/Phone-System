@@ -51,7 +51,7 @@ export default async function ReleaseAdministrationPage() {
             : 'Production routing is blocked'
         }
         action={
-          <Link className="button ghost small" href="/settings/simulation/release-checks">
+          <Link className="button ghost small" href="/settings/advanced/release-checks">
             Release gates
           </Link>
         }

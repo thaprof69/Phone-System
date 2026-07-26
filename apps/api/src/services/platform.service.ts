@@ -71,6 +71,7 @@ import {
   evaluateReleaseGate,
   validateAgentConfiguration,
   type AgentConversationConfiguration,
+  type FailureStatus,
   type ReleaseDependency,
 } from '@quantum-parks/domain';
 import { DatabaseService } from './database.service.js';
@@ -2260,7 +2261,19 @@ export class PlatformService {
    * pipeline. The signed URL is a 15-minute, provider-issued, single-use credential;
    * the permanent API key never leaves this service.
    */
-  async startVoiceSession(input: { agentVersionId: string; principal: Principal }) {
+  async startVoiceSession(input: { agentVersionId: string; principal: Principal }): Promise<
+    | { status: 'NOT_FOUND'; message: string }
+    | { status: 'BLOCKED'; blockers: string[] }
+    | { status: FailureStatus; error: { code: string; safeMessage: string; retryable: boolean } }
+    | {
+        status: 'SUCCESS';
+        sessionId: string;
+        signedUrl: string;
+        expiresAt: string;
+        environment: 'development' | 'staging' | 'production';
+        synthetic: boolean;
+      }
+  > {
     const release = await this.database.db.query.agentConfigVersions.findFirst({
       where: eq(agentConfigVersions.id, input.agentVersionId),
     });

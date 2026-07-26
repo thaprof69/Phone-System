@@ -92,7 +92,7 @@ export default async function TestSuitesPage() {
   if (!response.ok) {
     return (
       <DomainPage
-        eyebrow="Simulation Lab"
+        eyebrow="Advanced"
         title="Test collections"
         description="Grouped tests, including the suites mandatory for release."
       >
@@ -154,7 +154,7 @@ export default async function TestSuitesPage() {
 
   return (
     <DomainPage
-      eyebrow="Simulation Lab"
+      eyebrow="Advanced"
       title="Test collections"
       description="Test cases grouped into the suites a release gate evaluates. Mandatory suites must pass before publication."
       meta={
@@ -173,7 +173,7 @@ export default async function TestSuitesPage() {
           columns={columns}
           rows={suites}
           getRowKey={(suite) => suite.key}
-          rowHref={(suite) => `/settings/simulation/scenarios?type=${suite.key}`}
+          rowHref={(suite) => `/settings/advanced/scenarios?type=${suite.key}`}
           empty={
             <EmptyState title="No suites" detail="Suites appear once test cases are defined." />
           }

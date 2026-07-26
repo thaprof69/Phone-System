@@ -50,7 +50,7 @@ export default async function QualityReviewsPage() {
   if (!response.ok) {
     return (
       <DomainPage
-        eyebrow="Simulation Lab"
+        eyebrow="Advanced"
         title="Reviews"
         description="Human quality scoring against the review rubric."
       >
@@ -110,7 +110,7 @@ export default async function QualityReviewsPage() {
 
   return (
     <DomainPage
-      eyebrow="Simulation Lab"
+      eyebrow="Advanced"
       title="Reviews"
       description="A reviewer's judgement of a call against the rubric. Distinct from tests, which assert a rule rather than a judgement."
       meta={<StatusPill tone="neutral">{formatNumber(reviews.length)} reviews</StatusPill>}

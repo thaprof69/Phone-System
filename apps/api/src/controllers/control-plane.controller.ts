@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { PlatformService } from '../services/platform.service.js';
 import { ToolRegistryService } from '../services/tool-registry.service.js';
 import { AiosPlatformService } from '../services/aios-platform.service.js';
+import { ReceptionistSessionService } from '../services/receptionist-session.service.js';
 import { RequirePermission } from '../security/access.guard.js';
 
 const IdSchema = z.uuid();
@@ -178,6 +179,38 @@ const EndVoiceSessionSchema = z
     errorCode: z.string().min(1).max(100).optional(),
   })
   .strict();
+const StartReceptionistSessionSchema = z
+  .object({
+    agentVersionId: z.uuid(),
+    mode: z.enum(['VOICE', 'TEXT']),
+    source: z.enum(['SCENARIO', 'MANUAL', 'LIVE']),
+    purpose: z.enum(['TEST', 'TRAINING', 'DEBUG', 'VALIDATION']).optional(),
+  })
+  .strict();
+const AttachReceptionistSessionSchema = z
+  .object({ providerConversationId: z.string().min(1).max(200) })
+  .strict();
+const RecordReceptionistTurnSchema = z
+  .object({
+    role: z.enum(['user', 'agent']),
+    text: z.string().min(1).max(4_000),
+  })
+  .strict();
+const SendReceptionistScenarioSchema = z
+  .object({
+    scenarioKey: z.enum([
+      'booking_enquiry',
+      'pricing_question',
+      'complaint',
+      'refund_request',
+      'safety_concern',
+      'late_arrival',
+      'availability_check',
+      'human_callback_request',
+    ]),
+  })
+  .strict();
+const EndReceptionistSessionSchema = z.object({ reason: z.string().min(1).max(200) }).strict();
 const StaffTaskSchema = z
   .object({
     conversationId: z.uuid(),
@@ -215,6 +248,7 @@ export class ControlPlaneController {
     private readonly platform: PlatformService,
     private readonly tools: ToolRegistryService,
     private readonly aios: AiosPlatformService,
+    private readonly receptionistSessions: ReceptionistSessionService,
   ) {}
   @RequirePermission('agent:write')
   @Get('agents')
@@ -586,6 +620,78 @@ export class ControlPlaneController {
   ) {
     const input = EndVoiceSessionSchema.parse(body);
     return this.platform.endVoiceSession(id, input, request.principal);
+  }
+  /**
+   * The Live Receptionist Test workflow — a first-class, reusable operator conversation
+   * wrapping a real ElevenLabs voice or text-only session (reusing `startVoiceSession`, never
+   * a parallel pipeline). Every customer turn triggers real, governed AIOS evaluation; nothing
+   * here is a keyword-matched or fabricated result.
+   */
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions')
+  startReceptionistSession(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = StartReceptionistSessionSchema.parse(body);
+    return this.receptionistSessions.startSession({ ...input, principal: request.principal });
+  }
+  @RequirePermission('voice:live')
+  @Get('receptionist-sessions')
+  listReceptionistSessions() {
+    return this.receptionistSessions.listSessions();
+  }
+  @RequirePermission('voice:live')
+  @Get('receptionist-sessions/recent')
+  listRecentReceptionistSessions(@Query('limit') limit?: string) {
+    return this.receptionistSessions.listRecentSessions(limit ? Number(limit) : undefined);
+  }
+  @RequirePermission('voice:live')
+  @Get('receptionist-sessions/:id')
+  getReceptionistSession(@Param('id') id: string) {
+    return this.receptionistSessions.getSession(id);
+  }
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/attach')
+  attachReceptionistSession(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = AttachReceptionistSessionSchema.parse(body);
+    return this.receptionistSessions.attachConversation(id, input, request.principal);
+  }
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/turn')
+  recordReceptionistTurn(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = RecordReceptionistTurnSchema.parse(body);
+    return this.receptionistSessions.recordTurn(id, input, request.principal);
+  }
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/preset')
+  sendReceptionistScenario(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = SendReceptionistScenarioSchema.parse(body);
+    return this.receptionistSessions.sendPresetScenario(id, input.scenarioKey, request.principal);
+  }
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/end')
+  endReceptionistSession(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = EndReceptionistSessionSchema.parse(body);
+    return this.receptionistSessions.endSession(id, input, request.principal);
+  }
+  @RequirePermission('voice:live')
+  @Get('agent-versions/:id/instructions')
+  getAgentInstructions(@Param('id') id: string) {
+    return this.receptionistSessions.buildAgentInstructionsSnapshot(id);
   }
   @RequirePermission('calls:read', 'OPERATIONS')
   @Get('operations')

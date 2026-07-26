@@ -438,6 +438,57 @@ export const voiceSessions = pgTable('voice_sessions', {
   ...timestamps,
 });
 
+export const receptionistSessionModeEnum = pgEnum('receptionist_session_mode', ['VOICE', 'TEXT']);
+export const receptionistSessionPurposeEnum = pgEnum('receptionist_session_purpose', [
+  'TEST',
+  'TRAINING',
+  'DEBUG',
+  'VALIDATION',
+]);
+export const receptionistSessionSourceEnum = pgEnum('receptionist_session_source', [
+  'SCENARIO',
+  'MANUAL',
+  'LIVE',
+]);
+export const receptionistSessionStatusEnum = pgEnum('receptionist_session_status', [
+  'ACTIVE',
+  'ENDED',
+]);
+
+/**
+ * A first-class, reusable operator conversation with the receptionist — not a disposable "test"
+ * record. The same object backs Live Receptionist Test today and can later back onboarding,
+ * demos, regression and support-training flows without a schema change (see `purpose`/`source`).
+ * Deliberately holds only `latestAnalysisArtifactId`, never denormalized escalation/booking/
+ * confidence/routing/policy columns — every read resolves the real `aiArtifacts` row so the
+ * session and its evidence can never drift apart.
+ */
+export const receptionistSessions = pgTable('receptionist_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  agentVersionId: uuid('agent_version_id')
+    .references(() => agentConfigVersions.id)
+    .notNull(),
+  workspaceId: uuid('workspace_id')
+    .references(() => providerWorkspaces.id)
+    .notNull(),
+  environment: environmentEnum('environment').notNull(),
+  mode: receptionistSessionModeEnum('mode').notNull(),
+  purpose: receptionistSessionPurposeEnum('purpose').default('TEST').notNull(),
+  source: receptionistSessionSourceEnum('source').notNull(),
+  status: receptionistSessionStatusEnum('status').default('ACTIVE').notNull(),
+  label: text('label').notNull(),
+  voiceSessionId: uuid('voice_session_id').references(() => voiceSessions.id),
+  conversationId: uuid('conversation_id').references(() => conversations.id),
+  transcriptRevisionId: uuid('transcript_revision_id').references(() => transcriptRevisions.id),
+  latestAnalysisArtifactId: uuid('latest_analysis_artifact_id').references(() => aiArtifacts.id),
+  startedBy: text('started_by').notNull(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  endReason: text('end_reason'),
+  messageCount: integer('message_count').default(0).notNull(),
+  synthetic: boolean('synthetic').default(false).notNull(),
+  ...timestamps,
+});
+
 export const voiceProfiles = pgTable(
   'voice_profiles',
   {

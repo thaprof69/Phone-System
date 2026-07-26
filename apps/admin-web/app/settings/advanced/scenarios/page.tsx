@@ -39,7 +39,7 @@ export default async function TestCasesPage({
   if (!response.ok) {
     return (
       <DomainPage
-        eyebrow="Simulation Lab"
+        eyebrow="Advanced"
         title="Scenarios"
         description="What each test asserts, at what risk level, in which language."
       >
@@ -100,7 +100,7 @@ export default async function TestCasesPage({
 
   return (
     <DomainPage
-      eyebrow="Simulation Lab"
+      eyebrow="Advanced"
       title="Scenarios"
       description="What the receptionist is checked against before a release can reach callers."
       meta={
@@ -111,8 +111,8 @@ export default async function TestCasesPage({
       }
     >
       <FilterBar
-        action="/settings/simulation/scenarios"
-        resetHref="/settings/simulation/scenarios"
+        action="/settings/advanced/scenarios"
+        resetHref="/settings/advanced/scenarios"
         label="Filter test cases"
       >
         <SearchInput

@@ -49,6 +49,9 @@ importers:
       '@elevenlabs/client':
         specifier: 1.15.2
         version: 1.15.2(@types/dom-mediacapture-record@1.0.22)
+      '@quantum-parks/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@quantum-parks/ui':
         specifier: workspace:*
         version: link:../../packages/ui

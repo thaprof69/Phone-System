@@ -640,7 +640,7 @@ onDisconnect })` contract) — no endpoint, field, or SDK method was invented.
   mapping: `AGENT_UNAVAILABLE`, `RATE_LIMITED`, `PROVIDER_UNAVAILABLE` — `INVALID_CREDENTIALS`
   was also newly given a `danger` tone (previously fell through to `neutral`, a pre-existing gap).
 - The connect/rotate flow was collapsed from two buttons (`Test connection` then `Save
-  connection`) into one primary `Save and test connection` action that runs both steps
+connection`) into one primary `Save and test connection` action that runs both steps
   server-side in sequence — verified via a new Playwright test that no bare `Test connection`
   button exists and the dialog footer never shows more than one `.button.primary`.
 - New `voice_sessions` table and `PlatformService.startVoiceSession()`/
@@ -676,7 +676,7 @@ ElevenLabs stand-ins) and re-verified the full path:
    `agentVerifiedAt` populated and `defaultAgentId` saved — genuine verification, not assumed.
 4. Attempted `Start voice call` against a seeded agent version with a `DRIFTED` (not `IN_SYNC`)
    deployment: real `POST /voice-sessions` → `{"status":"BLOCKED","blockers":["Agent release has
-   no in-sync provider mapping..."]}`, shown honestly in the panel as "Refused".
+no in-sync provider mapping..."]}`, shown honestly in the panel as "Refused".
 5. Manually staged one real `IN_SYNC` deployment row against the simulator's actual real agent
    (test fixture only — not a bypass of the publish gates, which correctly refused a synthetic
    agent for production; removed after verification) and retried: real `POST /voice-sessions` →
@@ -721,16 +721,16 @@ voice-session response; single primary connect action). One pre-existing test
 introduced by adding a second same-labelled select for the new panel, caught by the full suite
 run and fixed, not left broken.
 
-| Command                                  | Result                                                                     |
-| ----------------------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm --filter @quantum-parks/elevenlabs test` | 7 passed                                                                       |
-| `pnpm --filter @quantum-parks/admin-web typecheck` | exit 0                                                                    |
-| `pnpm --filter @quantum-parks/api build`  | exit 0                                                                              |
-| `pnpm test:e2e` (admin project, run 1)    | **88 passed**, 0 failed, after fixing the regression above                        |
-| `pnpm test:e2e` (admin project, run 2)    | 87 passed, 1 failed (unrelated, see below)                                        |
-| `pnpm check`                               | exit 0 (format, lint, typecheck, unit tests, production build — both web apps)   |
-| `pnpm architecture:check`                  | passed                                                                             |
-| `pnpm traceability:check`                  | passed (FR-01–FR-82, NFR-01–NFR-18 present)                                       |
+| Command                                            | Result                                                                         |
+| -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `pnpm --filter @quantum-parks/elevenlabs test`     | 7 passed                                                                       |
+| `pnpm --filter @quantum-parks/admin-web typecheck` | exit 0                                                                         |
+| `pnpm --filter @quantum-parks/api build`           | exit 0                                                                         |
+| `pnpm test:e2e` (admin project, run 1)             | **88 passed**, 0 failed, after fixing the regression above                     |
+| `pnpm test:e2e` (admin project, run 2)             | 87 passed, 1 failed (unrelated, see below)                                     |
+| `pnpm check`                                       | exit 0 (format, lint, typecheck, unit tests, production build — both web apps) |
+| `pnpm architecture:check`                          | passed                                                                         |
+| `pnpm traceability:check`                          | passed (FR-01–FR-82, NFR-01–NFR-18 present)                                    |
 
 Two different, unrelated tests failed across the two full runs — `a simulator model cannot be
 approved for production` (AI model governance) in run 1's first attempt, and `proposing a
@@ -750,3 +750,91 @@ production ElevenLabs credential is connected.
 **Readiness statement unchanged**: `EXTERNALLY_BLOCKED` remains accurate. This is a navigation
 and analytics-depth rework over the same deterministic local stack; it supplies no production
 ElevenLabs workspace, AI provider approval, OIDC issuer, or native-language approvals.
+
+## 2026-07-26 Live Receptionist Test and Quantum Result evaluation pipeline
+
+Ported Quantum Park Lite's `/settings/phone/test` operator workflow into `/settings/simulation` as
+the sole primary Simulation Lab experience, replacing every fabricated piece of the source
+(a voice call that never opened ElevenLabs; a keyword-matched "Quantum Result") with real
+production architecture, per ADR 0013.
+
+- Added `receptionist_sessions` (migration `0010_closed_lily_hollister.sql`) — `mode`/`purpose`/
+  `source` fields, and deliberately only one result pointer (`latestAnalysisArtifactId`); no
+  denormalized escalation/booking/confidence/routing/policy columns. Migration also applied three
+  `provider_integration_status` enum values (`AGENT_UNAVAILABLE`/`RATE_LIMITED`/
+  `PROVIDER_UNAVAILABLE`) added to the schema earlier this session but never yet migrated — found
+  via a live `pg_enum` check before/after.
+- Added a genuinely new AIOS capability, `INTERACTION_ANALYSIS`, with its own authored prompt,
+  strict Zod/JSON schema (Interaction Evidence Pack: intent, entities, sentiment, urgency,
+  requested/knowledge actions, candidate routes, risk signals, confidence, evidence IDs — no
+  `recommended_route` or `proposed_action` field), service and route version, promoted to `ACTIVE`
+  — not reused from `CALL_SUMMARY`, not left `DRAFT`.
+- Added `ReceptionistPolicyService` and `ReceptionistRoutingService`, pure deterministic functions
+  with no AI involvement, and `QuantumResultService`, which re-derives the full Quantum Result from
+  the real `aiArtifacts` row and real `toolInvocations` fresh on every read — verified by reading
+  a session immediately after ending it and confirming the result matches, not a cached copy.
+- **Two real pre-existing bugs found while wiring this feature, not by inspection**:
+  `AiosPlatformService.getSchema()`'s validator was hardcoded to only ever validate `CALL_SUMMARY`
+  — every other capability silently failed schema validation regardless of correctness. And
+  `aiArtifacts.confidence` was never populated for any capability's persisted result. Both fixed.
+- **End-to-end verified against the real running stack** (not just typechecked): created a real
+  agent via the local provider-simulator, inserted a real `agent_deployments` row
+  (`syncState: 'IN_SYNC'`) as a test fixture, then via curl: started a receptionist session (real
+  signed URL), attached a real provider conversation (real `providerConversations` →
+  `conversations` → `transcriptRevisions` rows created), sent the `complaint` preset scenario and
+  received a fully real, non-fabricated Quantum Result (`escalationStatus: "REQUIRED"`,
+  `routingDecision: "ESCALATION_QUEUE"`, real `evidenceIds`, real `artifactId`), ended the session,
+  then re-read it and confirmed the result re-derives identically from the persisted artifact. All
+  fixture rows were deleted afterward.
+- Moved the pre-existing Scenario/Test collection/Provider test run/Release check/Review QA
+  console to **Settings → Advanced**, out of primary operator navigation but fully functional and
+  unchanged in substance — a separation of concerns, not a deletion. Removed the now-redundant
+  live-voice-call panel from the old "Interactive test" page (`voice-session-panel.tsx` deleted):
+  its capability is fully superseded by the new Live Receptionist Test, and keeping both would
+  have duplicated the same intelligence path. Old `/settings/simulation/{scenarios,collections,
+results,release-checks,reviews}` routes redirect (308) to `/settings/advanced/*`; `/quality/*`
+  legacy redirects were repointed to match.
+- **A real bug found by the first full Playwright run, not by inspection**: the new "Advanced"
+  Settings group's card description contained the literal phrase "Simulation Lab", so
+  `getByRole('link', { name: 'Simulation Lab' })` in the mobile-navigation test resolved
+  ambiguously to two cards (a real accessible-name collision an operator's screen reader would hit
+  too, not just a test artifact). Fixed by rewording the description to avoid the phrase, and
+  scoped the corresponding heading assertion to `level: 1` after the new page's `Panel` title
+  duplicated its own `h1` as a same-text `h2`.
+- **A real hydration-mismatch bug found in the browser, not by inspection**: the ported
+  Instructions panel called `new Date(generatedAt).toLocaleString()` inside a client component,
+  which renders differently between the server's process locale and the browser's locale — Next.js
+  threw and regenerated the tree client-side on every load. Fixed by switching to
+  `@quantum-parks/ui`'s `formatDateTime()`, which already uses a fixed `Intl.DateTimeFormat` locale
+  for exactly this reason elsewhere in the app.
+- Browser-verified live: real agent-version list, real preset scenario buttons, real generated
+  instructions from `composeRuntimePrompt()`, and the honest `Refused` banner with the real
+  server-stated reason (`"Agent release has no in-sync provider mapping; publish it before
+starting a live call"`) when starting a session against a seeded agent version with no in-sync
+  deployment — confirmed via a real network request to `/api/admin/receptionist-sessions`
+  returning `201` with a `BLOCKED` body, not a client-side fabrication.
+
+| Command                                               | Result                                                                                                                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/admin-web typecheck`    | exit 0                                                                                                                                                              |
+| `pnpm --filter @quantum-parks/admin-web build`        | exit 0 (all new routes present, incl. `/settings/simulation`, `/settings/simulation/sessions`, `/settings/simulation/sessions/[sessionId]`, `/settings/advanced/*`) |
+| `pnpm --filter @quantum-parks/api build`              | exit 0                                                                                                                                                              |
+| `pnpm test` (all 29 packages)                         | passed                                                                                                                                                              |
+| `pnpm architecture:check`                             | passed                                                                                                                                                              |
+| `pnpm traceability:check`                             | passed (FR-01–FR-82, NFR-01–NFR-18 present)                                                                                                                         |
+| `pnpm test:e2e` (admin project, run 1)                | 85 passed, 4 failed — one real bug (mobile-nav name collision, fixed above), three pre-existing correction-workflow flakes                                          |
+| `pnpm test:e2e` (admin project, run 2, after the fix) | 87 passed, 2 failed — both the same pre-existing correction-workflow flakes                                                                                         |
+
+The two remaining failures across both runs — `proposing a correction with invalid JSON is
+refused` and `a proposed correction can be decided, and a second decision is refused as already
+decided` — are the same class of shared-machine Playwright-under-contention flake already
+documented earlier in this file (a button that stays disabled under load until the retry budget is
+exhausted). Neither touches Simulation Lab, ElevenLabs, or any file this session changed; both
+passed when re-run individually in isolation except the JSON one, which needed the machine's load
+average to drop before its 120s timeout could complete — consistent with, not a regression from,
+the documented pattern.
+
+**Readiness statement unchanged**: `EXTERNALLY_BLOCKED` remains accurate. The full Live
+Receptionist Test pipeline was verified end-to-end against the local deterministic simulator and
+fixture data; no production ElevenLabs agent, OIDC issuer, or native-language approval was
+exercised.
