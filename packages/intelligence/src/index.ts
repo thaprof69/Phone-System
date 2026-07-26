@@ -59,10 +59,13 @@ const EvidenceItemSchema = z
     evidence_ids: z.array(z.string()).min(1),
   })
   .strict();
+const EntityEvidenceItemSchema = EvidenceItemSchema.extend({
+  entity_type: z.string().min(1),
+});
 export const InteractionEvidenceSchema = z
   .object({
     intent: z.string().min(1),
-    entities: z.array(EvidenceItemSchema),
+    entities: z.array(EntityEvidenceItemSchema),
     sentiment: z.enum(['POSITIVE', 'NEUTRAL', 'NEGATIVE']),
     urgency: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
     requested_actions: z.array(EvidenceItemSchema),

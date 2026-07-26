@@ -11,6 +11,7 @@ import {
   agentTests,
   aggregateFacts,
   agentTestVersions,
+  aiArtifacts,
   auditEvents,
   callbackRequests,
   callClassifications,
@@ -1855,6 +1856,23 @@ export class PlatformService {
         .where(eq(toolInvocations.conversationId, id))
         .orderBy(toolInvocations.requestedAt),
     ]);
+    const artifactIds = [
+      ...summaries.map((summary) => summary.aiArtifactId),
+      ...classifications.map((classification) => classification.aiArtifactId),
+    ].filter((value): value is string => value !== null);
+    const classificationIds = classifications.map((classification) => classification.id);
+    const [evidenceArtifacts, entities] = await Promise.all([
+      artifactIds.length
+        ? this.database.db.select().from(aiArtifacts).where(inArray(aiArtifacts.id, artifactIds))
+        : Promise.resolve([]),
+      classificationIds.length
+        ? this.database.db
+            .select()
+            .from(callEntities)
+            .where(inArray(callEntities.classificationId, classificationIds))
+        : Promise.resolve([]),
+    ]);
+
     return {
       ...call[0],
       transcriptRevision: allowedRevision ?? null,
@@ -1863,6 +1881,8 @@ export class PlatformService {
       classifications,
       deterministicOutcomes: outcomes,
       toolInvocations: tools,
+      evidenceArtifacts,
+      entities,
     };
   }
 
@@ -2924,13 +2944,20 @@ export class PlatformService {
     };
   }
 
-  async analyticsSeries(days: number) {
+  async analyticsSeries(days: number, includeSynthetic = false) {
     const since = new Date();
     since.setHours(0, 0, 0, 0);
     since.setDate(since.getDate() - (days - 1));
 
     const [facts, trendRows] = await Promise.all([
-      this.database.db.select().from(aggregateFacts).where(gte(aggregateFacts.date, since)),
+      this.database.db
+        .select()
+        .from(aggregateFacts)
+        .where(
+          includeSynthetic
+            ? gte(aggregateFacts.date, since)
+            : and(gte(aggregateFacts.date, since), eq(aggregateFacts.synthetic, false)),
+        ),
       this.database.db.select().from(trends).orderBy(desc(trends.periodEnd)),
     ]);
 
@@ -3010,17 +3037,25 @@ export class PlatformService {
    * crossed against outcome, duration and AI latency. Reads the same
    * `aggregate_facts` table `analyticsSeries` reads — new dimension keys
    * (`agentVersion`, `agentVersionOutcome`, `agentVersionTest`), not a new table.
+   *
+   * Unlike `analyticsSeries()`, `includeSynthetic` defaults `true` here: no writer anywhere
+   * (real `aggregateConversation` included) produces these three dimension keys except the
+   * synthetic seed script, so excluding synthetic by default would empty this page entirely
+   * rather than make it more honest — there is no real data being hidden.
    */
-  async analyticsAgentPerformance() {
+  async analyticsAgentPerformance(includeSynthetic = true) {
     const facts = await this.database.db
       .select()
       .from(aggregateFacts)
       .where(
-        inArray(aggregateFacts.dimensionKey, [
-          'agentVersion',
-          'agentVersionOutcome',
-          'agentVersionTest',
-        ]),
+        and(
+          inArray(aggregateFacts.dimensionKey, [
+            'agentVersion',
+            'agentVersionOutcome',
+            'agentVersionTest',
+          ]),
+          ...(includeSynthetic ? [] : [eq(aggregateFacts.synthetic, false)]),
+        ),
       );
 
     const versions = new Set<string>();
@@ -3163,11 +3198,44 @@ export class PlatformService {
     const facts = await this.database.db
       .select()
       .from(aggregateFacts)
-      .where(and(gte(aggregateFacts.date, periodStart), lte(aggregateFacts.date, periodEnd)));
+      .where(
+        and(
+          gte(aggregateFacts.date, periodStart),
+          lte(aggregateFacts.date, periodEnd),
+          eq(aggregateFacts.synthetic, false),
+        ),
+      );
     const conversationCount = facts
       .filter((fact) => fact.dimensionKey === 'total' && fact.metric === 'calls_received')
       .reduce((sum, fact) => sum + fact.count, 0);
-    return { aggregateFactRows: facts.length, conversationCount, generatedFrom: 'aggregate_facts' };
+
+    // Honest coverage, not a dashboard-only number: how many of this period's real
+    // conversations actually reached a FINAL (post-conversation, non-provisional)
+    // classification artefact, versus how many exist at all.
+    const classified = await this.database.db
+      .selectDistinct({ conversationId: callClassifications.conversationId })
+      .from(callClassifications)
+      .innerJoin(aiArtifacts, eq(callClassifications.aiArtifactId, aiArtifacts.id))
+      .innerJoin(conversations, eq(callClassifications.conversationId, conversations.id))
+      .where(
+        and(
+          eq(aiArtifacts.intelligenceState, 'FINAL'),
+          eq(conversations.synthetic, false),
+          gte(conversations.startedAt, periodStart),
+          lte(conversations.startedAt, periodEnd),
+        ),
+      );
+    const conversationsWithFinalClassification = classified.length;
+    const classificationCoverage =
+      conversationCount > 0 ? conversationsWithFinalClassification / conversationCount : null;
+
+    return {
+      aggregateFactRows: facts.length,
+      conversationCount,
+      conversationsWithFinalClassification,
+      classificationCoverage,
+      generatedFrom: 'aggregate_facts',
+    };
   }
 
   async runReportNow(definitionId: string, principal: Principal) {

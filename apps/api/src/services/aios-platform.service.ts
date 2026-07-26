@@ -2300,6 +2300,7 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
           modelId: route.modelId,
           resultState: input.state,
           result: input.artifact.result as Record<string, unknown>,
+          intelligenceState: input.request.executionContext.intelligenceState,
           confidence:
             typeof (input.artifact.result as Record<string, unknown>)?.confidence === 'number'
               ? String((input.artifact.result as Record<string, unknown>).confidence)

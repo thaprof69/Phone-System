@@ -1381,13 +1381,30 @@ export async function seedSyntheticBusinessData(
     const complete = processingState === 'COMPLETED';
 
     if (complete || processingState === 'PARTIAL') {
+      // Shaped identically to the real `SummarySchema` (packages/intelligence) — every claim
+      // is `{text, evidence_ids}`, never a bare string — so synthetic and real call summaries
+      // are structurally indistinguishable to any reader, admin-web included.
+      const evidenceId = `ev_${sha256(`${conversationId}:transcript`).slice(0, 24)}`;
+      const claim = (text: string) => ({ text, evidence_ids: [evidenceId] });
+      const evidenceCoverage = 0.82 + random() * 0.17;
       const summaryBody = {
-        purpose: `Caller asked about ${intent.replaceAll('_', ' ')} at the ${park} park.`,
-        caller_requests: [`Information about ${intent.replaceAll('_', ' ')}`],
+        purpose: claim(`Caller asked about ${intent.replaceAll('_', ' ')} at the ${park} park.`),
+        caller_requests: [claim(`Information about ${intent.replaceAll('_', ' ')}`)],
+        information_provided: [] as Array<{ text: string; evidence_ids: string[] }>,
+        confirmed_actions: [] as Array<{
+          text: string;
+          evidence_ids: string[];
+          result_status: 'SUCCESS';
+        }>,
+        unconfirmed_requests:
+          intent === 'booking_enquiry' ? [claim('Callback within one working day')] : [],
         unresolved_items:
-          intent === 'complaint' || intent === 'refund_request' ? ['Awaiting team response'] : [],
-        commitments: intent === 'booking_enquiry' ? ['Callback within one working day'] : [],
-        evidence_ids: [`ev_${sha256(`${conversationId}:transcript`).slice(0, 24)}`],
+          intent === 'complaint' || intent === 'refund_request'
+            ? [claim('Awaiting team response')]
+            : [],
+        handoff: null,
+        quality_flags: [] as string[],
+        evidence_coverage: evidenceCoverage,
       };
       await db.insert(callSummaries).values({
         conversationId,
@@ -1399,7 +1416,7 @@ export async function seedSyntheticBusinessData(
         modelVersion: '1',
         promptVersion: 'call-summary-v1',
         schemaVersion: 'call-summary-v1',
-        evidenceCoverage: (0.82 + random() * 0.17).toFixed(4),
+        evidenceCoverage: evidenceCoverage.toFixed(4),
         createdAt: new Date(endedAt.getTime() + 12_000),
       });
 
@@ -1766,7 +1783,7 @@ export async function seedSyntheticBusinessData(
   for (let offset = 0; offset < factRows.length; offset += 200) {
     await db
       .insert(aggregateFacts)
-      .values(factRows.slice(offset, offset + 200))
+      .values(factRows.slice(offset, offset + 200).map((row) => ({ ...row, synthetic: true })))
       .onConflictDoNothing();
   }
   summary.aggregateFacts = factRows.length;
@@ -2242,6 +2259,8 @@ export async function seedSyntheticBusinessData(
             confidence: (0.7 + random() * 0.29).toFixed(4),
             qualityFlags: state === 'FALLBACK_USED' ? ['FALLBACK_PATH'] : [],
             fallbackUsed: state === 'FALLBACK_USED',
+            // These simulate completed post-call processing runs, never live per-turn evaluation.
+            intelligenceState: 'FINAL',
             generatedAt: new Date(startedAt.getTime() + latencyMs),
           })
           .returning();
@@ -2300,7 +2319,7 @@ export async function seedSyntheticBusinessData(
   for (let offset = 0; offset < extraFactRows.length; offset += 200) {
     await db
       .insert(aggregateFacts)
-      .values(extraFactRows.slice(offset, offset + 200))
+      .values(extraFactRows.slice(offset, offset + 200).map((row) => ({ ...row, synthetic: true })))
       .onConflictDoNothing();
   }
   summary.agentPerformanceFacts = extraFactRows.length;

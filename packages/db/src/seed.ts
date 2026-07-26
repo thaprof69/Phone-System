@@ -392,7 +392,19 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
     ],
     properties: {
       intent: { type: 'string', minLength: 1 },
-      entities: { type: 'array' },
+      entities: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['text', 'evidence_ids', 'entity_type'],
+          properties: {
+            text: { type: 'string', minLength: 1 },
+            evidence_ids: { type: 'array', minItems: 1, items: { type: 'string' } },
+            entity_type: { type: 'string', minLength: 1 },
+          },
+        },
+      },
       sentiment: { type: 'string', enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE'] },
       urgency: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
       requested_actions: { type: 'array' },
@@ -461,9 +473,17 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
       registeredByBuild: 'aios-interaction-analysis-v1',
       approvedBy: developmentActor,
     })
+    // This capability has not yet processed a real conversation outside this development cycle,
+    // so its v1 schema is still refreshable in place; once a real artifact references it, a schema
+    // change must become a genuine v2 row instead of overwriting v1's content.
     .onConflictDoUpdate({
       target: [aiOutputSchemaVersions.schemaId, aiOutputSchemaVersions.version],
-      set: { state: 'ACTIVE', updatedAt: new Date() },
+      set: {
+        state: 'ACTIVE',
+        jsonSchema: interactionEvidenceSchema,
+        checksum: checksum(interactionEvidenceSchema),
+        updatedAt: new Date(),
+      },
     })
     .returning();
   if (!interactionPromptVersion || !interactionSchemaVersion)

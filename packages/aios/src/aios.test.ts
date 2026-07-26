@@ -56,6 +56,7 @@ describe('AIOS governance', () => {
         correlationId: 'correlation',
         sourceRecordId: 'call-1',
         sourceRevisionId: 'revision-1',
+        intelligenceState: 'FINAL',
       },
       contextSources: [{ sourceType: 'TRANSCRIPT', sourceId: 'turn-1' }],
     };

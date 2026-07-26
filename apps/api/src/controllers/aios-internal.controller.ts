@@ -23,6 +23,7 @@ const ExecuteSchema = z
         language: z.string().max(30).optional(),
         park: z.string().max(100).optional(),
         agentVersionId: z.string().max(200).optional(),
+        intelligenceState: z.enum(['PROVISIONAL', 'FINAL']),
       })
       .strict(),
     contextSources: z

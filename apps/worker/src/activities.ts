@@ -1,7 +1,10 @@
 import { createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
+  aggregateFacts,
+  callClassifications,
+  callEntities,
   callOutcomes,
   callSummaries,
   callbackRequests,
@@ -34,7 +37,7 @@ import {
   type TrustedEvent,
 } from '@quantum-parks/domain';
 import { HttpAIOSServiceGateway } from '@quantum-parks/aios';
-import { SummarySchema } from '@quantum-parks/intelligence';
+import { InteractionEvidenceSchema, SummarySchema } from '@quantum-parks/intelligence';
 import type { PostCallActivities } from '@quantum-parks/workflows';
 import { HttpElevenLabsAdapter, canonicalProviderChecksum } from '@quantum-parks/elevenlabs';
 import { runtimeSecret } from '@quantum-parks/config';
@@ -189,6 +192,164 @@ async function resolveDrift(deploymentId: string) {
     );
 }
 
+export type ClassificationInsert = {
+  conversationId: string;
+  transcriptRevisionId: string;
+  revision: number;
+  primaryIntent: string;
+  secondaryIntents: string[];
+  taxonomyVersion: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  schemaVersion: string;
+  aiArtifactId: string | null;
+  confidence: string;
+  evidenceIds: string[];
+};
+
+export type EntityInsert = {
+  entityType: string;
+  value: string;
+  confidence: string;
+  evidenceIds: string[];
+};
+
+/**
+ * Pure mapping from a parsed `InteractionEvidence` pack to the `call_classifications` +
+ * `call_entities` rows it produces, extracted for direct unit testing (no DB dependency) —
+ * mirrors the pure-function convention already used for `buildDiagnosticChecks`.
+ */
+export function buildClassificationInsert(input: {
+  conversationId: string;
+  transcriptRevisionId: string;
+  evidence: {
+    intent: string;
+    confidence: number;
+    evidence_ids: string[];
+    entities: Array<{ entity_type: string; text: string; evidence_ids: string[] }>;
+  };
+  taxonomyVersion: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  schemaVersion: string;
+  aiArtifactId: string | null;
+}): { classification: ClassificationInsert; entities: EntityInsert[] } {
+  return {
+    classification: {
+      conversationId: input.conversationId,
+      transcriptRevisionId: input.transcriptRevisionId,
+      revision: 1,
+      primaryIntent: input.evidence.intent,
+      secondaryIntents: [],
+      taxonomyVersion: input.taxonomyVersion,
+      provider: input.provider,
+      model: input.model,
+      promptVersion: input.promptVersion,
+      schemaVersion: input.schemaVersion,
+      aiArtifactId: input.aiArtifactId,
+      confidence: String(input.evidence.confidence),
+      evidenceIds: input.evidence.evidence_ids,
+    },
+    entities: input.evidence.entities.map((entity) => ({
+      entityType: entity.entity_type,
+      value: entity.text,
+      confidence: String(input.evidence.confidence),
+      evidenceIds: entity.evidence_ids,
+    })),
+  };
+}
+
+export type AggregateFactRow = {
+  dimensionKey: string;
+  dimensionValue: string;
+  metric: string;
+  count: number;
+  sum: number;
+  synthetic: boolean;
+};
+
+/**
+ * Pure dimension-row construction for one conversation's contribution to `aggregate_facts`,
+ * extracted for direct unit testing (no DB dependency) — mirrors the shape the synthetic seed
+ * script already produces per day, but for exactly one conversation (count is always 0 or 1
+ * per row, never a pre-summed bucket).
+ */
+export function buildAggregateRows(input: {
+  park: string | null;
+  language: string | null;
+  intent: string | null;
+  outcome: string | null;
+  durationSeconds: number;
+  completed: boolean;
+  synthetic: boolean;
+}): AggregateFactRow[] {
+  const rows: AggregateFactRow[] = [
+    {
+      dimensionKey: 'total',
+      dimensionValue: 'all',
+      metric: 'calls_received',
+      count: 1,
+      sum: 0,
+      synthetic: input.synthetic,
+    },
+    {
+      dimensionKey: 'total',
+      dimensionValue: 'all',
+      metric: 'calls_completed',
+      count: input.completed ? 1 : 0,
+      sum: 0,
+      synthetic: input.synthetic,
+    },
+    {
+      dimensionKey: 'total',
+      dimensionValue: 'all',
+      metric: 'call_duration_seconds',
+      count: 1,
+      sum: input.durationSeconds,
+      synthetic: input.synthetic,
+    },
+  ];
+  if (input.park)
+    rows.push({
+      dimensionKey: 'park',
+      dimensionValue: input.park,
+      metric: 'calls_received',
+      count: 1,
+      sum: 0,
+      synthetic: input.synthetic,
+    });
+  if (input.language)
+    rows.push({
+      dimensionKey: 'language',
+      dimensionValue: input.language,
+      metric: 'calls_received',
+      count: 1,
+      sum: 0,
+      synthetic: input.synthetic,
+    });
+  if (input.intent)
+    rows.push({
+      dimensionKey: 'intent',
+      dimensionValue: input.intent,
+      metric: 'calls_received',
+      count: 1,
+      sum: 0,
+      synthetic: input.synthetic,
+    });
+  if (input.outcome)
+    rows.push({
+      dimensionKey: 'outcome',
+      dimensionValue: input.outcome,
+      metric: 'calls_received',
+      count: 1,
+      sum: 0,
+      synthetic: input.synthetic,
+    });
+  return rows;
+}
+
 export const activities: PostCallActivities = {
   async normalizeAndRedact(input) {
     const existing = await db.query.transcriptRevisions.findFirst({
@@ -331,6 +492,7 @@ export const activities: PostCallActivities = {
         correlationId: `conversation:${input.conversationId}`,
         sourceRecordId: input.conversationId,
         sourceRevisionId: input.transcriptRevisionId,
+        intelligenceState: 'FINAL',
         ...(conversation?.language ? { language: conversation.language } : {}),
         ...(conversation?.park ? { park: conversation.park } : {}),
         ...(conversation?.agentVersionId ? { agentVersionId: conversation.agentVersionId } : {}),
@@ -369,11 +531,88 @@ export const activities: PostCallActivities = {
     return { state: 'COMPLETED' };
   },
 
+  async classifyInteraction(input) {
+    const alreadyClassified = await db.query.callClassifications.findFirst({
+      where: eq(callClassifications.conversationId, input.conversationId),
+    });
+    if (alreadyClassified) return { state: 'COMPLETED' };
+    const turns = await db
+      .select({
+        id: transcriptTurns.id,
+        speaker: transcriptTurns.speaker,
+        content: transcriptTurns.content,
+      })
+      .from(transcriptTurns)
+      .where(eq(transcriptTurns.revisionId, input.transcriptRevisionId))
+      .orderBy(transcriptTurns.sequence);
+    const conversation = await db.query.conversations.findFirst({
+      where: eq(conversations.id, input.conversationId),
+    });
+    const analyzed = await aiosGateway.executeCapability({
+      capabilityKey: 'INTERACTION_ANALYSIS',
+      executionContext: {
+        environment:
+          (process.env.QP_ENVIRONMENT as 'development' | 'staging' | 'production' | undefined) ??
+          'development',
+        callerService: 'worker',
+        actorId: 'post-call-workflow',
+        purpose: 'OPERATIONS',
+        correlationId: `conversation:${input.conversationId}`,
+        sourceRecordId: input.conversationId,
+        sourceRevisionId: input.transcriptRevisionId,
+        intelligenceState: 'FINAL',
+        ...(conversation?.language ? { language: conversation.language } : {}),
+        ...(conversation?.park ? { park: conversation.park } : {}),
+        ...(conversation?.agentVersionId ? { agentVersionId: conversation.agentVersionId } : {}),
+      },
+      contextSources: turns.map((turn) => ({
+        sourceType: 'TRANSCRIPT' as const,
+        sourceId: turn.id,
+      })),
+    });
+    if (analyzed.state !== 'SUCCESS' && analyzed.state !== 'FALLBACK_USED')
+      return { state: 'PARTIAL' };
+    const evidence = InteractionEvidenceSchema.safeParse(analyzed.data.result);
+    if (!evidence.success) return { state: 'PARTIAL' };
+
+    const insert = buildClassificationInsert({
+      conversationId: input.conversationId,
+      transcriptRevisionId: input.transcriptRevisionId,
+      evidence: evidence.data,
+      taxonomyVersion: analyzed.data.taxonomyVersionId ?? 'interaction-analysis-freeform-v1',
+      provider: analyzed.data.providerKey,
+      model: analyzed.data.modelId,
+      promptVersion: analyzed.data.promptVersionId,
+      schemaVersion: analyzed.data.schemaVersionId,
+      aiArtifactId: analyzed.data.artifactId ?? null,
+    });
+
+    await db.transaction(async (tx) => {
+      const [classification] = await tx
+        .insert(callClassifications)
+        .values(insert.classification)
+        .returning();
+      if (!classification) throw new Error('Call classification was not persisted');
+      if (insert.entities.length > 0) {
+        await tx
+          .insert(callEntities)
+          .values(
+            insert.entities.map((entity) => ({ ...entity, classificationId: classification.id })),
+          );
+      }
+      await tx
+        .update(conversations)
+        .set({ processingState: 'LINKING', updatedAt: new Date() })
+        .where(eq(conversations.id, input.conversationId));
+    });
+    return { state: 'COMPLETED' };
+  },
+
   async deriveOutcome(input) {
     const existing = await db.query.callOutcomes.findFirst({
       where: eq(callOutcomes.conversationId, input.conversationId),
     });
-    if (existing) return;
+    if (existing) return { state: 'COMPLETED' as const };
     const [tools, transfers, deliveries, callbacks, tasks, paymentRedactions] = await Promise.all([
       db
         .select()
@@ -441,6 +680,7 @@ export const activities: PostCallActivities = {
       evidenceIds: outcome.evidenceIds,
       policyVersion: 'deterministic-outcomes-v1',
     });
+    return { state: 'COMPLETED' as const };
   },
 
   async linkAndFollowUp(input) {
@@ -448,13 +688,75 @@ export const activities: PostCallActivities = {
       .update(conversations)
       .set({ processingState: 'FOLLOW_UP', updatedAt: new Date() })
       .where(eq(conversations.id, input.conversationId));
+    return { state: 'COMPLETED' as const };
   },
 
   async aggregateConversation(input) {
-    await db
-      .update(conversations)
-      .set({ processingState: 'AGGREGATED', updatedAt: new Date() })
-      .where(eq(conversations.id, input.conversationId));
+    const conversation = await db.query.conversations.findFirst({
+      where: eq(conversations.id, input.conversationId),
+    });
+    if (!conversation) throw new Error('Conversation not found for aggregation');
+    if (['AGGREGATED', 'COMPLETED', 'PARTIAL'].includes(conversation.processingState))
+      return { state: 'COMPLETED' as const };
+
+    const [classification, outcome] = await Promise.all([
+      db.query.callClassifications.findFirst({
+        where: eq(callClassifications.conversationId, input.conversationId),
+        orderBy: (table, { desc }) => [desc(table.revision)],
+      }),
+      db.query.callOutcomes.findFirst({
+        where: eq(callOutcomes.conversationId, input.conversationId),
+      }),
+    ]);
+    const date = conversation.startedAt ?? conversation.createdAt;
+    const durationSeconds =
+      conversation.startedAt && conversation.endedAt
+        ? Math.max(0, (conversation.endedAt.getTime() - conversation.startedAt.getTime()) / 1000)
+        : 0;
+    const rows = buildAggregateRows({
+      park: conversation.park,
+      language: conversation.language,
+      intent: classification?.primaryIntent ?? null,
+      outcome: outcome?.outcome ?? null,
+      durationSeconds,
+      completed: !input.partialSoFar,
+      synthetic: conversation.synthetic,
+    });
+
+    await db.transaction(async (tx) => {
+      for (const row of rows) {
+        await tx
+          .insert(aggregateFacts)
+          .values({
+            date,
+            dimensionKey: row.dimensionKey,
+            dimensionValue: row.dimensionValue,
+            metric: row.metric,
+            synthetic: row.synthetic,
+            count: row.count,
+            sum: row.sum.toFixed(4),
+          })
+          .onConflictDoUpdate({
+            target: [
+              aggregateFacts.date,
+              aggregateFacts.dimensionKey,
+              aggregateFacts.dimensionValue,
+              aggregateFacts.metric,
+              aggregateFacts.synthetic,
+            ],
+            set: {
+              count: sql`${aggregateFacts.count} + ${row.count}`,
+              sum: sql`${aggregateFacts.sum} + ${row.sum}`,
+              updatedAt: new Date(),
+            },
+          });
+      }
+      await tx
+        .update(conversations)
+        .set({ processingState: 'AGGREGATED', updatedAt: new Date() })
+        .where(eq(conversations.id, input.conversationId));
+    });
+    return { state: 'COMPLETED' as const };
   },
 
   async completeProcessing(input) {

@@ -87,6 +87,26 @@ type CallDetail = {
     requestedAt: string;
     completedAt: string | null;
   }>;
+  evidenceArtifacts: Array<{
+    id: string;
+    providerKey: string;
+    modelId: string;
+    promptVersionId: string;
+    schemaVersionId: string;
+    resultState: string;
+    intelligenceState: string;
+    confidence: string | null;
+    fallbackUsed: boolean;
+    generatedAt: string;
+  }>;
+  entities: Array<{
+    id: string;
+    classificationId: string;
+    entityType: string;
+    value: string;
+    confidence: string;
+    evidenceIds: string[];
+  }>;
 };
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -142,13 +162,14 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
       ? call.providerMetadata.call_duration_secs
       : null;
 
+  type Claim = { text: string; evidence_ids: string[] };
   const summaryBody = summary?.summary as
     | {
-        purpose?: string;
-        caller_requests?: string[];
-        unresolved_items?: string[];
-        commitments?: string[];
-        evidence_ids?: string[];
+        purpose?: Claim;
+        caller_requests?: Claim[];
+        unresolved_items?: Claim[];
+        unconfirmed_requests?: Claim[];
+        evidence_coverage?: number;
       }
     | undefined;
 
@@ -159,7 +180,7 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
       />
       <PageHeading
         eyebrow="Canonical call record"
-        title={summaryBody?.purpose ?? `Call ${call.id.slice(0, 8)}`}
+        title={summaryBody?.purpose?.text ?? `Call ${call.id.slice(0, 8)}`}
         description={`${titleCase(call.park)} · ${(call.language ?? '—').toUpperCase()} · ${formatDuration(durationSeconds)}`}
         meta={
           <>
@@ -248,10 +269,19 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
                   label: 'Summary',
                   content: summaryBody ? (
                     <div className="summary-body">
-                      <p className="summary-purpose">{summaryBody.purpose}</p>
-                      <SummaryList title="Caller asked for" items={summaryBody.caller_requests} />
-                      <SummaryList title="Left unresolved" items={summaryBody.unresolved_items} />
-                      <SummaryList title="Commitments made" items={summaryBody.commitments} />
+                      <p className="summary-purpose">{summaryBody.purpose?.text}</p>
+                      <SummaryList
+                        title="Caller asked for"
+                        items={summaryBody.caller_requests?.map((claim) => claim.text)}
+                      />
+                      <SummaryList
+                        title="Left unresolved"
+                        items={summaryBody.unresolved_items?.map((claim) => claim.text)}
+                      />
+                      <SummaryList
+                        title="Commitments made"
+                        items={summaryBody.unconfirmed_requests?.map((claim) => claim.text)}
+                      />
                       {summary ? (
                         <p className="evidence-note">
                           Evidence coverage {formatPercent(Number(summary.evidenceCoverage))} ·
@@ -346,6 +376,62 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
                           </li>
                         ))}
                       </ul>
+                    ),
+                },
+                {
+                  value: 'evidence',
+                  label: 'Evidence',
+                  badge: call.evidenceArtifacts.length,
+                  content:
+                    call.evidenceArtifacts.length === 0 ? (
+                      <EmptyState
+                        title="No governed artefacts"
+                        detail="Evidence appears once a summary or classification has been produced by a governed AI capability."
+                      />
+                    ) : (
+                      <div className="evidence-list">
+                        {call.evidenceArtifacts.map((artifact) => (
+                          <DefinitionList
+                            key={artifact.id}
+                            items={[
+                              {
+                                term: 'Intelligence state',
+                                value: humaniseState(artifact.intelligenceState),
+                              },
+                              { term: 'Result', value: humaniseState(artifact.resultState) },
+                              { term: 'Provider', value: artifact.providerKey },
+                              { term: 'Model', value: artifact.modelId },
+                              { term: 'Prompt version', value: artifact.promptVersionId },
+                              { term: 'Schema version', value: artifact.schemaVersionId },
+                              {
+                                term: 'Confidence',
+                                value:
+                                  artifact.confidence !== null
+                                    ? formatPercent(Number(artifact.confidence))
+                                    : '—',
+                              },
+                              {
+                                term: 'Fallback used',
+                                value: artifact.fallbackUsed ? 'Yes' : 'No',
+                              },
+                              { term: 'Generated', value: formatDateTime(artifact.generatedAt) },
+                            ]}
+                          />
+                        ))}
+                        {call.entities.length > 0 ? (
+                          <div className="summary-section">
+                            <p className="eyebrow">Extracted entities</p>
+                            <ul>
+                              {call.entities.map((entity) => (
+                                <li key={entity.id}>
+                                  {humaniseState(entity.entityType)}: {entity.value} (
+                                  {formatPercent(Number(entity.confidence))})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
                     ),
                 },
               ]}

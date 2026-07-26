@@ -27,6 +27,7 @@ export type QuantumResult = {
   toolEvaluation: { invoked: boolean; calls: Array<{ tool: string; status: string }> };
   evidenceIds: string[];
   contextManifest: unknown;
+  intelligenceState: 'PROVISIONAL' | 'FINAL' | 'SUPERSEDED';
 };
 
 type EvaluateTurnInput = {
@@ -73,6 +74,7 @@ export class QuantumResultService {
         correlationId: input.correlationId,
         sourceRecordId: input.conversationId,
         sourceRevisionId: input.transcriptRevisionId,
+        intelligenceState: 'PROVISIONAL',
       },
       contextSources: [{ sourceType: 'TRANSCRIPT', sourceId: input.transcriptTurnId }],
     });
@@ -130,6 +132,7 @@ export class QuantumResultService {
       },
       evidenceIds: evidence.evidence_ids,
       contextManifest: artifact.contextManifestId,
+      intelligenceState: artifact.intelligenceState,
     };
   }
 }

@@ -151,6 +151,11 @@ export interface AIOSExecutionContext {
   language?: string;
   park?: string;
   agentVersionId?: string;
+  /**
+   * PROVISIONAL for live/per-turn evidence produced during an in-progress conversation;
+   * FINAL for evidence produced against a finalised transcript. Required, never inferred.
+   */
+  intelligenceState: 'PROVISIONAL' | 'FINAL';
 }
 
 export interface StructuredGenerationRequest {

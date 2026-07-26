@@ -958,3 +958,100 @@ moments earlier). Rebuilding and restarting both processes resolved it — a rem
 compiled-dist deployment (used in this session in place of `tsx watch`, which has an unrelated
 pre-existing Reflector dependency-injection bug under this Node/tsx version) must be rebuilt after
 every backend change, not just restarted.
+
+## 2026-07-27 — Real post-call classification, provisional/final intelligence, finalisation pipeline registry
+
+See ADR 0015 for the full decision record. Summary: `INTERACTION_ANALYSIS` is now invoked from the
+real post-call Temporal workflow via a new `classifyInteraction` activity, writing real
+`callClassifications`/`callEntities` rows; every `aiArtifacts` row now states `intelligenceState`
+(`PROVISIONAL`/`FINAL`) explicitly; `aggregateConversation` is a real incremental upsert into
+`aggregate_facts` with a `synthetic` composite-key column; `postCallWorkflow` now executes a
+declarative `CONVERSATION_FINALISATION_PIPELINE` registry instead of a hard-coded activity chain;
+Call Detail gained a real Evidence tab; report lineage gained a real classification-coverage ratio.
+
+| Command                                             | Result                                                                                           |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @quantum-parks/db generate` + review | Clean migration, hand-edited for correct order and considered backfill, reviewed before applying |
+| `pnpm --filter @quantum-parks/db migrate`           | Applied cleanly against the local dev database                                                   |
+| `pnpm --filter @quantum-parks/aios-contracts build` | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/aios build`           | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/aios test`            | 3 passed                                                                                         |
+| `pnpm --filter @quantum-parks/intelligence build`   | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/intelligence test`    | 2 passed                                                                                         |
+| `pnpm --filter @quantum-parks/workflows build`      | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/workflows test`       | 8 passed (pipeline registry + `shouldHaltPipeline`)                                              |
+| `pnpm --filter @quantum-parks/worker typecheck`     | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/worker test`          | 8 passed (`buildAggregateRows` + `buildClassificationInsert`)                                    |
+| `pnpm --filter @quantum-parks/api typecheck`        | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/admin-web typecheck`  | exit 0                                                                                           |
+| `pnpm -r build`                                     | exit 0, all packages including admin-web static/dynamic routes                                   |
+| `pnpm -r test`                                      | all package suites passed                                                                        |
+
+**Real end-to-end verification against a live local stack** (docker-compose `postgres`/`redis`/
+`minio`/`temporal`, locally-built `dist/` for `provider-simulator`/`api`/`worker`/`admin-web` run as
+plain Node processes — the same pattern used for ADR 0014's verification):
+
+1. A non-synthetic `provider_workspaces` row was inserted directly (the only pre-existing workspace
+   was the seeded synthetic one), so this run's `synthetic: false` propagation could be proven
+   end-to-end rather than assumed.
+2. A real ElevenLabs-shaped post-call webhook payload was constructed and signed with the real
+   HMAC-SHA256 scheme (`t=<timestamp>,v0=<hex>`, matching `signWebhook`/`verifyWebhookSignature` in
+   `packages/elevenlabs`) and posted to `POST /v1/webhooks/elevenlabs/post-call`.
+3. The webhook was accepted (`processingQueued: true`) and the real Temporal worker picked up
+   `postCallWorkflow`. Within one poll, the conversation reached `processing_state = COMPLETED`.
+4. Direct database verification: a real `call_classifications` row (`primary_intent:
+general_enquiry`, non-null `ai_artifact_id`, joined `ai_artifacts.intelligence_state = FINAL`,
+   `result_state = SUCCESS`, `provider_key = SIMULATOR`), a real `call_outcomes` row
+   (`NO_ACTION_REQUIRED`), a real `call_summaries` row with a real `ai_artifact_id`, and five real
+   `aggregate_facts` rows (`total`/`intent`/`outcome`, each `synthetic: false`) — verified
+   side-by-side against the 762 pre-existing rows, all `synthetic: true` after the migration's
+   considered backfill (every existing row came exclusively from the seed script, confirmed by the
+   original audit).
+5. Call Detail's Evidence tab was browser-verified live: both real artifacts rendered with their
+   real `intelligenceState: Final`, provider/model/prompt/schema-version identifiers, and (for the
+   classification artifact) real confidence.
+6. Regression check: the one pre-existing `PROVISIONAL` artifact (the real per-turn evidence from
+   ADR 0013's manual verification) was confirmed to have survived the migration's backfill
+   correctly, distinct from the 39 `FINAL` `CALL_SUMMARY` rows.
+
+**A real, pre-existing bug was found and fixed during this verification**, unrelated to this task's
+own new code: `apps/admin-web/app/calls/[id]/page.tsx` rendered `SummarySchema`'s `purpose`/
+`caller_requests`/`unresolved_items` fields as plain strings; the real schema (`packages/
+intelligence`, unchanged by this task) has always defined them as `{text, evidence_ids}` claim
+objects. This crashed the entire Call Detail page (`Objects are not valid as a React child`) for any
+conversation with a real (non-seed-fabricated) summary — never caught before because the synthetic
+seed script's own summary generation used a different, non-conforming ad-hoc shape, and no real
+conversation had ever reached this page in a live browser check before this task. Both were fixed:
+the page now correctly extracts `.text` from each claim, and `seed-synthetic.ts` now generates the
+same real `SummarySchema`-conforming shape, so seeded and real call summaries are structurally
+identical going forward. The 211 already-seeded `call_summaries` rows were reshaped in place via a
+direct SQL update, verified before and after.
+
+A second local-environment-only obstacle was found and fixed: the docker-compose `minio` container
+rejected the app's `ServerSideEncryption: AES256` webhook-evidence upload with `NotImplemented:
+Server side encryption specified but KMS is not configured` — a pre-existing local MinIO
+configuration gap (no `MINIO_KMS_SECRET_KEY`), not a regression from this task. Resolved for this
+verification via a local-only `docker-compose.override.yml` setting a generated KMS key (not
+committed — a throwaway verification aid, deleted after use).
+
+**A genuine regression was found and fixed by the full Playwright suite, not just the live webhook
+round trip**: `analyticsAgentPerformance()`'s default synthetic exclusion (task scope: exclude
+synthetic rows from Intelligence/Reports by default) emptied `/intelligence/agent-performance`
+entirely — "0 versions", "No versioned call data yet". The `agentVersion`/`agentVersionOutcome`/
+`agentVersionTest` dimension keys this page reads have no real writer anywhere in the repository,
+including the real `aggregateConversation` activity built in this same task — they are, and remain,
+exclusively produced by the synthetic seed script. Excluding synthetic by default therefore hid the
+only data this page has ever had, for no honesty gain (nothing became "more real" by hiding it).
+Fixed by defaulting `analyticsAgentPerformance(includeSynthetic = true)` (the opposite default from
+`analyticsSeries()`/`computeReportLineage()`, deliberately, with the reasoning in a code comment) and
+threading an explicit `undefined` (not a forced `false`) through the controller when the query
+param is absent, so the service's own default actually takes effect. Verified live in the browser
+(agent-performance page restored: 4 versions, real containment/transfer figures) and by the e2e
+suite before/after.
+
+| Command                                                      | Result                                                                                                                                                                                                |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/api typecheck` (after the fix) | exit 0                                                                                                                                                                                                |
+| `pnpm check` (full, after the fix)                           | exit 0, all 17 tasks                                                                                                                                                                                  |
+| `pnpm test:e2e --project=admin-chromium` (run 1 of 2)        | 91 passed, 1 failed (the same pre-existing, already-documented Reports-domain flake from the 2026-07-26 dual-transport evidence entry — reproduced consistently in isolation, unrelated to this task) |
+| `pnpm test:e2e --project=admin-chromium` (run 2 of 2)        | 91 passed, 1 failed (identical result — stable)                                                                                                                                                       |

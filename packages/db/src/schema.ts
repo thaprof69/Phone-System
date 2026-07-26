@@ -100,6 +100,18 @@ export const aiosResultStateEnum = pgEnum('aios_result_state', [
   'FALLBACK_USED',
   'UNKNOWN_FAILURE',
 ]);
+/**
+ * Every AI-produced intelligence artifact must declare where it sits in the provisional/final
+ * lifecycle — never inferred from a capability key or call site. PROVISIONAL is per-turn/live
+ * evidence (e.g. Simulation Lab's INTERACTION_ANALYSIS during an active conversation); FINAL is
+ * post-conversation evidence produced against the finalised transcript. SUPERSEDED is reserved for
+ * a future reprocessing system and is not set anywhere yet.
+ */
+export const aiIntelligenceStateEnum = pgEnum('ai_intelligence_state', [
+  'PROVISIONAL',
+  'FINAL',
+  'SUPERSEDED',
+]);
 export const aiosReadinessStateEnum = pgEnum('aios_readiness_state', [
   'NOT_CONFIGURED',
   'SANDBOX_CONFIGURED',
@@ -1352,12 +1364,23 @@ export const aggregateFacts = pgTable(
     dimensionKey: text('dimension_key').notNull(),
     dimensionValue: text('dimension_value').notNull(),
     metric: text('metric').notNull(),
+    // Part of the composite key (not just a filter column) so a synthetic and a real conversation
+    // on the same day/dimension/value accumulate into separate counters rather than colliding.
+    synthetic: boolean('synthetic').default(false).notNull(),
     count: bigint('count', { mode: 'number' }).default(0).notNull(),
     sum: numeric('sum', { precision: 20, scale: 4 }).default('0').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.date, table.dimensionKey, table.dimensionValue, table.metric] }),
+    primaryKey({
+      columns: [
+        table.date,
+        table.dimensionKey,
+        table.dimensionValue,
+        table.metric,
+        table.synthetic,
+      ],
+    }),
   ],
 );
 
@@ -2016,6 +2039,7 @@ export const aiArtifacts = pgTable('ai_artifacts', {
   confidence: numeric('confidence', { precision: 5, scale: 4 }),
   qualityFlags: text('quality_flags').array().default([]).notNull(),
   fallbackUsed: boolean('fallback_used').default(false).notNull(),
+  intelligenceState: aiIntelligenceStateEnum('intelligence_state').notNull(),
   generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

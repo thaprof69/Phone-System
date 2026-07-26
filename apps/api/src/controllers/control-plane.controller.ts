@@ -796,16 +796,22 @@ export class ControlPlaneController {
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('analytics/series')
-  analyticsSeries(@Query('days') days?: string) {
+  analyticsSeries(
+    @Query('days') days?: string,
+    @Query('includeSynthetic') includeSynthetic?: string,
+  ) {
     const parsed = Number(days ?? 30);
     return this.platform.analyticsSeries(
       Number.isFinite(parsed) ? Math.min(Math.max(Math.trunc(parsed), 1), 90) : 30,
+      includeSynthetic === 'true',
     );
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('analytics/agent-performance')
-  analyticsAgentPerformance() {
-    return this.platform.analyticsAgentPerformance();
+  analyticsAgentPerformance(@Query('includeSynthetic') includeSynthetic?: string) {
+    return this.platform.analyticsAgentPerformance(
+      includeSynthetic === undefined ? undefined : includeSynthetic === 'true',
+    );
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('analytics/provider-performance')

@@ -1,4 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
+import { CONVERSATION_FINALISATION_PIPELINE } from './finalisation-pipeline.js';
 
 export interface PostCallActivities {
   normalizeAndRedact(input: { inboxId: string; conversationId: string }): Promise<{
@@ -10,9 +11,23 @@ export interface PostCallActivities {
     conversationId: string;
     transcriptRevisionId: string;
   }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
-  deriveOutcome(input: { conversationId: string }): Promise<void>;
-  linkAndFollowUp(input: { conversationId: string }): Promise<void>;
-  aggregateConversation(input: { conversationId: string }): Promise<void>;
+  classifyInteraction(input: {
+    conversationId: string;
+    transcriptRevisionId: string;
+  }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
+  deriveOutcome(input: {
+    conversationId: string;
+    transcriptRevisionId: string;
+  }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
+  linkAndFollowUp(input: {
+    conversationId: string;
+    transcriptRevisionId: string;
+  }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
+  aggregateConversation(input: {
+    conversationId: string;
+    transcriptRevisionId: string;
+    partialSoFar: boolean;
+  }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
   completeProcessing(input: {
     inboxId: string;
     conversationId: string;
@@ -52,24 +67,73 @@ const activities = proxyActivities<PostCallActivities>({
   },
 });
 
+// One proxy per pipeline stage, each carrying that stage's own retry policy — built once from
+// the static registry at module load (deterministic; no I/O, no randomness), so a future stage
+// with a different retry policy is a registry-array edit, not a workflow-code edit.
+const stageActivities = new Map(
+  CONVERSATION_FINALISATION_PIPELINE.map((stage) => [
+    stage.activityName,
+    proxyActivities<PostCallActivities>({
+      startToCloseTimeout: '2 minutes',
+      scheduleToCloseTimeout: '10 minutes',
+      retry: {
+        maximumAttempts: stage.retryPolicy.maximumAttempts,
+        initialInterval: '1 second',
+        maximumInterval: '30 seconds',
+        backoffCoefficient: 2,
+      },
+    }),
+  ]),
+);
+
+/**
+ * The one bit of real control-flow logic in the pipeline loop, named and exported so it is
+ * independently testable without a Temporal workflow runtime: a failing blocking stage halts
+ * the pipeline; a failing non-blocking stage marks the run partial and continues.
+ */
+export function shouldHaltPipeline(stageBlocking: boolean, stageFailed: boolean): boolean {
+  return stageBlocking && stageFailed;
+}
+
 export async function postCallWorkflow(input: {
   inboxId: string;
   conversationId: string;
 }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }> {
+  const [firstStage, ...remainingStages] = CONVERSATION_FINALISATION_PIPELINE;
+  if (!firstStage || firstStage.activityName !== 'normalizeAndRedact')
+    throw new Error('The finalisation pipeline must begin with NORMALIZE_AND_REDACT');
+
   const normalized = await activities.normalizeAndRedact(input);
-  const enrichment = await activities.enrichConversation({
-    conversationId: normalized.conversationId,
-    transcriptRevisionId: normalized.transcriptRevisionId,
-  });
-  await activities.deriveOutcome({ conversationId: normalized.conversationId });
-  await activities.linkAndFollowUp({ conversationId: normalized.conversationId });
-  await activities.aggregateConversation({ conversationId: normalized.conversationId });
+  const transcriptRevisionId = normalized.transcriptRevisionId;
+  let partial = false;
+
+  for (const stage of remainingStages) {
+    const proxy = stageActivities.get(stage.activityName);
+    if (!proxy) throw new Error(`No activity proxy registered for stage ${stage.key}`);
+    const activity = proxy[stage.activityName] as (input: {
+      conversationId: string;
+      transcriptRevisionId: string;
+      partialSoFar: boolean;
+    }) => Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
+    try {
+      const result = await activity({
+        conversationId: normalized.conversationId,
+        transcriptRevisionId,
+        partialSoFar: partial,
+      });
+      if (result.state !== 'COMPLETED') partial = true;
+    } catch (error) {
+      partial = true;
+      if (shouldHaltPipeline(stage.blocking, true)) throw error;
+    }
+  }
+
   await activities.completeProcessing({
     inboxId: input.inboxId,
     conversationId: normalized.conversationId,
-    partial: enrichment.state === 'PARTIAL',
+    partial,
   });
-  return { state: enrichment.state };
+  return { state: partial ? 'PARTIAL' : 'COMPLETED' };
 }
 
 export async function agentPublicationWorkflow(input: {
