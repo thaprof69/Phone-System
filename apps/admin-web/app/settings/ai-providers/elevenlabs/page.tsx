@@ -22,14 +22,23 @@ type IntegrationStatus = {
   connectionLabel?: string | null;
   environment?: string;
   credentialReference?: string | null;
-  workspace?: { providerWorkspaceId?: string; displayName?: string; region?: string } | null;
+  workspace?: { id: string; subscription: string | null } | null;
   defaultAgentId?: string | null;
   defaultVoiceId?: string | null;
-  agentCount?: number;
-  voiceCount?: number;
+  counts?: { agents: number; voices: number };
   capabilities?: Record<string, string>;
   lastVerifiedAt?: string | null;
   lastErrorCode?: string | null;
+  verifiedAgentName?: string | null;
+  agentVerifiedAt?: string | null;
+  receptionistDisplayName?: string | null;
+  greetingOverride?: string | null;
+  language?: string | null;
+  voiceTestingEnabled?: boolean;
+  chatTestingEnabled?: boolean;
+  transcriptCapture?: boolean;
+  summaryGeneration?: boolean;
+  escalationDetection?: boolean;
   productionRoutingEnabled: boolean;
 };
 
@@ -96,8 +105,10 @@ export default async function VoiceRuntimePage() {
             },
             {
               term: 'Workspace',
-              value: status.workspace?.displayName ?? 'Not connected',
-              ...(status.workspace?.region ? { hint: `Region ${status.workspace.region}` } : {}),
+              value: status.workspace?.id ?? 'Not connected',
+              ...(status.workspace?.subscription
+                ? { hint: `Subscription ${status.workspace.subscription}` }
+                : {}),
             },
             {
               term: 'Credential reference',
@@ -106,15 +117,61 @@ export default async function VoiceRuntimePage() {
             },
             {
               term: 'Agents in workspace',
-              value: status.agentCount === undefined ? '—' : formatNumber(status.agentCount),
+              value: status.counts ? formatNumber(status.counts.agents) : '—',
             },
             {
               term: 'Voices in workspace',
-              value: status.voiceCount === undefined ? '—' : formatNumber(status.voiceCount),
+              value: status.counts ? formatNumber(status.counts.voices) : '—',
+            },
+            {
+              term: 'Configured agent',
+              value: status.defaultAgentId ?? 'None configured',
+              hint: status.defaultAgentId
+                ? status.agentVerifiedAt
+                  ? `Verified${status.verifiedAgentName ? ` as "${status.verifiedAgentName}"` : ' (the provider did not report an agent name)'} on ${formatDateTime(status.agentVerifiedAt)}`
+                  : 'Not yet retrieved from ElevenLabs — save and test the connection to verify it.'
+                : 'A voice call cannot start without a configured, verified agent.',
             },
             {
               term: 'Last verified',
               value: status.lastVerifiedAt ? formatDateTime(status.lastVerifiedAt) : 'Never',
+            },
+          ]}
+        />
+      </Panel>
+
+      <Panel
+        title="Runtime configuration"
+        eyebrow="Persisted server-side"
+        description="These defaults apply to the connection and to Simulation Lab sessions. Per-agent conversation content is authored in Receptionist, not here."
+      >
+        <DefinitionList
+          items={[
+            {
+              term: 'Receptionist display name',
+              value: status.receptionistDisplayName ?? 'Not set',
+            },
+            { term: 'Greeting override', value: status.greetingOverride ?? 'Use agent default' },
+            { term: 'Language', value: status.language ?? 'Use agent default' },
+            {
+              term: 'Voice testing',
+              value: status.voiceTestingEnabled === false ? 'Disabled' : 'Enabled',
+            },
+            {
+              term: 'Chat testing',
+              value: status.chatTestingEnabled === false ? 'Disabled' : 'Enabled',
+            },
+            {
+              term: 'Transcript capture',
+              value: status.transcriptCapture === false ? 'Disabled' : 'Enabled',
+            },
+            {
+              term: 'Summary generation',
+              value: status.summaryGeneration ? 'Enabled' : 'Disabled',
+            },
+            {
+              term: 'Escalation detection',
+              value: status.escalationDetection ? 'Enabled' : 'Disabled',
             },
           ]}
         />

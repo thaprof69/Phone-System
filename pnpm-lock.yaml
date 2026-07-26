@@ -46,6 +46,9 @@ importers:
 
   apps/admin-web:
     dependencies:
+      '@elevenlabs/client':
+        specifier: 1.15.2
+        version: 1.15.2(@types/dom-mediacapture-record@1.0.22)
       '@quantum-parks/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -660,10 +663,28 @@ packages:
         integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==,
       }
 
+  '@bufbuild/protobuf@1.10.1':
+    resolution:
+      {
+        integrity: sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ==,
+      }
+
   '@drizzle-team/brocli@0.10.2':
     resolution:
       {
         integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==,
+      }
+
+  '@elevenlabs/client@1.15.2':
+    resolution:
+      {
+        integrity: sha512-Wft3afuoBx1eoZHJEuZi6kKs7hQrLsDYPXAtY7/bP4Kk8iOoIX2ADj57lheWKuFnnPnZYegTY3nFD+pfHEID7A==,
+      }
+
+  '@elevenlabs/types@0.17.1':
+    resolution:
+      {
+        integrity: sha512-nQphMY7LI94nByR3wY1HlCtLdvV8kjHWCvJ5xCTo+eRPgG+8w8qxwma6JsvTqow9VgIb2raD5KpFu8QQL/kjjg==,
       }
 
   '@emnapi/core@1.11.1':
@@ -2020,6 +2041,18 @@ packages:
     engines: { node: '>=10.0' }
     peerDependencies:
       tslib: '2'
+
+  '@livekit/mutex@1.1.1':
+    resolution:
+      {
+        integrity: sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw==,
+      }
+
+  '@livekit/protocol@1.42.2':
+    resolution:
+      {
+        integrity: sha512-0jeCwoMJKcwsZICg5S6RZM4xhJoF78qMvQELjACJQn6/VB+jmiySQKOSELTXvPBVafHfEbMlqxUw2UR1jTXs2g==,
+      }
 
   '@lukeed/csprng@1.1.0':
     resolution:
@@ -3387,6 +3420,12 @@ packages:
     resolution:
       {
         integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==,
+      }
+
+  '@types/dom-mediacapture-record@1.0.22':
+    resolution:
+      {
+        integrity: sha512-mUMZLK3NvwRLcAAT9qmcK+9p7tpU2FHdDsntR3YI4+GY88XrgG4XiE7u1Q2LAN2/FZOz/tdMDC3GQCR4T8nFuw==,
       }
 
   '@types/esrecurse@4.3.1':
@@ -5093,6 +5132,14 @@ packages:
       }
     engines: { node: '>= 12.0.0' }
 
+  livekit-client@2.16.1:
+    resolution:
+      {
+        integrity: sha512-PmOHiGdkzw2P/t0vLbJRwHU59+T+JcFlGTYDV7PObWmzvypIij1Vlj0WhZKDZ/Ac7CvwWinbiGCVw/Pb/OiYYw==,
+      }
+    peerDependencies:
+      '@types/dom-mediacapture-record': ^1
+
   load-esm@1.0.3:
     resolution:
       {
@@ -5125,6 +5172,13 @@ packages:
       {
         integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==,
       }
+
+  loglevel@1.9.2:
+    resolution:
+      {
+        integrity: sha512-HgMmCqIJSAKqo68l0rS2AanEWfkxaZ5wNiEFb5ggm08lDs9Xl2KxBlX3PTcaD2chBM1gXAYf491/M2Rv8Jwayg==,
+      }
+    engines: { node: '>= 0.6.0' }
 
   long@5.3.2:
     resolution:
@@ -5864,6 +5918,19 @@ packages:
       }
     engines: { node: '>= 10.13.0' }
 
+  sdp-transform@2.15.0:
+    resolution:
+      {
+        integrity: sha512-KrOH82c/W+GYQ0LHqtr3caRpM3ITglq3ljGUIb8LTki7ByacJZ9z+piSGiwZDsRyhQbYBOBJgr2k6X4BZXi3Kw==,
+      }
+    hasBin: true
+
+  sdp@3.2.2:
+    resolution:
+      {
+        integrity: sha512-xZocWwfyp4hkbN4hLWxMjmv2Q8aNa9MhmOZ7L9aCZPT+dZsgRr6wZRrSYE3HTdyk/2pZKPSgqI7ns7Een1xMSA==,
+      }
+
   secure-json-parse@4.1.0:
     resolution:
       {
@@ -6195,6 +6262,12 @@ packages:
     peerDependencies:
       typescript: '>=4.8.4'
 
+  ts-debounce@4.0.0:
+    resolution:
+      {
+        integrity: sha512-+1iDGY6NmOGidq7i7xZGA4cm8DAa6fqdYcvO5Z6yBevH++Bdo9Qt/mN0TzHUgcCcKv1gmh9+W5dHqz8pMWbCbg==,
+      }
+
   tslib@2.8.1:
     resolution:
       {
@@ -6222,6 +6295,12 @@ packages:
         integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==,
       }
     engines: { node: '>= 0.8.0' }
+
+  typed-emitter@2.1.0:
+    resolution:
+      {
+        integrity: sha512-g/KzbYKbH5C2vPkaXGu8DJlHrGKHLsM25Zg9WuC9pMGfuvT+X25tZQWo5fK1BjBm8+UrVE9LDCvaY0CQk+fXDA==,
+      }
 
   typescript-eslint@8.65.0:
     resolution:
@@ -6445,6 +6524,13 @@ packages:
     peerDependenciesMeta:
       webpack-cli:
         optional: true
+
+  webrtc-adapter@9.0.6:
+    resolution:
+      {
+        integrity: sha512-CHbl2ZQbxx164IgWRgzJno4hWtM4tFbRam1QfI3Yxhs3w/DvqluVxVWeXs3oL5/fbGkSNLKo0Ty5MgUWceNhog==,
+      }
+    engines: { node: '>=6.0.0', npm: '>=3.10.0' }
 
   which@2.0.2:
     resolution:
@@ -6696,7 +6782,18 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
+  '@bufbuild/protobuf@1.10.1': {}
+
   '@drizzle-team/brocli@0.10.2': {}
+
+  '@elevenlabs/client@1.15.2(@types/dom-mediacapture-record@1.0.22)':
+    dependencies:
+      '@elevenlabs/types': 0.17.1
+      livekit-client: 2.16.1(@types/dom-mediacapture-record@1.0.22)
+    transitivePeerDependencies:
+      - '@types/dom-mediacapture-record'
+
+  '@elevenlabs/types@0.17.1': {}
 
   '@emnapi/core@1.11.1':
     dependencies:
@@ -7334,6 +7431,12 @@ snapshots:
       '@jsonjoy.com/buffers': 17.67.0(tslib@2.8.1)
       '@jsonjoy.com/codegen': 17.67.0(tslib@2.8.1)
       tslib: 2.8.1
+
+  '@livekit/mutex@1.1.1': {}
+
+  '@livekit/protocol@1.42.2':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
 
   '@lukeed/csprng@1.1.0': {}
 
@@ -8203,6 +8306,8 @@ snapshots:
   '@types/d3-timer@3.0.2': {}
 
   '@types/deep-eql@4.0.2': {}
+
+  '@types/dom-mediacapture-record@1.0.22': {}
 
   '@types/esrecurse@4.3.1': {}
 
@@ -9200,6 +9305,20 @@ snapshots:
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
 
+  livekit-client@2.16.1(@types/dom-mediacapture-record@1.0.22):
+    dependencies:
+      '@livekit/mutex': 1.1.1
+      '@livekit/protocol': 1.42.2
+      '@types/dom-mediacapture-record': 1.0.22
+      events: 3.3.0
+      jose: 6.2.4
+      loglevel: 1.9.2
+      sdp-transform: 2.15.0
+      ts-debounce: 4.0.0
+      tslib: 2.8.1
+      typed-emitter: 2.1.0
+      webrtc-adapter: 9.0.6
+
   load-esm@1.0.3: {}
 
   loader-runner@4.3.2: {}
@@ -9211,6 +9330,8 @@ snapshots:
   lodash.camelcase@4.3.0: {}
 
   lodash@4.18.1: {}
+
+  loglevel@1.9.2: {}
 
   long@5.3.2: {}
 
@@ -9620,6 +9741,10 @@ snapshots:
       ajv-formats: 2.1.1(ajv@8.20.0)
       ajv-keywords: 5.1.0(ajv@8.20.0)
 
+  sdp-transform@2.15.0: {}
+
+  sdp@3.2.2: {}
+
   secure-json-parse@4.1.0: {}
 
   semver@7.8.5: {}
@@ -9832,6 +9957,8 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
+  ts-debounce@4.0.0: {}
+
   tslib@2.8.1: {}
 
   tsx@4.23.1:
@@ -9852,6 +9979,10 @@ snapshots:
   type-check@0.4.0:
     dependencies:
       prelude-ls: 1.2.1
+
+  typed-emitter@2.1.0:
+    optionalDependencies:
+      rxjs: 7.8.2
 
   typescript-eslint@8.65.0(eslint@10.0.1)(typescript@5.9.3):
     dependencies:
@@ -10011,6 +10142,10 @@ snapshots:
       - lightningcss
       - postcss
       - uglify-js
+
+  webrtc-adapter@9.0.6:
+    dependencies:
+      sdp: 3.2.2
 
   which@2.0.2:
     dependencies:

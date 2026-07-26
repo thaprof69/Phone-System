@@ -21,6 +21,7 @@ import { SettingsPage as DomainPage, LoadFailure } from '../../settings-page';
 import { apiGet } from '../../../../lib/api';
 import type { AgentListRow, TestRow, TestRunRow } from '../../../../lib/types';
 import { RunTestsForm, SyncRunButton } from '../test-actions';
+import { VoiceSessionPanel } from '../voice-session-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -198,7 +199,7 @@ export default async function TestRunsPage() {
 
       <Panel
         title="Run tests"
-        description="A run always evaluates a specific test version and produces provider-verified evidence — never a locally invented result."
+        description="Dispatches ElevenLabs' own automated test evaluation against the selected agent version and records its verdict — a scripted, provider-judged evaluation, not a live conversation with the agent."
       >
         <RunTestsForm
           agentVersions={agentOptions}
@@ -209,6 +210,14 @@ export default async function TestRunsPage() {
             riskLevel: test.riskLevel,
           }))}
         />
+      </Panel>
+
+      <Panel
+        title="Live voice call"
+        eyebrow="Real ElevenLabs session"
+        description="Places an actual live voice call to the selected agent version through ElevenLabs Conversational AI, using a short-lived session credential issued by the server. This is a live production-grade capability, not a test."
+      >
+        <VoiceSessionPanel agentVersions={agentOptions} />
       </Panel>
 
       <Panel title="All runs" eyebrow="Most recent first">

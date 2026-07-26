@@ -92,6 +92,7 @@ export interface ElevenLabsPort {
     cursor?: string,
     startedAfterUnix?: number,
   ): Promise<Result<ProviderConversationPage>>;
+  getSignedConversationUrl(agentId: string): Promise<Result<{ signedUrl: string }>>;
 }
 
 export type SecretResolver = (reference: string) => Promise<string>;
@@ -358,6 +359,14 @@ export class HttpElevenLabsAdapter implements ElevenLabsPort {
     if (startedAfterUnix !== undefined)
       query.set('call_start_after_unix', String(startedAfterUnix));
     return this.request<ProviderConversationPage>(`/v1/convai/conversations?${query.toString()}`);
+  }
+
+  async getSignedConversationUrl(agentId: string): Promise<Result<{ signedUrl: string }>> {
+    const result = await this.request<{ signed_url: string }>(
+      `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agentId)}`,
+    );
+    if (result.status !== 'SUCCESS') return result;
+    return success({ signedUrl: result.data.signed_url }, result.requestId);
   }
 }
 

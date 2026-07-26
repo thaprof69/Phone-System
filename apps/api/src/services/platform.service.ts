@@ -57,6 +57,7 @@ import {
   voiceConsentRecords,
   voicePreviews,
   voiceProfiles,
+  voiceSessions,
   webhookInboxEntries,
 } from '@quantum-parks/db';
 import {
@@ -2251,6 +2252,213 @@ export class PlatformService {
       failCount,
       providerStatus: result.status,
     };
+  }
+
+  /**
+   * Starts a real, live ElevenLabs Conversational AI session over the same in-sync
+   * provider mapping that `runProviderTests` uses — never a second parallel voice
+   * pipeline. The signed URL is a 15-minute, provider-issued, single-use credential;
+   * the permanent API key never leaves this service.
+   */
+  async startVoiceSession(input: { agentVersionId: string; principal: Principal }) {
+    const release = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.id, input.agentVersionId),
+    });
+    if (!release) return { status: 'NOT_FOUND', message: 'Agent release does not exist' };
+    const deployment = await this.database.db.query.agentDeployments.findFirst({
+      where: and(
+        eq(agentDeployments.agentVersionId, input.agentVersionId),
+        eq(agentDeployments.syncState, 'IN_SYNC'),
+      ),
+      orderBy: [desc(agentDeployments.publishedAt)],
+    });
+    if (!deployment?.providerAgentId)
+      return {
+        status: 'BLOCKED',
+        blockers: [
+          'Agent release has no in-sync provider mapping; publish it before starting a live call',
+        ],
+      };
+    const provider = await this.providerAdapter();
+    const agent = await provider.getAgent(
+      deployment.providerAgentId,
+      deployment.providerBranchId ?? undefined,
+    );
+    if (agent.status !== 'SUCCESS')
+      return {
+        status: 'BLOCKED',
+        blockers: [`ElevenLabs could not confirm this agent: ${agent.error.safeMessage}`],
+      };
+    const signed = await provider.getSignedConversationUrl(deployment.providerAgentId);
+    if (signed.status !== 'SUCCESS') return signed;
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 15 * 60_000);
+    const [session] = await this.database.db
+      .insert(voiceSessions)
+      .values({
+        agentId: release.agentId,
+        agentDeploymentId: deployment.id,
+        workspaceId: deployment.workspaceId,
+        environment: deployment.environment,
+        status: 'INITIATED',
+        initiatedBy: input.principal.subject,
+        signedUrlExpiresAt: expiresAt,
+        synthetic: deployment.environment !== 'production',
+      })
+      .returning();
+    if (!session) throw new Error('Voice session was not persisted');
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: input.principal.subject,
+      action: 'VOICE_SESSION_STARTED',
+      aggregateType: 'VoiceSession',
+      aggregateId: session.id,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: {
+        agentVersionId: input.agentVersionId,
+        providerAgentId: deployment.providerAgentId,
+        environment: deployment.environment,
+      },
+    });
+
+    return {
+      status: 'SUCCESS' as const,
+      sessionId: session.id,
+      signedUrl: signed.data.signedUrl,
+      expiresAt: expiresAt.toISOString(),
+      environment: deployment.environment,
+      synthetic: session.synthetic,
+    };
+  }
+
+  async attachVoiceSessionConversation(
+    sessionId: string,
+    input: { providerConversationId: string },
+    principal: Principal,
+  ) {
+    const session = await this.database.db.query.voiceSessions.findFirst({
+      where: eq(voiceSessions.id, sessionId),
+    });
+    if (!session) return { status: 'NOT_FOUND' };
+    const now = new Date();
+    await this.database.db
+      .update(voiceSessions)
+      .set({
+        status: 'CONNECTED',
+        providerConversationId: input.providerConversationId,
+        connectedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(voiceSessions.id, sessionId));
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'VOICE_SESSION_CONNECTED',
+      aggregateType: 'VoiceSession',
+      aggregateId: sessionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { providerConversationId: input.providerConversationId },
+    });
+    return { status: 'CONNECTED' as const };
+  }
+
+  async endVoiceSession(
+    sessionId: string,
+    input: { reason: string; errorCode?: string | undefined },
+    principal: Principal,
+  ) {
+    const session = await this.database.db.query.voiceSessions.findFirst({
+      where: eq(voiceSessions.id, sessionId),
+    });
+    if (!session) return { status: 'NOT_FOUND' };
+    const now = new Date();
+    const finalStatus = input.errorCode ? ('FAILED' as const) : ('ENDED' as const);
+    await this.database.db
+      .update(voiceSessions)
+      .set({
+        status: finalStatus,
+        endedAt: now,
+        endReason: input.reason,
+        errorCode: input.errorCode ?? null,
+        updatedAt: now,
+      })
+      .where(eq(voiceSessions.id, sessionId));
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'VOICE_SESSION_ENDED',
+      aggregateType: 'VoiceSession',
+      aggregateId: sessionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      result: finalStatus,
+      payload: { reason: input.reason, errorCode: input.errorCode ?? null },
+    });
+    return { status: finalStatus };
+  }
+
+  async getVoiceSession(sessionId: string) {
+    const session = await this.database.db.query.voiceSessions.findFirst({
+      where: eq(voiceSessions.id, sessionId),
+    });
+    if (!session) return { status: 'NOT_FOUND' as const };
+    let localConversationId: string | null = null;
+    if (session.providerConversationId) {
+      const providerConversation = await this.database.db.query.providerConversations.findFirst({
+        where: and(
+          eq(providerConversations.workspaceId, session.workspaceId),
+          eq(providerConversations.providerConversationId, session.providerConversationId),
+        ),
+      });
+      if (providerConversation) {
+        const local = await this.database.db.query.conversations.findFirst({
+          where: eq(conversations.providerConversationId, providerConversation.id),
+        });
+        localConversationId = local?.id ?? null;
+      }
+    }
+    return {
+      status: session.status,
+      sessionId: session.id,
+      agentId: session.agentId,
+      environment: session.environment,
+      providerConversationId: session.providerConversationId,
+      localConversationId,
+      transcriptEvidenceState: session.providerConversationId
+        ? localConversationId
+          ? ('AVAILABLE' as const)
+          : ('PENDING_WEBHOOK' as const)
+        : ('NOT_YET_INSTRUMENTED' as const),
+      connectedAt: session.connectedAt?.toISOString() ?? null,
+      endedAt: session.endedAt?.toISOString() ?? null,
+      endReason: session.endReason,
+      errorCode: session.errorCode,
+      synthetic: session.synthetic,
+      createdAt: session.createdAt.toISOString(),
+    };
+  }
+
+  async listVoiceSessions(agentVersionId?: string) {
+    if (agentVersionId) {
+      const deployments = await this.database.db
+        .select({ id: agentDeployments.id })
+        .from(agentDeployments)
+        .where(eq(agentDeployments.agentVersionId, agentVersionId));
+      const ids = deployments.map((row) => row.id);
+      if (ids.length === 0) return [];
+      return this.database.db
+        .select()
+        .from(voiceSessions)
+        .where(inArray(voiceSessions.agentDeploymentId, ids))
+        .orderBy(desc(voiceSessions.createdAt))
+        .limit(50);
+    }
+    return this.database.db
+      .select()
+      .from(voiceSessions)
+      .orderBy(desc(voiceSessions.createdAt))
+      .limit(50);
   }
 
   async listOperations() {

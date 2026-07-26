@@ -70,6 +70,7 @@ const permissionMatrix: Record<string, Role[]> = {
   'knowledge:write': ['KNOWLEDGE_EDITOR'],
   'knowledge:approve': ['KNOWLEDGE_APPROVER'],
   'test:write': ['QA_REVIEWER', 'AGENT_ADMIN'],
+  'voice:live': ['QA_REVIEWER', 'AGENT_ADMIN', 'PLATFORM_OWNER'],
   'calls:read': [
     'QA_REVIEWER',
     'OPERATIONS_MANAGER',

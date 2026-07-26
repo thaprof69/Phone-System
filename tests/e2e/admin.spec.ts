@@ -232,6 +232,23 @@ test('AI Providers and AI Routing expose every area without a placeholder', asyn
   }
 });
 
+test('the ElevenLabs connection dialog offers exactly one primary save action', async ({
+  page,
+}) => {
+  await page.goto('/settings/ai-providers/elevenlabs');
+
+  await page.getByRole('button', { name: /^(Connect|Manage)$/ }).click();
+  const dialog = page.locator('dialog.integration-dialog');
+  await expect(dialog).toBeVisible();
+
+  // The old two-step "Test connection" then "Save connection" pair no longer
+  // exists as a separate bare "Test connection" action — testing and saving a
+  // new or rotated credential happen as one server-verified step, and the
+  // footer never shows more than one `.button.primary` to choose between.
+  await expect(dialog.getByRole('button', { name: 'Test connection', exact: true })).toHaveCount(0);
+  await expect(dialog.locator('footer .button.primary')).toHaveCount(1);
+});
+
 test('the audit log is presented as a verifiable chain', async ({ page }) => {
   await page.goto('/settings/administration/audit');
   await expect(page.getByText('Chain intact')).toBeVisible();
@@ -261,12 +278,43 @@ test('the environment is labelled honestly as a simulator', async ({ page }) => 
 });
 
 test('no provider secret reaches the browser', async ({ page }) => {
-  for (const path of ['/settings/ai-providers/elevenlabs', '/settings/ai-routing']) {
+  for (const path of [
+    '/settings/ai-providers/elevenlabs',
+    '/settings/ai-routing',
+    '/settings/simulation/results',
+  ]) {
     await page.goto(path);
     const body = (await page.locator('body').textContent()) ?? '';
     expect(body).not.toContain('sk_');
     expect(body).not.toContain('sk-');
     expect(body).not.toContain('xi-api-key');
+  }
+});
+
+test('a live voice session response never carries the permanent provider API key', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/settings/simulation/results');
+
+  const responses: string[] = [];
+  page.on('response', (response) => {
+    if (response.url().includes('/api/admin/voice-sessions')) {
+      response
+        .text()
+        .then((text) => responses.push(text))
+        .catch(() => undefined);
+    }
+  });
+
+  const liveCall = page.getByRole('region', { name: 'Live voice call' });
+  await liveCall.getByLabel('Agent version').selectOption({ index: 1 });
+  await liveCall.getByRole('button', { name: 'Start voice call' }).click();
+  await expect(liveCall.getByText('Refused', { exact: true })).toBeVisible();
+
+  for (const body of responses) {
+    expect(body).not.toContain('xi-api-key');
+    expect(body).not.toMatch(/sk[_-]/);
   }
 });
 
@@ -1019,17 +1067,55 @@ test('starting a test run against a release that is not staged for testing is re
   test.setTimeout(120_000);
   await page.goto('/settings/simulation/results');
 
-  await page.getByLabel('Agent version').selectOption({ index: 1 });
+  const runTests = page.getByRole('region', { name: 'Run tests' });
+  await runTests.getByLabel('Agent version').selectOption({ index: 1 });
   const firstCase = page.locator('.test-case-checklist input[type="checkbox"]').first();
   if (await firstCase.isVisible().catch(() => false)) {
     await firstCase.check();
   }
-  await page.getByRole('button', { name: 'Run tests' }).click();
+  await runTests.getByRole('button', { name: 'Run tests' }).click();
 
   // Whichever release the first option resolves to, the platform states the real
   // reason a run cannot start rather than silently doing nothing — a release that
   // happens to be staged for testing would instead show a real run being created.
   await expect(page.getByText(/Refused|Saved/).first()).toBeVisible();
+});
+
+test('the live voice call panel is a real, distinct capability from provider test evaluation', async ({
+  page,
+}) => {
+  await page.goto('/settings/simulation/results');
+
+  const runTests = page.getByRole('region', { name: 'Run tests' });
+  await expect(
+    runTests.getByText(/provider-judged evaluation, not a live conversation/),
+  ).toBeVisible();
+
+  const liveCall = page.getByRole('region', { name: 'Live voice call' });
+  await expect(liveCall).toBeVisible();
+  await expect(
+    liveCall.getByText(/real, live ElevenLabs voice call over your microphone/),
+  ).toBeVisible();
+  await expect(liveCall.getByRole('button', { name: 'Start voice call' })).toBeVisible();
+});
+
+test('starting a live voice call against an agent with no in-sync provider mapping is refused honestly', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/settings/simulation/results');
+
+  const liveCall = page.getByRole('region', { name: 'Live voice call' });
+  await liveCall.getByLabel('Agent version').selectOption({ index: 1 });
+  await liveCall.getByRole('button', { name: 'Start voice call' }).click();
+
+  // The seeded synthetic agent versions have no genuinely in-sync ElevenLabs
+  // deployment, so this must fail with the real server-stated reason — never a
+  // silently fabricated session.
+  await expect(liveCall.getByText('Refused', { exact: true })).toBeVisible();
+  await expect(
+    liveCall.getByText(/no in-sync provider mapping|could not be retrieved/),
+  ).toBeVisible();
 });
 
 test('a running test can be synced with the provider, and a completed run offers no such action', async ({

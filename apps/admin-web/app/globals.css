@@ -1340,6 +1340,16 @@ td a {
   background: white;
   font-size: 11px;
 }
+.integration-form .checkbox-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.integration-form .checkbox-field input {
+  width: auto;
+  min-height: 0;
+}
 .test-result,
 .disconnect-confirm {
   display: flex;

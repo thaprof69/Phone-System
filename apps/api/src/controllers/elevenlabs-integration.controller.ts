@@ -15,18 +15,30 @@ const TestSchema = z
     apiKey: z.string().min(8).max(512),
     connectionLabel: z.string().trim().min(2).max(100),
     environment: EnvironmentSchema,
+    defaultAgentId: SafeProviderIdSchema.optional(),
   })
   .strict();
+const RuntimeConfigFields = {
+  receptionistDisplayName: z.string().trim().min(1).max(100).nullable().optional(),
+  greetingOverride: z.string().trim().min(1).max(500).nullable().optional(),
+  language: z.string().trim().min(2).max(20).nullable().optional(),
+  voiceTestingEnabled: z.boolean().optional(),
+  chatTestingEnabled: z.boolean().optional(),
+  transcriptCapture: z.boolean().optional(),
+  summaryGeneration: z.boolean().optional(),
+  escalationDetection: z.boolean().optional(),
+};
 const ConnectSchema = TestSchema.extend({
   validationProof: z.string().min(20).max(2_000),
-  defaultAgentId: SafeProviderIdSchema.optional(),
   defaultVoiceId: SafeProviderIdSchema.optional(),
+  ...RuntimeConfigFields,
 }).strict();
 const UpdateSchema = z
   .object({
     connectionLabel: z.string().trim().min(2).max(100).optional(),
     defaultAgentId: SafeProviderIdSchema.nullable().optional(),
     defaultVoiceId: SafeProviderIdSchema.nullable().optional(),
+    ...RuntimeConfigFields,
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0);

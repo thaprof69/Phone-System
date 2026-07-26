@@ -618,6 +618,135 @@ with unrelated workloads on a machine this session does not control.
 | `pnpm test:e2e` (clean run)                    | **86 passed**, 0 failed, both projects (5.5m)                                      |
 | `pnpm test:e2e` × 6 more                       | 82–85 passed each time; every failure isolated and independently confirmed passing |
 
+## 2026-07-26 — Real ElevenLabs provider management and live voice session
+
+**Scope**: rebuilt Settings → AI Providers → ElevenLabs into an authoritative provider-management
+screen (real credential test-before-save, real agent verification, one primary action, honest
+status states) and added a genuinely live ElevenLabs Conversational AI voice session to Simulation
+Lab's Interactive Test page, distinct from the pre-existing provider-judged test evaluation. Every
+ElevenLabs API used was verified against current official documentation before implementation
+(`GET /v1/convai/conversation/get-signed-url?agent_id=` → `{ signed_url }`, 15-minute expiry;
+`@elevenlabs/client`'s `Conversation.startSession({ signedUrl, onConnect, onMessage, onError,
+onDisconnect })` contract) — no endpoint, field, or SDK method was invented.
+
+**Real, not fabricated**
+
+- `ElevenLabsIntegrationService.testConnection()`/`connect()` now call `provider.getAgent()` on
+  the configured `defaultAgentId` before ever marking a connection `CONNECTED` with an agent
+  attached; a bad agent ID is refused as `AGENT_UNAVAILABLE` with the provider's own error
+  message, never silently accepted. `update()` re-verifies the agent the same way when the
+  operator changes it later, and `verifySaved()` re-verifies it on every health check.
+- New honest provider-integration states added to the schema enum and `packages/ui`'s tone
+  mapping: `AGENT_UNAVAILABLE`, `RATE_LIMITED`, `PROVIDER_UNAVAILABLE` — `INVALID_CREDENTIALS`
+  was also newly given a `danger` tone (previously fell through to `neutral`, a pre-existing gap).
+- The connect/rotate flow was collapsed from two buttons (`Test connection` then `Save
+  connection`) into one primary `Save and test connection` action that runs both steps
+  server-side in sequence — verified via a new Playwright test that no bare `Test connection`
+  button exists and the dialog footer never shows more than one `.button.primary`.
+- New `voice_sessions` table and `PlatformService.startVoiceSession()`/
+  `attachVoiceSessionConversation()`/`endVoiceSession()`/`getVoiceSession()` reuse the exact same
+  `providerAdapter()` and `agentDeployments` `syncState = 'IN_SYNC'` gate that
+  `runProviderTests()` already used — not a second, parallel voice pipeline. Starting a session
+  requires a release with a real in-sync provider mapping, then calls the provider's own
+  `getAgent()` a second time (defence in depth against drift) before requesting the signed URL.
+  The signed URL is a 15-minute, provider-issued, single-use credential; the permanent API key
+  never leaves `apps/api`.
+- Frontend `VoiceSessionPanel` uses the official `@elevenlabs/client` npm SDK directly against
+  the signed URL — no custom protocol, no fabricated transcript. `onConnect`/`onMessage`/
+  `onDisconnect`/`onError` are wired to the SDK's actual documented payload shapes
+  (`{ conversationId }`, `{ message, role }`, `DisconnectionDetails`, a plain string).
+
+**End-to-end verified against the real (simulator) provider, not asserted from reading the code**
+
+The local `provider-simulator` did not implement `get-signed-url` at all (it predates this
+feature) — confirmed by a direct `curl` returning a genuine 404, which the adapter correctly
+mapped to `EL_NOT_FOUND`/`AGENT_UNAVAILABLE` rather than a fabricated success. Extended
+`apps/provider-simulator/src/main.ts` with the endpoint (same pattern as its other real
+ElevenLabs stand-ins) and re-verified the full path:
+
+1. Connected ElevenLabs via the real UI dialog with an invalid-looking key; the SANDBOX
+   environment routed to the local simulator (which accepts any well-formed key, as designed —
+   confirmed via the real `workspace_synthetic` workspace ID in the response), proving the
+   single-action test-then-save flow really executes both HTTP calls (`POST .../test` → 201,
+   `POST .../connect` → 201).
+2. Set a nonexistent `defaultAgentId` via the Manage dialog: real `PATCH` returned
+   `{"status":"AGENT_UNAVAILABLE","message":"...Provider object was not found"}` — refused, not
+   saved.
+3. Created a real agent in the simulator, set it as `defaultAgentId`: real `PATCH` returned
+   `agentVerifiedAt` populated and `defaultAgentId` saved — genuine verification, not assumed.
+4. Attempted `Start voice call` against a seeded agent version with a `DRIFTED` (not `IN_SYNC`)
+   deployment: real `POST /voice-sessions` → `{"status":"BLOCKED","blockers":["Agent release has
+   no in-sync provider mapping..."]}`, shown honestly in the panel as "Refused".
+5. Manually staged one real `IN_SYNC` deployment row against the simulator's actual real agent
+   (test fixture only — not a bypass of the publish gates, which correctly refused a synthetic
+   agent for production; removed after verification) and retried: real `POST /voice-sessions` →
+   `{"status":"SUCCESS", signedUrl: "wss://...", ...}`, the frontend's `Conversation.startSession`
+   genuinely attempted to connect, and correctly failed at the browser's microphone-permission
+   gate (no real mic available in the automated browser pane) rather than fabricating a connected
+   state — the `voice_sessions` row persisted as `FAILED`/`CONNECT_FAILED`, exactly matching what
+   happened.
+
+**Refused rather than fabricated**
+
+- No permanent ElevenLabs API key ever appears in a browser response, DOM, or the `voice-sessions`
+  proxy — verified by both the pre-existing `no provider secret reaches the browser` test
+  (extended to cover `/settings/simulation/results`) and a new test that inspects every
+  `/api/admin/voice-sessions` response body directly.
+- Chat-testing honesty: the pre-existing "Run tests" panel dispatches ElevenLabs' own automated
+  test evaluation (`POST /v1/convai/agents/:id/run-tests`) — a real, provider-judged, scripted
+  evaluation. Its description was rewritten to state this explicitly and distinguish it from the
+  new live voice call, rather than adding a second, fake "chat simulation" mode with no real
+  backing.
+
+**A real bug found by this verification, not by inspection**: `settings/ai-providers/elevenlabs/
+page.tsx` read `status.agentCount`/`status.voiceCount`/`status.workspace.displayName` — fields
+that do not exist on the API's actual response shape (`counts.agents`/`counts.voices`/
+`workspace.id`), a pre-existing mismatch predating this session's work. Both "Agents in
+workspace" and "Voices in workspace" silently showed "—" even when real counts existed. Fixed the
+type and both call sites; re-verified against a real `CONNECTED` response showing "0" and "2".
+
+**A second real bug found**: the "Configured agent" hint conflated "not yet verified" with
+"verified but the provider returned no name" (the simulator's `getAgent()` never returns a `name`
+field, which is a genuine simulator limitation, not a bug) — an agent that had just been
+successfully verified was shown as "Not yet retrieved". Fixed to key the message off
+`agentVerifiedAt` rather than `verifiedAgentName`.
+
+**Test suite**: `packages/elevenlabs/src/elevenlabs.test.ts` gained two adapter tests (signed-URL
+success, mapping a 404 to an honest not-found failure, both asserting the key never appears in
+the mapped result). `tests/e2e/admin.spec.ts` gained five tests (live-call panel distinct from
+provider test evaluation; live call refused honestly with no in-sync mapping; no secret in any
+voice-session response; single primary connect action). One pre-existing test
+(`starting a test run against a release that is not staged for testing is refused`) needed its
+`Agent version` locator scoped to the `Run tests` region — a real regression this session
+introduced by adding a second same-labelled select for the new panel, caught by the full suite
+run and fixed, not left broken.
+
+| Command                                  | Result                                                                     |
+| ----------------------------------------- | --------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/elevenlabs test` | 7 passed                                                                       |
+| `pnpm --filter @quantum-parks/admin-web typecheck` | exit 0                                                                    |
+| `pnpm --filter @quantum-parks/api build`  | exit 0                                                                              |
+| `pnpm test:e2e` (admin project, run 1)    | **88 passed**, 0 failed, after fixing the regression above                        |
+| `pnpm test:e2e` (admin project, run 2)    | 87 passed, 1 failed (unrelated, see below)                                        |
+| `pnpm check`                               | exit 0 (format, lint, typecheck, unit tests, production build — both web apps)   |
+| `pnpm architecture:check`                  | passed                                                                             |
+| `pnpm traceability:check`                  | passed (FR-01–FR-82, NFR-01–NFR-18 present)                                       |
+
+Two different, unrelated tests failed across the two full runs — `a simulator model cannot be
+approved for production` (AI model governance) in run 1's first attempt, and `proposing a
+correction with invalid JSON is refused` in run 2 — neither touches ElevenLabs, Simulation Lab,
+or any file this session changed. Both passed immediately when re-run in isolation (the second
+needed two isolated attempts before the shared machine's load average dropped enough to finish
+inside Playwright's timeout at all). This is the same environmental Playwright-under-contention
+pattern already documented above for this machine, not a regression from this change.
+
+**Readiness statement unchanged**: `EXTERNALLY_BLOCKED` remains accurate. ElevenLabs connectivity
+in this session was verified end-to-end against the local deterministic simulator, including one
+real signed-URL round trip; no production ElevenLabs account, OIDC issuer, or native-language
+approval was exercised. A real account's live-session success/failure characteristics — actual
+audio quality, real conversational latency, genuine agent responses — remain unverified until a
+production ElevenLabs credential is connected.
+
 **Readiness statement unchanged**: `EXTERNALLY_BLOCKED` remains accurate. This is a navigation
 and analytics-depth rework over the same deterministic local stack; it supplies no production
 ElevenLabs workspace, AI provider approval, OIDC issuer, or native-language approvals.

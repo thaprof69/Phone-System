@@ -39,6 +39,9 @@ export const providerIntegrationStatusEnum = pgEnum('provider_integration_status
   'CONNECTED',
   'DEGRADED',
   'INVALID_CREDENTIALS',
+  'AGENT_UNAVAILABLE',
+  'RATE_LIMITED',
+  'PROVIDER_UNAVAILABLE',
   'DISCONNECTED',
   'ERROR',
 ]);
@@ -272,6 +275,16 @@ export const providerIntegrations = pgTable(
     lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
     lastErrorCode: text('last_error_code'),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),
+    verifiedAgentName: text('verified_agent_name'),
+    agentVerifiedAt: timestamp('agent_verified_at', { withTimezone: true }),
+    receptionistDisplayName: text('receptionist_display_name'),
+    greetingOverride: text('greeting_override'),
+    language: text('language'),
+    voiceTestingEnabled: boolean('voice_testing_enabled').default(true).notNull(),
+    chatTestingEnabled: boolean('chat_testing_enabled').default(true).notNull(),
+    transcriptCapture: boolean('transcript_capture').default(true).notNull(),
+    summaryGeneration: boolean('summary_generation').default(false).notNull(),
+    escalationDetection: boolean('escalation_detection').default(false).notNull(),
     createdBy: text('created_by').notNull(),
     updatedBy: text('updated_by').notNull(),
     ...timestamps,
@@ -391,6 +404,37 @@ export const agentDriftFindings = pgTable('agent_drift_findings', {
   remoteValueHash: text('remote_value_hash'),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolution: text('resolution'),
+  ...timestamps,
+});
+
+export const voiceSessionStatusEnum = pgEnum('voice_session_status', [
+  'INITIATED',
+  'CONNECTED',
+  'ENDED',
+  'FAILED',
+]);
+
+export const voiceSessions = pgTable('voice_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  agentId: uuid('agent_id')
+    .references(() => voiceAgents.id)
+    .notNull(),
+  agentDeploymentId: uuid('agent_deployment_id')
+    .references(() => agentDeployments.id)
+    .notNull(),
+  workspaceId: uuid('workspace_id')
+    .references(() => providerWorkspaces.id)
+    .notNull(),
+  environment: environmentEnum('environment').notNull(),
+  status: voiceSessionStatusEnum('status').default('INITIATED').notNull(),
+  providerConversationId: text('provider_conversation_id'),
+  initiatedBy: text('initiated_by').notNull(),
+  signedUrlExpiresAt: timestamp('signed_url_expires_at', { withTimezone: true }).notNull(),
+  connectedAt: timestamp('connected_at', { withTimezone: true }),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  endReason: text('end_reason'),
+  errorCode: text('error_code'),
+  synthetic: boolean('synthetic').default(false).notNull(),
   ...timestamps,
 });
 

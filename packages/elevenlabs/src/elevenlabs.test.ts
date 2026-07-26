@@ -152,4 +152,55 @@ describe('ElevenLabs test adapter contract', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('requests a signed conversation URL for the real live-session endpoint and never leaks the key', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; key: string | null }> = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, key: headers.get('xi-api-key') });
+      if (url.endsWith('/v1/convai/conversation/get-signed-url?agent_id=agent-1'))
+        return new Response(
+          JSON.stringify({ signed_url: 'wss://api.elevenlabs.test/v1/convai/conversation?x=1' }),
+          { status: 200 },
+        );
+      throw new Error(`Unexpected request ${url}`);
+    };
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'server-only-secret',
+      });
+      const result = await adapter.getSignedConversationUrl('agent-1');
+      expect(result).toEqual({
+        status: 'SUCCESS',
+        data: { signedUrl: 'wss://api.elevenlabs.test/v1/convai/conversation?x=1' },
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.key).toBe('server-only-secret');
+      expect(JSON.stringify(result)).not.toContain('server-only-secret');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('maps a 404 from the signed-url endpoint to an honest not-found failure, never a fabricated URL', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({}), { status: 404 });
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'secret',
+      });
+      const result = await adapter.getSignedConversationUrl('missing-agent');
+      expect(result).toMatchObject({ status: 'NOT_FOUND', error: { code: 'EL_NOT_FOUND' } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

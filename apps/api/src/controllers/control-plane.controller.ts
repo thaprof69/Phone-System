@@ -168,6 +168,16 @@ const TestRunSchema = z
     repeatCount: z.number().int().min(1).max(50),
   })
   .strict();
+const StartVoiceSessionSchema = z.object({ agentVersionId: z.uuid() }).strict();
+const AttachVoiceSessionSchema = z
+  .object({ providerConversationId: z.string().min(1).max(200) })
+  .strict();
+const EndVoiceSessionSchema = z
+  .object({
+    reason: z.string().min(1).max(200),
+    errorCode: z.string().min(1).max(100).optional(),
+  })
+  .strict();
 const StaffTaskSchema = z
   .object({
     conversationId: z.uuid(),
@@ -534,6 +544,48 @@ export class ControlPlaneController {
   @Post('test-runs/:id/sync')
   syncTestRun(@Param('id') id: string) {
     return this.platform.syncProviderTestRun(id);
+  }
+  /**
+   * Live ElevenLabs Conversational AI session, not a test run — the signed URL is a
+   * 15-minute, provider-issued, single-use credential handed to the browser. The
+   * permanent API key stays server-side; `voice:live` is distinct from `test:write`
+   * because starting a live call is a runtime action, not release authoring.
+   */
+  @RequirePermission('voice:live')
+  @Post('voice-sessions')
+  startVoiceSession(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
+    const input = StartVoiceSessionSchema.parse(body);
+    return this.platform.startVoiceSession({ ...input, principal: request.principal });
+  }
+  @RequirePermission('voice:live')
+  @Get('voice-sessions')
+  listVoiceSessions(@Query('agentVersionId') agentVersionId?: string) {
+    return this.platform.listVoiceSessions(agentVersionId);
+  }
+  @RequirePermission('voice:live')
+  @Get('voice-sessions/:id')
+  getVoiceSession(@Param('id') id: string) {
+    return this.platform.getVoiceSession(id);
+  }
+  @RequirePermission('voice:live')
+  @Post('voice-sessions/:id/attach')
+  attachVoiceSession(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = AttachVoiceSessionSchema.parse(body);
+    return this.platform.attachVoiceSessionConversation(id, input, request.principal);
+  }
+  @RequirePermission('voice:live')
+  @Post('voice-sessions/:id/end')
+  endVoiceSession(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = EndVoiceSessionSchema.parse(body);
+    return this.platform.endVoiceSession(id, input, request.principal);
   }
   @RequirePermission('calls:read', 'OPERATIONS')
   @Get('operations')

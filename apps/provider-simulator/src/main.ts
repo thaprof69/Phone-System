@@ -165,6 +165,18 @@ app.post<{
   return { deploymentId: `deployment_${randomUUID()}` };
 });
 
+app.get<{ Querystring: { agent_id?: string } }>(
+  '/v1/convai/conversation/get-signed-url',
+  async (request, reply) => {
+    const agentId = request.query.agent_id;
+    if (!agentId || !agents.has(agentId))
+      return reply.code(404).send({ detail: 'Agent not found' });
+    return {
+      signed_url: `wss://simulator.local/v1/convai/conversation?agent_id=${encodeURIComponent(agentId)}&synthetic_session=${randomUUID()}`,
+    };
+  },
+);
+
 app.post<{ Body: { name: string; text: string } }>(
   '/v1/convai/knowledge-base/text',
   async (request) => {

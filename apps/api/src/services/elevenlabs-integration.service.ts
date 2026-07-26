@@ -20,6 +20,9 @@ export type IntegrationConnectionStatus =
   | 'CONNECTED'
   | 'DEGRADED'
   | 'INVALID_CREDENTIALS'
+  | 'AGENT_UNAVAILABLE'
+  | 'RATE_LIMITED'
+  | 'PROVIDER_UNAVAILABLE'
   | 'DISCONNECTED'
   | 'ERROR';
 
@@ -27,12 +30,35 @@ type TestInput = {
   apiKey: string;
   connectionLabel: string;
   environment: IntegrationEnvironment;
-};
-type ConnectInput = TestInput & {
-  validationProof: string;
   defaultAgentId?: string | undefined;
-  defaultVoiceId?: string | undefined;
 };
+type RuntimeConfigInput = {
+  receptionistDisplayName?: string | null | undefined;
+  greetingOverride?: string | null | undefined;
+  language?: string | null | undefined;
+  voiceTestingEnabled?: boolean | undefined;
+  chatTestingEnabled?: boolean | undefined;
+  transcriptCapture?: boolean | undefined;
+  summaryGeneration?: boolean | undefined;
+  escalationDetection?: boolean | undefined;
+};
+type ConnectInput = TestInput &
+  RuntimeConfigInput & {
+    validationProof: string;
+    defaultVoiceId?: string | undefined;
+  };
+type TestConnectionResult =
+  | { status: IntegrationConnectionStatus; verified: false; message: string }
+  | {
+      status: 'CONNECTED';
+      verified: true;
+      validationProof: string;
+      expiresInSeconds: number;
+      workspace: { id: string; subscription: string | null };
+      counts: { agents: number; voices: number };
+      capabilities: Record<string, unknown>;
+      verifiedAgent?: { id: string; name: string | null };
+    };
 
 @Injectable()
 export class ElevenLabsIntegrationService {
@@ -77,12 +103,13 @@ export class ElevenLabsIntegrationService {
 
   private providerFailureStatus(code: string): IntegrationConnectionStatus {
     if (code === 'EL_AUTH' || code === 'EL_FORBIDDEN') return 'INVALID_CREDENTIALS';
+    if (code === 'EL_RATE_LIMIT') return 'RATE_LIMITED';
     if (code === 'EL_TIMEOUT' || code === 'EL_NETWORK' || code === 'EL_UNAVAILABLE')
-      return 'DEGRADED';
+      return 'PROVIDER_UNAVAILABLE';
     return 'ERROR';
   }
 
-  async testConnection(input: TestInput, principal: Principal) {
+  async testConnection(input: TestInput, principal: Principal): Promise<TestConnectionResult> {
     this.enforceValidationLimit(principal.subject);
     const provider = this.adapter(input.apiKey, input.environment);
     const workspace = await provider.getWorkspace();
@@ -123,12 +150,37 @@ export class ElevenLabsIntegrationService {
     }
     const agentCount = agents.status === 'SUCCESS' ? agents.data.length : 0;
     const voiceCount = voices.status === 'SUCCESS' ? voices.data.length : 0;
+
+    let verifiedAgent: { id: string; name: string | null } | undefined;
+    if (input.defaultAgentId) {
+      const agent = await provider.getAgent(input.defaultAgentId);
+      if (agent.status !== 'SUCCESS') {
+        await this.auditAction(
+          principal,
+          'ELEVENLABS_CONNECTION_TESTED',
+          workspace.data.workspaceId,
+          'AGENT_UNAVAILABLE',
+          { environment: input.environment, agentId: input.defaultAgentId },
+        );
+        return {
+          status: 'AGENT_UNAVAILABLE' as const,
+          verified: false,
+          message: `The configured agent could not be retrieved from ElevenLabs: ${agent.error.safeMessage}`,
+        };
+      }
+      const name = agent.data.name;
+      verifiedAgent = {
+        id: input.defaultAgentId,
+        name: typeof name === 'string' ? name : null,
+      };
+    }
+
     await this.auditAction(
       principal,
       'ELEVENLABS_CONNECTION_TESTED',
       workspace.data.workspaceId,
       'CONNECTED',
-      { environment: input.environment, agentCount, voiceCount },
+      { environment: input.environment, agentCount, voiceCount, verifiedAgent },
     );
     return {
       status: 'CONNECTED' as const,
@@ -145,6 +197,7 @@ export class ElevenLabsIntegrationService {
       },
       counts: { agents: agentCount, voices: voiceCount },
       capabilities,
+      ...(verifiedAgent ? { verifiedAgent } : {}),
     };
   }
 
@@ -167,6 +220,7 @@ export class ElevenLabsIntegrationService {
         apiKey: input.apiKey,
         connectionLabel: input.connectionLabel,
         environment: input.environment,
+        defaultAgentId: input.defaultAgentId,
       },
       principal,
     );
@@ -239,6 +293,16 @@ export class ElevenLabsIntegrationService {
         lastVerifiedAt: now,
         lastErrorCode: null,
         disconnectedAt: null,
+        verifiedAgentName: test.verifiedAgent?.name ?? null,
+        agentVerifiedAt: test.verifiedAgent ? now : null,
+        receptionistDisplayName: input.receptionistDisplayName ?? null,
+        greetingOverride: input.greetingOverride ?? null,
+        language: input.language ?? null,
+        voiceTestingEnabled: input.voiceTestingEnabled ?? true,
+        chatTestingEnabled: input.chatTestingEnabled ?? true,
+        transcriptCapture: input.transcriptCapture ?? true,
+        summaryGeneration: input.summaryGeneration ?? false,
+        escalationDetection: input.escalationDetection ?? false,
         updatedBy: principal.subject,
         updatedAt: now,
       };
@@ -303,6 +367,16 @@ export class ElevenLabsIntegrationService {
       capabilities: integration.capabilitySnapshot,
       lastVerifiedAt: integration.lastVerifiedAt?.toISOString() ?? null,
       lastErrorCode: integration.lastErrorCode,
+      verifiedAgentName: integration.verifiedAgentName,
+      agentVerifiedAt: integration.agentVerifiedAt?.toISOString() ?? null,
+      receptionistDisplayName: integration.receptionistDisplayName,
+      greetingOverride: integration.greetingOverride,
+      language: integration.language,
+      voiceTestingEnabled: integration.voiceTestingEnabled,
+      chatTestingEnabled: integration.chatTestingEnabled,
+      transcriptCapture: integration.transcriptCapture,
+      summaryGeneration: integration.summaryGeneration,
+      escalationDetection: integration.escalationDetection,
       productionRoutingEnabled: readiness?.status === 'PRODUCTION_ACTIVE',
     };
   }
@@ -317,7 +391,7 @@ export class ElevenLabsIntegrationService {
   }
 
   async update(
-    input: {
+    input: RuntimeConfigInput & {
       connectionLabel?: string | undefined;
       defaultAgentId?: string | null | undefined;
       defaultVoiceId?: string | null | undefined;
@@ -328,9 +402,46 @@ export class ElevenLabsIntegrationService {
       where: eq(providerIntegrations.provider, 'ELEVENLABS'),
     });
     if (!current) return { status: 'NOT_CONFIGURED' as const, updated: false };
+
+    let verifiedAgentName = current.verifiedAgentName;
+    let agentVerifiedAt = current.agentVerifiedAt;
+    const agentIdChanged =
+      input.defaultAgentId !== undefined && input.defaultAgentId !== current.defaultAgentId;
+    if (agentIdChanged) {
+      if (!input.defaultAgentId) {
+        verifiedAgentName = null;
+        agentVerifiedAt = null;
+      } else {
+        const resolved = await this.resolveActiveCredential();
+        if (!resolved)
+          return {
+            status: 'AGENT_UNAVAILABLE' as const,
+            updated: false,
+            message: 'There is no active credential to verify the agent against.',
+          };
+        const provider = this.adapter(resolved.apiKey, resolved.integration.environment);
+        const agent = await provider.getAgent(input.defaultAgentId);
+        if (agent.status !== 'SUCCESS')
+          return {
+            status: 'AGENT_UNAVAILABLE' as const,
+            updated: false,
+            message: `The configured agent could not be retrieved from ElevenLabs: ${agent.error.safeMessage}`,
+          };
+        const name = agent.data.name;
+        verifiedAgentName = typeof name === 'string' ? name : null;
+        agentVerifiedAt = new Date();
+      }
+    }
+
     await this.database.db
       .update(providerIntegrations)
-      .set({ ...input, updatedBy: principal.subject, updatedAt: new Date() })
+      .set({
+        ...input,
+        verifiedAgentName,
+        agentVerifiedAt,
+        updatedBy: principal.subject,
+        updatedAt: new Date(),
+      })
       .where(eq(providerIntegrations.id, current.id));
     await this.auditAction(
       principal,
@@ -352,6 +463,7 @@ export class ElevenLabsIntegrationService {
         apiKey: resolved.apiKey,
         connectionLabel: resolved.integration.connectionLabel,
         environment: resolved.integration.environment,
+        defaultAgentId: resolved.integration.defaultAgentId ?? undefined,
       },
       principal,
     );
@@ -362,9 +474,23 @@ export class ElevenLabsIntegrationService {
         status: test.status,
         lastVerifiedAt: test.verified ? now : resolved.integration.lastVerifiedAt,
         lastErrorCode: test.verified ? null : 'PROVIDER_VALIDATION_FAILED',
-        agentCount: test.counts?.agents ?? resolved.integration.agentCount,
-        voiceCount: test.counts?.voices ?? resolved.integration.voiceCount,
-        capabilitySnapshot: test.capabilities ?? resolved.integration.capabilitySnapshot,
+        agentCount: test.verified ? test.counts.agents : resolved.integration.agentCount,
+        voiceCount: test.verified ? test.counts.voices : resolved.integration.voiceCount,
+        capabilitySnapshot: test.verified
+          ? test.capabilities
+          : resolved.integration.capabilitySnapshot,
+        verifiedAgentName:
+          test.verified && test.verifiedAgent
+            ? test.verifiedAgent.name
+            : resolved.integration.defaultAgentId
+              ? resolved.integration.verifiedAgentName
+              : null,
+        agentVerifiedAt:
+          test.verified && test.verifiedAgent
+            ? now
+            : resolved.integration.defaultAgentId
+              ? resolved.integration.agentVerifiedAt
+              : null,
         updatedBy: principal.subject,
         updatedAt: now,
       })
@@ -391,6 +517,14 @@ export class ElevenLabsIntegrationService {
         validationProof: input.validationProof,
         ...(current.defaultAgentId ? { defaultAgentId: current.defaultAgentId } : {}),
         ...(current.defaultVoiceId ? { defaultVoiceId: current.defaultVoiceId } : {}),
+        receptionistDisplayName: current.receptionistDisplayName,
+        greetingOverride: current.greetingOverride,
+        language: current.language,
+        voiceTestingEnabled: current.voiceTestingEnabled,
+        chatTestingEnabled: current.chatTestingEnabled,
+        transcriptCapture: current.transcriptCapture,
+        summaryGeneration: current.summaryGeneration,
+        escalationDetection: current.escalationDetection,
       },
       principal,
     );

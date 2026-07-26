@@ -11,6 +11,9 @@ export type ElevenLabsIntegrationStatus = {
     | 'CONNECTED'
     | 'DEGRADED'
     | 'INVALID_CREDENTIALS'
+    | 'AGENT_UNAVAILABLE'
+    | 'RATE_LIMITED'
+    | 'PROVIDER_UNAVAILABLE'
     | 'DISCONNECTED'
     | 'ERROR';
   integrationId?: string;
@@ -24,6 +27,16 @@ export type ElevenLabsIntegrationStatus = {
   capabilities?: Record<string, unknown>;
   lastVerifiedAt?: string | null;
   lastErrorCode?: string | null;
+  verifiedAgentName?: string | null;
+  agentVerifiedAt?: string | null;
+  receptionistDisplayName?: string | null;
+  greetingOverride?: string | null;
+  language?: string | null;
+  voiceTestingEnabled?: boolean;
+  chatTestingEnabled?: boolean;
+  transcriptCapture?: boolean;
+  summaryGeneration?: boolean;
+  escalationDetection?: boolean;
   productionRoutingEnabled: boolean;
 };
 
@@ -34,7 +47,45 @@ type TestResult = {
   validationProof?: string;
   workspace?: { id: string; subscription: string | null };
   counts?: { agents: number; voices: number };
+  verifiedAgent?: { id: string; name: string | null };
 };
+
+type RuntimeConfig = {
+  receptionistDisplayName: string;
+  greetingOverride: string;
+  language: string;
+  voiceTestingEnabled: boolean;
+  chatTestingEnabled: boolean;
+  transcriptCapture: boolean;
+  summaryGeneration: boolean;
+  escalationDetection: boolean;
+};
+
+function runtimeConfigFrom(status: ElevenLabsIntegrationStatus): RuntimeConfig {
+  return {
+    receptionistDisplayName: status.receptionistDisplayName ?? '',
+    greetingOverride: status.greetingOverride ?? '',
+    language: status.language ?? '',
+    voiceTestingEnabled: status.voiceTestingEnabled ?? true,
+    chatTestingEnabled: status.chatTestingEnabled ?? true,
+    transcriptCapture: status.transcriptCapture ?? true,
+    summaryGeneration: status.summaryGeneration ?? false,
+    escalationDetection: status.escalationDetection ?? false,
+  };
+}
+
+function runtimeConfigPayload(config: RuntimeConfig) {
+  return {
+    receptionistDisplayName: config.receptionistDisplayName.trim() || null,
+    greetingOverride: config.greetingOverride.trim() || null,
+    language: config.language.trim() || null,
+    voiceTestingEnabled: config.voiceTestingEnabled,
+    chatTestingEnabled: config.chatTestingEnabled,
+    transcriptCapture: config.transcriptCapture,
+    summaryGeneration: config.summaryGeneration,
+    escalationDetection: config.escalationDetection,
+  };
+}
 
 const endpoint = '/api/admin/integrations/elevenlabs';
 const verifiedAtFormatter = new Intl.DateTimeFormat('en-GB', {
@@ -45,8 +96,15 @@ const verifiedAtFormatter = new Intl.DateTimeFormat('en-GB', {
 
 function tone(status: ElevenLabsIntegrationStatus['status']) {
   if (status === 'CONNECTED') return 'good';
-  if (status === 'DEGRADED' || status === 'VALIDATING') return 'warning';
-  if (status === 'INVALID_CREDENTIALS' || status === 'ERROR') return 'danger';
+  if (status === 'DEGRADED' || status === 'VALIDATING' || status === 'RATE_LIMITED')
+    return 'warning';
+  if (
+    status === 'INVALID_CREDENTIALS' ||
+    status === 'AGENT_UNAVAILABLE' ||
+    status === 'PROVIDER_UNAVAILABLE' ||
+    status === 'ERROR'
+  )
+    return 'danger';
   return 'neutral';
 }
 
@@ -83,66 +141,53 @@ export function ElevenLabsIntegrationCard({
   );
   const [defaultAgentId, setDefaultAgentId] = useState(initialStatus.defaultAgentId ?? '');
   const [defaultVoiceId, setDefaultVoiceId] = useState(initialStatus.defaultVoiceId ?? '');
-  const [proof, setProof] = useState('');
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(
+    runtimeConfigFrom(initialStatus),
+  );
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
-
-  useEffect(() => {
-    if (!dialog.current?.open) return;
-    setProof('');
-    setTestResult(null);
-  }, [apiKey, environment, label]);
 
   function open(nextMode: 'connect' | 'manage') {
     setMode(nextMode);
     setMessage('');
     setConfirmDisconnect(false);
     setApiKey('');
-    setProof('');
     setTestResult(null);
+    setRuntimeConfig(runtimeConfigFrom(status));
     dialog.current?.showModal();
   }
 
   function close() {
     dialog.current?.close();
     setApiKey('');
-    setProof('');
     setTestResult(null);
     setMessage('');
     setConfirmDisconnect(false);
   }
 
-  async function testNewCredential() {
+  /**
+   * One primary action: test the credential (and the configured agent, if any),
+   * then save only if that test succeeds. There is no separate "save without
+   * testing" path for a new or rotated credential.
+   */
+  async function saveAndTestConnection(rotation: boolean) {
     setBusy(true);
     setMessage('');
+    setTestResult(null);
     try {
-      const result = await request<TestResult>('/test', 'POST', {
+      const tested = await request<TestResult>('/test', 'POST', {
         apiKey,
         connectionLabel: label,
         environment,
+        ...(defaultAgentId ? { defaultAgentId } : {}),
       });
-      setTestResult(result);
-      setProof(result.validationProof ?? '');
-      setMessage(
-        result.verified
-          ? `Verified workspace access. Found ${result.counts?.agents ?? 0} agents and ${result.counts?.voices ?? 0} voices.`
-          : (result.message ?? 'Connection validation failed.'),
-      );
-    } catch (error) {
-      setTestResult(null);
-      setProof('');
-      setMessage(error instanceof Error ? error.message : 'Connection validation failed.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveConnection(rotation = false) {
-    setBusy(true);
-    setMessage('');
-    try {
+      setTestResult(tested);
+      if (!tested.verified) {
+        setMessage(tested.message ?? 'Connection validation failed.');
+        return;
+      }
       const saved = await request<ElevenLabsIntegrationStatus & { saved?: boolean }>(
         rotation ? '/rotate' : '/connect',
         'POST',
@@ -150,17 +195,26 @@ export function ElevenLabsIntegrationCard({
           apiKey,
           connectionLabel: label,
           environment,
-          validationProof: proof,
-          ...(rotation ? {} : { defaultAgentId: defaultAgentId || undefined }),
-          ...(rotation ? {} : { defaultVoiceId: defaultVoiceId || undefined }),
+          validationProof: tested.validationProof,
+          ...(rotation
+            ? {}
+            : {
+                defaultAgentId: defaultAgentId || undefined,
+                defaultVoiceId: defaultVoiceId || undefined,
+                ...runtimeConfigPayload(runtimeConfig),
+              }),
         },
       );
       setStatus(saved);
       setApiKey('');
-      setProof('');
-      setTestResult(null);
       setMode('manage');
-      setMessage(rotation ? 'Credential rotated and revalidated.' : 'Connection saved securely.');
+      setMessage(
+        rotation
+          ? 'Credential rotated and revalidated.'
+          : tested.verifiedAgent
+            ? `Connected and verified agent "${tested.verifiedAgent.name ?? tested.verifiedAgent.id}".`
+            : 'Connection saved securely.',
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Connection could not be saved.');
     } finally {
@@ -176,6 +230,7 @@ export function ElevenLabsIntegrationCard({
         connectionLabel: label,
         defaultAgentId: defaultAgentId || null,
         defaultVoiceId: defaultVoiceId || null,
+        ...runtimeConfigPayload(runtimeConfig),
       });
       setStatus(updated);
       setMessage('Integration settings updated.');
@@ -271,6 +326,16 @@ export function ElevenLabsIntegrationCard({
                 </dd>
               </div>
               <div>
+                <dt>Configured agent</dt>
+                <dd>
+                  {status.defaultAgentId
+                    ? status.agentVerifiedAt
+                      ? (status.verifiedAgentName ?? 'Verified (no name reported)')
+                      : 'Not yet verified'
+                    : 'None configured'}
+                </dd>
+              </div>
+              <div>
                 <dt>Last verified</dt>
                 <dd>
                   {status.lastVerifiedAt
@@ -363,6 +428,7 @@ export function ElevenLabsIntegrationCard({
                   autoComplete="off"
                   placeholder="agent_…"
                 />
+                <span>Retrieved and verified through the ElevenLabs API before it is saved.</span>
               </label>
               <label>
                 Default voice ID <span>(optional)</span>
@@ -391,6 +457,115 @@ export function ElevenLabsIntegrationCard({
                 </span>
               </label>
             </div>
+
+            {mode === 'connect' || !apiKey ? (
+              <fieldset className="integration-form">
+                <legend>Runtime configuration</legend>
+                <label>
+                  Receptionist display name <span>(optional)</span>
+                  <input
+                    value={runtimeConfig.receptionistDisplayName}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        receptionistDisplayName: event.target.value,
+                      }))
+                    }
+                    maxLength={100}
+                  />
+                </label>
+                <label>
+                  Language override <span>(optional)</span>
+                  <input
+                    value={runtimeConfig.language}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({ ...current, language: event.target.value }))
+                    }
+                    placeholder="Use agent default"
+                    maxLength={20}
+                  />
+                </label>
+                <label className="form-wide">
+                  Greeting override <span>(optional)</span>
+                  <input
+                    value={runtimeConfig.greetingOverride}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        greetingOverride: event.target.value,
+                      }))
+                    }
+                    placeholder="Use agent default"
+                    maxLength={500}
+                  />
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={runtimeConfig.voiceTestingEnabled}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        voiceTestingEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  Allow live voice calls from Simulation Lab
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={runtimeConfig.chatTestingEnabled}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        chatTestingEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  Allow chat simulation from Simulation Lab
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={runtimeConfig.transcriptCapture}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        transcriptCapture: event.target.checked,
+                      }))
+                    }
+                  />
+                  Capture transcripts from live sessions
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={runtimeConfig.summaryGeneration}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        summaryGeneration: event.target.checked,
+                      }))
+                    }
+                  />
+                  Generate call summaries
+                </label>
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={runtimeConfig.escalationDetection}
+                    onChange={(event) =>
+                      setRuntimeConfig((current) => ({
+                        ...current,
+                        escalationDetection: event.target.checked,
+                      }))
+                    }
+                  />
+                  Detect escalation-worthy calls
+                </label>
+              </fieldset>
+            ) : null}
 
             {message ? (
               <div
@@ -433,25 +608,15 @@ export function ElevenLabsIntegrationCard({
 
           <footer>
             {mode === 'connect' ? (
-              <>
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={testNewCredential}
-                  disabled={busy || apiKey.length < 8 || label.length < 2}
-                >
-                  <RefreshCcw size={15} />
-                  {busy ? 'Validating…' : 'Test connection'}
-                </button>
-                <button
-                  className="button primary"
-                  type="button"
-                  onClick={() => saveConnection(false)}
-                  disabled={busy || !proof || !testResult?.verified}
-                >
-                  Save connection
-                </button>
-              </>
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => void saveAndTestConnection(false)}
+                disabled={busy || apiKey.length < 8 || label.length < 2}
+              >
+                <RefreshCcw size={15} />
+                {busy ? 'Testing and saving…' : 'Save and test connection'}
+              </button>
             ) : (
               <>
                 <button
@@ -464,42 +629,35 @@ export function ElevenLabsIntegrationCard({
                   Disconnect
                 </button>
                 <span className="footer-spacer" />
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={verifyCurrent}
-                  disabled={busy || apiKey.length > 0}
-                >
-                  Test stored connection
-                </button>
                 {apiKey ? (
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={() => void saveAndTestConnection(true)}
+                    disabled={busy || apiKey.length < 8}
+                  >
+                    <RefreshCcw size={15} />
+                    {busy ? 'Testing and rotating…' : 'Test and rotate credential'}
+                  </button>
+                ) : (
                   <>
                     <button
                       className="button secondary"
                       type="button"
-                      onClick={testNewCredential}
-                      disabled={busy || apiKey.length < 8}
+                      onClick={() => void verifyCurrent()}
+                      disabled={busy}
                     >
-                      Test new key
+                      Test stored connection
                     </button>
                     <button
                       className="button primary"
                       type="button"
-                      onClick={() => saveConnection(true)}
-                      disabled={busy || !proof || !testResult?.verified}
+                      onClick={() => void updateConfiguration()}
+                      disabled={busy || label.length < 2}
                     >
-                      Rotate credential
+                      Save settings
                     </button>
                   </>
-                ) : (
-                  <button
-                    className="button primary"
-                    type="button"
-                    onClick={updateConfiguration}
-                    disabled={busy || label.length < 2}
-                  >
-                    Save settings
-                  </button>
                 )}
               </>
             )}
