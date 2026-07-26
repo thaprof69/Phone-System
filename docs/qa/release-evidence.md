@@ -838,3 +838,123 @@ the documented pattern.
 Receptionist Test pipeline was verified end-to-end against the local deterministic simulator and
 fixture data; no production ElevenLabs agent, OIDC issuer, or native-language approval was
 exercised.
+
+## 2026-07-26 — Dual-transport ElevenLabs voice sessions, honest diagnostics, Conversation Lifecycle authority
+
+Ported the second half of Quantum Park Lite's phone workflow — the Provider configuration screen
+— replacing its entirely fake diagnostics (its own source comment: _"Live ElevenLabs lookup is
+not enabled for this local diagnostic run"_) and its unbacked "Voice Mode" field with real
+infrastructure, per ADR 0014. Confirmed via ElevenLabs' own docs that a genuine second transport
+(WebRTC, via `GET /v1/convai/conversation/token`) exists alongside the WebSocket signed-URL flow
+already in production use; built both for real rather than fake one or drop the field.
+
+- **Real WebRTC adapter method**: `getConversationToken()` added to `HttpElevenLabsAdapter`,
+  mirroring `getSignedConversationUrl()`'s exact request/mapping pattern. A matching deterministic
+  stub was added to the local provider simulator so dev/CI needs zero real ElevenLabs credentials.
+- **Schema**: `providerIntegrations.voiceMode` (new integrations default `WEBRTC_PREFERRED` at the
+  application layer; the DB column default `WEBSOCKET_ONLY` only ever backfills pre-existing
+  rows); new `elevenlabs_diagnostic_runs` and `elevenlabs_media_verifications` tables; `voiceSessions`
+  gained `transport`, `receptionistSessionId`, `replacesVoiceSessionId`, `failureCategory`, and a
+  renamed `sessionExpiresAt` (replacing the WebSocket-only `signedUrlExpiresAt`). Migration
+  `0011_past_tyger_tiger.sql` applied cleanly against the empty `voice_sessions` table.
+- **Dual-transport bootstrap**: `platform.service.ts`'s `startVoiceSession()` now returns a
+  discriminated union on `transport`. **Scope decision, documented in the ADR**: no server-side
+  WebRTC→WebSocket retry — a token-endpoint failure and a signed-url-endpoint failure share the
+  same auth/agent-availability failure surface, so the only real fallback need (a browser-side
+  WebRTC/ICE/media failure after a token was already issued) is handled entirely client-side.
+- **Fallback stays inside one `ReceptionistSession`**: `ConversationLifecycleService.
+retryWithFallbackTransport()` marks the failed WebRTC `voiceSessions` row `FAILED` with its
+  failure category before starting a replacement WebSocket row chained via
+  `replacesVoiceSessionId`, then moves the session's active-runtime pointer. Exactly one
+  `ReceptionistSession`, one transcript, one Recent Sessions entry throughout — verified by direct
+  code review of the chaining logic (a live browser test of an actual WebRTC failure requires a
+  real in-sync agent deployment, which the seeded development data does not have — the same
+  externally-blocked limitation already documented for live voice sessions).
+- **Honest diagnostics, not a single fabricated green light**: `runDiagnostics()` keeps the
+  source's 8 checks (each a real round trip — `agent_found` really calls `getAgent()`,
+  `webrtc_available`/`websocket_fallback` each really request a token/signed-URL, `turn_timeout` is
+  a permanent honest WARNING since ElevenLabs genuinely doesn't expose it) plus a 9th,
+  `fallback_policy_enabled`, shown only in WebRTC-preferred mode and explicitly labeled
+  "verified, not exercised." Critically, a passing bootstrap check is labeled reachability-only —
+  the diagnostics panel shows a **separate** "media session" fact per transport, sourced from
+  `elevenlabs_media_verifications` and starting at `NOT_VERIFIED` until a real Simulation Lab
+  voice session actually connects and exchanges audio.
+- **Conversation Lifecycle authority**: new `ConversationLifecycleService` is now the single
+  orchestration authority for the Simulation Lab pipeline (start/attach/record-turn/retry-transport/
+  end), publishing lifecycle events through the existing `outbox_events` table (same direct-insert
+  pattern already used by `aios-platform.service.ts` — no new event-bus abstraction).
+  `receptionist-session.service.ts` was reduced to read-only methods. **Explicit non-goal**: zero
+  event consumers were built — Mission Control, Reports, Intelligence and Knowledge Gap discovery
+  are unchanged. This is documented in ADR 0014 precisely so it isn't mistaken for an oversight.
+- **Frontend rebuild**: the ElevenLabs provider page moved from a `<dialog>`-modal editor to a
+  direct inline form (matching the source's un-gated UX), reusing `@quantum-parks/ui`'s
+  `Fieldset`/`TextField`/`SelectField`/`CheckboxField` rather than hand-styled dialog CSS. New
+  Diagnostics panel + `/settings/ai-providers/elevenlabs/diagnostics` history page. Simulation Lab
+  gained a compact provider-readiness summary (connected? diagnostics status+age? agent verified?)
+  and a "Configure ElevenLabs" link, sourced from existing status endpoints — not a second
+  BLOCKED-computation; the real session-start readiness gate remains solely in `startVoiceSession`.
+
+**Tests**: new adapter test pair for `getConversationToken` (real request shape, key-never-leaked,
+404→honest-failure mapping) alongside the existing signed-url pair. New
+`elevenlabs-integration.service.test.ts` — `buildDiagnosticChecks()` was extracted as a pure
+function (no DB/adapter dependency, matching this codebase's existing convention of only
+unit-testing DB-independent logic) and directly tested: `agent_found` never passes on a bare
+config-presence check, `llm_configured`/`first_message_configured` never treat a local override as
+a provider-verified fact, WebRTC/WebSocket bootstrap checks are independent, a passing bootstrap is
+worded as reachability-only, `turn_timeout` is permanently a WARNING, and the overall status can
+never be a fabricated `PASS` while `turn_timeout` exists. Playwright gained: the provider form is a
+direct inline form with no dialog and exactly one primary save action; running diagnostics reports
+an honest result with independent bootstrap/media-session facts; the Simulation Lab readiness
+summary and "Configure ElevenLabs" link; the diagnostics history page.
+
+| Command                                                     | Result                                    |
+| ----------------------------------------------------------- | ----------------------------------------- |
+| `pnpm --filter @quantum-parks/db generate` + review         | Clean migration, reviewed before applying |
+| `pnpm --filter @quantum-parks/elevenlabs test`              | 9 passed                                  |
+| `pnpm --filter @quantum-parks/api test`                     | 12 passed (2 test files)                  |
+| `pnpm build` (full monorepo)                                | exit 0, all 17 tasks                      |
+| `pnpm --filter @quantum-parks/admin-web typecheck`          | exit 0                                    |
+| `pnpm architecture:check`                                   | passed                                    |
+| `pnpm test:e2e` (admin project, targeted new/changed tests) | 6 passed                                  |
+| `pnpm test:e2e` (admin project, full suite)                 | 91 passed, 1 failed                       |
+
+The one failure — `a failed report run can be retried without altering the original failure` —
+is in the Reports domain, which this task did not touch at all (no file under
+`apps/api/src/services/*report*` or `apps/admin-web/app/reports/**` was changed). The database
+genuinely has exactly one `FAILED` report run row; the test's `/reports/history` table appears to
+not surface it on the default page/sort (a pagination/fixture-visibility issue, not a functional
+regression), reproduced consistently in isolation and unrelated to dual-transport, diagnostics, or
+the Conversation Lifecycle work in this task.
+
+**Real end-to-end verification against the live local stack** (direct API calls, not just
+Playwright), confirming all three binding corrections genuinely hold:
+
+1. The pre-existing dev ElevenLabs integration (created before this task) reports
+   `voiceMode: WEBSOCKET_ONLY` via `GET /admin/integrations/elevenlabs/status` — the migration's DB
+   column default correctly protected it; it was never silently switched to WebRTC.
+2. With no agent configured, `POST /admin/integrations/elevenlabs/diagnostics` returned real,
+   independent failures (`agent_found`, `webrtc_available`, `websocket_fallback` each separately
+   `FAIL`, each with its own real provider error — "Provider object was not found" — not one shared
+   fabricated status). A real agent was then created via the local simulator
+   (`POST /v1/convai/agents/create` with a real prompt and first message) and configured as
+   `defaultAgentId`; diagnostics then returned a fully genuine result — `provider_status`,
+   `agent_found`, `voice_configured`, `llm_configured`, `first_message_configured`,
+   `webrtc_available`, and `websocket_fallback` all real `PASS`es (each independently verified
+   against the real simulator, including a real `POST`-created agent's real system prompt and
+   first message), with only the permanent, honest `turn_timeout` WARNING keeping the overall
+   status at `WARNING` rather than a fabricated `PASS`.
+3. Immediately after that all-real-PASS diagnostics run, `GET
+/admin/integrations/elevenlabs/media-verification-summary` still returned `NOT_VERIFIED` for
+   both `webrtc` and `websocket` — proving the binding correction holds in practice, not just in
+   the unit tests: a passing bootstrap check never flips the separately-tracked real-media-session
+   fact to `PASS` on its own. That fact only ever changes from a real Simulation Lab session's
+   `onConnect`/message/disconnect events reaching `POST /receptionist-sessions/:id/media-verification`.
+
+This exercise also caught and fixed a real deployment mistake made mid-verification: the running
+local API and provider-simulator processes were stale compiled builds from before this task's
+backend changes (`Cannot POST .../diagnostics`, and a 404 for the new WebRTC token route even
+though the exact same agent ID had just succeeded against `getAgent()`/`getSignedConversationUrl()`
+moments earlier). Rebuilding and restarting both processes resolved it — a reminder that a NestJS
+compiled-dist deployment (used in this session in place of `tsx watch`, which has an unrelated
+pre-existing Reflector dependency-injection bug under this Node/tsx version) must be rebuilt after
+every backend change, not just restarted.

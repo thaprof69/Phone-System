@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import type { Principal } from '@quantum-parks/auth';
 import { z } from 'zod';
 import { RequirePermission } from '../security/access.guard.js';
@@ -27,7 +27,9 @@ const RuntimeConfigFields = {
   transcriptCapture: z.boolean().optional(),
   summaryGeneration: z.boolean().optional(),
   escalationDetection: z.boolean().optional(),
+  voiceMode: z.enum(['WEBRTC_PREFERRED', 'WEBSOCKET_ONLY']).optional(),
 };
+const DiagnosticsRunIdSchema = z.string().uuid();
 const ConnectSchema = TestSchema.extend({
   validationProof: z.string().min(20).max(2_000),
   defaultVoiceId: SafeProviderIdSchema.optional(),
@@ -61,6 +63,31 @@ export class ElevenLabsIntegrationController {
   @Get('capabilities')
   capabilities() {
     return this.integration.capabilities();
+  }
+
+  @Get('readiness-summary')
+  readinessSummary() {
+    return this.integration.readinessSummary();
+  }
+
+  @Get('media-verification-summary')
+  mediaVerificationSummary() {
+    return this.integration.mediaVerificationSummary();
+  }
+
+  @Post('diagnostics')
+  runDiagnostics(@Req() request: AuthenticatedRequest) {
+    return this.integration.runDiagnostics(request.principal);
+  }
+
+  @Get('diagnostics')
+  diagnosticsHistory() {
+    return this.integration.getDiagnosticsHistory();
+  }
+
+  @Get('diagnostics/:id')
+  diagnosticsRun(@Param('id') id: string) {
+    return this.integration.getDiagnosticsRun(DiagnosticsRunIdSchema.parse(id));
   }
 
   @Post('test')

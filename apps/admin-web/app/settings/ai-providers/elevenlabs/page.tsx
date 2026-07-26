@@ -12,6 +12,7 @@ import {
 import { SettingsPage } from '../../settings-page';
 import { apiGet } from '../../../../lib/api';
 import { ElevenLabsIntegrationCard } from '../../../elevenlabs-integration';
+import { DiagnosticsPanel } from './diagnostics-panel';
 import type { MissionControl } from '../../../../lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -39,21 +40,54 @@ type IntegrationStatus = {
   transcriptCapture?: boolean;
   summaryGeneration?: boolean;
   escalationDetection?: boolean;
+  voiceMode?: 'WEBRTC_PREFERRED' | 'WEBSOCKET_ONLY';
   productionRoutingEnabled: boolean;
 };
 
+type DiagnosticsResult = {
+  status: 'PASS' | 'WARNING' | 'FAIL' | 'NOT_CONFIGURED';
+  checks: Array<{
+    key: string;
+    label: string;
+    status: 'PASS' | 'WARNING' | 'FAIL';
+    detail: string;
+  }>;
+  warnings: string[];
+  errors: string[];
+  checkedAt: string;
+};
+type MediaVerificationSummary = {
+  webrtc: { status: 'PASS' | 'FAILED' | 'NOT_VERIFIED'; verifiedAt: string | null };
+  websocket: { status: 'PASS' | 'FAILED' | 'NOT_VERIFIED'; verifiedAt: string | null };
+};
+
 export default async function VoiceRuntimePage() {
-  const [statusResponse, missionResponse] = await Promise.all([
-    apiGet<IntegrationStatus>('/admin/integrations/elevenlabs/status', {
-      purpose: 'RELEASE_MANAGEMENT',
-    }),
-    apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' }),
-  ]);
+  const [statusResponse, missionResponse, diagnosticsResponse, mediaVerificationResponse] =
+    await Promise.all([
+      apiGet<IntegrationStatus>('/admin/integrations/elevenlabs/status', {
+        purpose: 'RELEASE_MANAGEMENT',
+      }),
+      apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' }),
+      apiGet<DiagnosticsResult[]>('/admin/integrations/elevenlabs/diagnostics', {
+        purpose: 'RELEASE_MANAGEMENT',
+      }),
+      apiGet<MediaVerificationSummary>(
+        '/admin/integrations/elevenlabs/media-verification-summary',
+        {
+          purpose: 'RELEASE_MANAGEMENT',
+        },
+      ),
+    ]);
 
   const status: IntegrationStatus = statusResponse.ok
     ? statusResponse.data
     : { provider: 'ELEVENLABS', status: 'NOT_CONFIGURED', productionRoutingEnabled: false };
   const mission = missionResponse.ok ? missionResponse.data : null;
+  const latestDiagnostics =
+    diagnosticsResponse.ok && diagnosticsResponse.data.length > 0
+      ? diagnosticsResponse.data[0]!
+      : null;
+  const mediaVerification = mediaVerificationResponse.ok ? mediaVerificationResponse.data : null;
   const capabilities = Object.entries(status.capabilities ?? {});
   const drifted = mission?.receptionist.syncState === 'DRIFTED';
 
@@ -87,9 +121,12 @@ export default async function VoiceRuntimePage() {
         </Banner>
       ) : null}
 
-      <Panel title="Connection" eyebrow="Credentials are held server-side">
-        <ElevenLabsIntegrationCard initialStatus={status as never} authorized={statusResponse.ok} />
-      </Panel>
+      <ElevenLabsIntegrationCard initialStatus={status as never} authorized={statusResponse.ok} />
+
+      <DiagnosticsPanel
+        initialDiagnostics={latestDiagnostics}
+        initialMediaVerification={mediaVerification}
+      />
 
       <Panel
         title="Runtime state"
@@ -136,42 +173,10 @@ export default async function VoiceRuntimePage() {
               term: 'Last verified',
               value: status.lastVerifiedAt ? formatDateTime(status.lastVerifiedAt) : 'Never',
             },
-          ]}
-        />
-      </Panel>
-
-      <Panel
-        title="Runtime configuration"
-        eyebrow="Persisted server-side"
-        description="These defaults apply to the connection and to Simulation Lab sessions. Per-agent conversation content is authored in Receptionist, not here."
-      >
-        <DefinitionList
-          items={[
             {
-              term: 'Receptionist display name',
-              value: status.receptionistDisplayName ?? 'Not set',
-            },
-            { term: 'Greeting override', value: status.greetingOverride ?? 'Use agent default' },
-            { term: 'Language', value: status.language ?? 'Use agent default' },
-            {
-              term: 'Voice testing',
-              value: status.voiceTestingEnabled === false ? 'Disabled' : 'Enabled',
-            },
-            {
-              term: 'Chat testing',
-              value: status.chatTestingEnabled === false ? 'Disabled' : 'Enabled',
-            },
-            {
-              term: 'Transcript capture',
-              value: status.transcriptCapture === false ? 'Disabled' : 'Enabled',
-            },
-            {
-              term: 'Summary generation',
-              value: status.summaryGeneration ? 'Enabled' : 'Disabled',
-            },
-            {
-              term: 'Escalation detection',
-              value: status.escalationDetection ? 'Enabled' : 'Disabled',
+              term: 'Voice mode',
+              value: status.voiceMode === 'WEBSOCKET_ONLY' ? 'WebSocket only' : 'WebRTC preferred',
+              hint: 'Edit below — this reflects the last saved value.',
             },
           ]}
         />

@@ -1,6 +1,8 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
+  elevenLabsDiagnosticRuns,
+  elevenLabsMediaVerifications,
   encryptedProviderCredentials,
   providerCredentialReferences,
   providerIntegrations,
@@ -12,6 +14,14 @@ import type { Principal } from '@quantum-parks/auth';
 import { DatabaseService } from './database.service.js';
 import { AuditService } from './audit.service.js';
 import { ProviderCredentialVaultService } from './provider-credential-vault.service.js';
+
+export type DiagnosticCheckStatus = 'PASS' | 'WARNING' | 'FAIL';
+export type DiagnosticCheck = {
+  key: string;
+  label: string;
+  status: DiagnosticCheckStatus;
+  detail: string;
+};
 
 export type IntegrationEnvironment = 'SANDBOX' | 'PRODUCTION';
 export type IntegrationConnectionStatus =
@@ -41,6 +51,7 @@ type RuntimeConfigInput = {
   transcriptCapture?: boolean | undefined;
   summaryGeneration?: boolean | undefined;
   escalationDetection?: boolean | undefined;
+  voiceMode?: 'WEBRTC_PREFERRED' | 'WEBSOCKET_ONLY' | undefined;
 };
 type ConnectInput = TestInput &
   RuntimeConfigInput & {
@@ -303,6 +314,11 @@ export class ElevenLabsIntegrationService {
         transcriptCapture: input.transcriptCapture ?? true,
         summaryGeneration: input.summaryGeneration ?? false,
         escalationDetection: input.escalationDetection ?? false,
+        // Binding default rule: a brand-new integration defaults to WEBRTC_PREFERRED at the
+        // application layer; an existing integration being reconnected/rotated keeps its own
+        // voiceMode unless the caller explicitly changes it. The DB column default
+        // (WEBSOCKET_ONLY) only ever applies to rows this code path doesn't touch.
+        voiceMode: input.voiceMode ?? existing?.voiceMode ?? ('WEBRTC_PREFERRED' as const),
         updatedBy: principal.subject,
         updatedAt: now,
       };
@@ -377,7 +393,41 @@ export class ElevenLabsIntegrationService {
       transcriptCapture: integration.transcriptCapture,
       summaryGeneration: integration.summaryGeneration,
       escalationDetection: integration.escalationDetection,
+      voiceMode: integration.voiceMode,
       productionRoutingEnabled: readiness?.status === 'PRODUCTION_ACTIVE',
+    };
+  }
+
+  /**
+   * A compact readiness summary for surfaces like Simulation Lab that need to show "is the
+   * provider ready" without re-deriving the per-agent-version session-start gate themselves —
+   * that gate stays solely inside `platform.service.ts`'s `startVoiceSession`.
+   */
+  async readinessSummary() {
+    const integration = await this.database.db.query.providerIntegrations.findFirst({
+      where: eq(providerIntegrations.provider, 'ELEVENLABS'),
+    });
+    if (!integration)
+      return {
+        connected: false,
+        agentVerified: false,
+        latestDiagnosticsStatus: null,
+        latestDiagnosticsAt: null,
+      };
+    const [latestDiagnostics] = await this.database.db
+      .select({
+        status: elevenLabsDiagnosticRuns.status,
+        checkedAt: elevenLabsDiagnosticRuns.checkedAt,
+      })
+      .from(elevenLabsDiagnosticRuns)
+      .where(eq(elevenLabsDiagnosticRuns.integrationId, integration.id))
+      .orderBy(desc(elevenLabsDiagnosticRuns.checkedAt))
+      .limit(1);
+    return {
+      connected: integration.status === 'CONNECTED',
+      agentVerified: Boolean(integration.defaultAgentId && integration.agentVerifiedAt),
+      latestDiagnosticsStatus: latestDiagnostics?.status ?? null,
+      latestDiagnosticsAt: latestDiagnostics?.checkedAt?.toISOString() ?? null,
     };
   }
 
@@ -506,6 +556,182 @@ export class ElevenLabsIntegrationService {
     return { ...(await this.status()), verified: test.verified };
   }
 
+  /**
+   * Every check here is a real round trip against the provider, or an honest static/config note
+   * where the provider API genuinely doesn't expose the fact (turn_timeout). None of them are a
+   * config-presence proxy: `agent_found` really calls `getAgent()`, `webrtc_available`/
+   * `websocket_fallback` each really request a token/signed-URL. Per the binding correction, a
+   * passing bootstrap check here never implies real browser media was verified — that's tracked
+   * separately in `elevenLabsMediaVerifications` and surfaced only via `mediaVerificationSummary()`.
+   */
+  async runDiagnostics(principal: Principal) {
+    const resolved = await this.resolveActiveCredential();
+    if (!resolved) {
+      const { checks, status } = buildDiagnosticChecks({
+        hasCredential: false,
+        workspaceStatus: 'FAILURE',
+        defaultAgentId: null,
+        agentStatus: 'NOT_ATTEMPTED',
+        agentData: null,
+        voiceTestingEnabled: false,
+        greetingOverride: null,
+        webrtcTokenStatus: 'NOT_ATTEMPTED',
+        websocketSignedUrlStatus: 'NOT_ATTEMPTED',
+        voiceMode: 'WEBSOCKET_ONLY',
+      });
+      return this.persistDiagnosticRun(null, 'NOT_CONFIGURED', checks, principal);
+    }
+    const { integration, apiKey } = resolved;
+    const provider = this.adapter(apiKey, integration.environment);
+
+    const workspace = await provider.getWorkspace();
+    const agent = integration.defaultAgentId
+      ? await provider.getAgent(integration.defaultAgentId)
+      : null;
+    const agentData = agent?.status === 'SUCCESS' ? agent.data : null;
+    const token = integration.defaultAgentId
+      ? await provider.getConversationToken({ agentId: integration.defaultAgentId })
+      : null;
+    const signed = integration.defaultAgentId
+      ? await provider.getSignedConversationUrl(integration.defaultAgentId)
+      : null;
+
+    const { checks, status } = buildDiagnosticChecks({
+      hasCredential: true,
+      workspaceStatus: workspace.status === 'SUCCESS' ? 'SUCCESS' : 'FAILURE',
+      workspaceErrorMessage:
+        workspace.status !== 'SUCCESS' ? workspace.error.safeMessage : undefined,
+      defaultAgentId: integration.defaultAgentId,
+      agentStatus: !agent ? 'NOT_ATTEMPTED' : agent.status === 'SUCCESS' ? 'SUCCESS' : 'FAILURE',
+      agentErrorMessage: agent && agent.status !== 'SUCCESS' ? agent.error.safeMessage : undefined,
+      agentData,
+      voiceTestingEnabled: integration.voiceTestingEnabled,
+      greetingOverride: integration.greetingOverride,
+      webrtcTokenStatus: !token
+        ? 'NOT_ATTEMPTED'
+        : token.status === 'SUCCESS'
+          ? 'SUCCESS'
+          : 'FAILURE',
+      webrtcErrorMessage: token && token.status !== 'SUCCESS' ? token.error.safeMessage : undefined,
+      websocketSignedUrlStatus: !signed
+        ? 'NOT_ATTEMPTED'
+        : signed.status === 'SUCCESS'
+          ? 'SUCCESS'
+          : 'FAILURE',
+      websocketErrorMessage:
+        signed && signed.status !== 'SUCCESS' ? signed.error.safeMessage : undefined,
+      voiceMode: integration.voiceMode,
+    });
+    return this.persistDiagnosticRun(integration.id, status, checks, principal);
+  }
+
+  private async persistDiagnosticRun(
+    integrationId: string | null,
+    status: DiagnosticCheckStatus | 'NOT_CONFIGURED',
+    checks: DiagnosticCheck[],
+    principal: Principal,
+  ) {
+    if (!integrationId)
+      return { status, checks, warnings: [], errors: [], checkedAt: new Date().toISOString() };
+    const warnings = checks
+      .filter((c) => c.status === 'WARNING')
+      .map((c) => `${c.label}: ${c.detail}`);
+    const errors = checks.filter((c) => c.status === 'FAIL').map((c) => `${c.label}: ${c.detail}`);
+    const [row] = await this.database.db
+      .insert(elevenLabsDiagnosticRuns)
+      .values({
+        integrationId,
+        status,
+        checks,
+        warnings,
+        errors,
+        checkedBy: principal.subject,
+      })
+      .returning();
+    if (!row) throw new Error('Diagnostic run was not persisted');
+    await this.auditAction(principal, 'ELEVENLABS_DIAGNOSTICS_RUN', integrationId, status, {
+      checks: checks.map((c) => ({ key: c.key, status: c.status })),
+    });
+    return {
+      status: row.status,
+      checks: row.checks,
+      warnings: row.warnings,
+      errors: row.errors,
+      checkedAt: row.checkedAt.toISOString(),
+    };
+  }
+
+  async getDiagnosticsHistory(limit = 10) {
+    const integration = await this.database.db.query.providerIntegrations.findFirst({
+      where: eq(providerIntegrations.provider, 'ELEVENLABS'),
+    });
+    if (!integration) return [];
+    const rows = await this.database.db.query.elevenLabsDiagnosticRuns.findMany({
+      where: eq(elevenLabsDiagnosticRuns.integrationId, integration.id),
+      orderBy: [desc(elevenLabsDiagnosticRuns.checkedAt)],
+      limit,
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      checks: row.checks,
+      warnings: row.warnings,
+      errors: row.errors,
+      checkedAt: row.checkedAt.toISOString(),
+      checkedBy: row.checkedBy,
+    }));
+  }
+
+  async getDiagnosticsRun(id: string) {
+    const row = await this.database.db.query.elevenLabsDiagnosticRuns.findFirst({
+      where: eq(elevenLabsDiagnosticRuns.id, id),
+    });
+    if (!row) return null;
+    return {
+      id: row.id,
+      status: row.status,
+      checks: row.checks,
+      warnings: row.warnings,
+      errors: row.errors,
+      checkedAt: row.checkedAt.toISOString(),
+      checkedBy: row.checkedBy,
+    };
+  }
+
+  /**
+   * The honest second half of the WebRTC/WebSocket diagnostic story (binding correction): whether
+   * a real browser voice session has ever actually connected and exchanged audio, distinct from
+   * the bootstrap-only checks in `runDiagnostics()`. Starts at `NOT_VERIFIED` for every transport
+   * until a real Simulation Lab session writes a row via
+   * `ReceptionistSessionService`'s media-verification writeback.
+   */
+  async mediaVerificationSummary() {
+    const integration = await this.database.db.query.providerIntegrations.findFirst({
+      where: eq(providerIntegrations.provider, 'ELEVENLABS'),
+    });
+    const unverified = { status: 'NOT_VERIFIED' as const, verifiedAt: null };
+    if (!integration) return { webrtc: unverified, websocket: unverified };
+    const summarise = async (transport: 'WEBRTC' | 'WEBSOCKET') => {
+      const [latest] = await this.database.db
+        .select({
+          status: elevenLabsMediaVerifications.status,
+          verifiedAt: elevenLabsMediaVerifications.verifiedAt,
+        })
+        .from(elevenLabsMediaVerifications)
+        .where(
+          and(
+            eq(elevenLabsMediaVerifications.integrationId, integration.id),
+            eq(elevenLabsMediaVerifications.transport, transport),
+          ),
+        )
+        .orderBy(desc(elevenLabsMediaVerifications.verifiedAt))
+        .limit(1);
+      if (!latest) return { status: 'NOT_VERIFIED' as const, verifiedAt: null };
+      return { status: latest.status, verifiedAt: latest.verifiedAt.toISOString() };
+    };
+    return { webrtc: await summarise('WEBRTC'), websocket: await summarise('WEBSOCKET') };
+  }
+
   async rotate(input: TestInput & { validationProof: string }, principal: Principal) {
     const current = await this.database.db.query.providerIntegrations.findFirst({
       where: eq(providerIntegrations.provider, 'ELEVENLABS'),
@@ -627,4 +853,174 @@ export class ElevenLabsIntegrationService {
       payload,
     });
   }
+}
+
+function readNestedString(value: Record<string, unknown>, path: string[]): string | null {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== 'object') return null;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === 'string' && current.trim() ? current : null;
+}
+
+type ProviderCallStatus = 'SUCCESS' | 'FAILURE' | 'NOT_ATTEMPTED';
+
+/**
+ * Pure — takes already-resolved provider call outcomes and turns them into the diagnostics grid.
+ * Deliberately has no DB or adapter dependency so the honesty rules (agent_found requires a real
+ * getAgent success, not just an ID being set; webrtc/websocket each need their own real round
+ * trip; a bootstrap PASS is never claimed as proof of real audio) are unit-testable directly,
+ * matching this codebase's convention of only unit-testing DB-independent logic.
+ */
+export function buildDiagnosticChecks(input: {
+  hasCredential: boolean;
+  workspaceStatus: ProviderCallStatus;
+  workspaceErrorMessage?: string | undefined;
+  defaultAgentId: string | null;
+  agentStatus: ProviderCallStatus;
+  agentErrorMessage?: string | undefined;
+  agentData: Record<string, unknown> | null;
+  voiceTestingEnabled: boolean;
+  greetingOverride: string | null;
+  webrtcTokenStatus: ProviderCallStatus;
+  webrtcErrorMessage?: string | undefined;
+  websocketSignedUrlStatus: ProviderCallStatus;
+  websocketErrorMessage?: string | undefined;
+  voiceMode: 'WEBRTC_PREFERRED' | 'WEBSOCKET_ONLY';
+}): { checks: DiagnosticCheck[]; status: DiagnosticCheckStatus | 'NOT_CONFIGURED' } {
+  const checks: DiagnosticCheck[] = [];
+
+  if (!input.hasCredential) {
+    checks.push({
+      key: 'provider_status',
+      label: 'Provider status',
+      status: 'FAIL',
+      detail: 'No encrypted ElevenLabs credential is saved.',
+    });
+    return { checks, status: 'NOT_CONFIGURED' };
+  }
+
+  checks.push({
+    key: 'provider_status',
+    label: 'Provider status',
+    status: input.workspaceStatus === 'SUCCESS' ? 'PASS' : 'FAIL',
+    detail:
+      input.workspaceStatus === 'SUCCESS'
+        ? 'ElevenLabs authenticated this credential and returned workspace identity.'
+        : `Provider authentication failed: ${input.workspaceErrorMessage ?? 'unknown error'}.`,
+  });
+
+  if (!input.defaultAgentId) {
+    checks.push({
+      key: 'agent_found',
+      label: 'Agent found',
+      status: 'FAIL',
+      detail: 'No ElevenLabs Agent ID is configured.',
+    });
+  } else if (input.agentStatus === 'SUCCESS') {
+    checks.push({
+      key: 'agent_found',
+      label: 'Agent found',
+      status: 'PASS',
+      detail: `ElevenLabs confirmed agent ${input.defaultAgentId} exists and is reachable.`,
+    });
+  } else {
+    checks.push({
+      key: 'agent_found',
+      label: 'Agent found',
+      status: 'FAIL',
+      detail: `ElevenLabs could not confirm this agent: ${input.agentErrorMessage ?? 'unknown error'}.`,
+    });
+  }
+
+  const agentConfirmed = Boolean(input.defaultAgentId && input.agentStatus === 'SUCCESS');
+  checks.push({
+    key: 'voice_configured',
+    label: 'Voice configured',
+    status: input.voiceTestingEnabled && agentConfirmed ? 'PASS' : 'WARNING',
+    detail:
+      input.voiceTestingEnabled && agentConfirmed
+        ? 'Voice testing is enabled and the configured agent is reachable.'
+        : !input.voiceTestingEnabled
+          ? 'Voice testing is disabled in provider settings; chat testing can still run.'
+          : 'Voice testing is enabled, but the configured agent could not be confirmed.',
+  });
+
+  const llmPrompt = input.agentData
+    ? readNestedString(input.agentData, ['conversation_config', 'agent', 'prompt', 'prompt'])
+    : null;
+  checks.push({
+    key: 'llm_configured',
+    label: 'LLM configured',
+    status: llmPrompt ? 'PASS' : input.agentData ? 'WARNING' : 'FAIL',
+    detail: llmPrompt
+      ? 'ElevenLabs returned a non-empty system prompt for this agent.'
+      : input.agentData
+        ? "The agent's response did not include a readable system prompt at conversation_config.agent.prompt.prompt."
+        : 'LLM configuration requires a confirmed agent first.',
+  });
+
+  const firstMessage = input.agentData
+    ? readNestedString(input.agentData, ['conversation_config', 'agent', 'first_message'])
+    : null;
+  checks.push({
+    key: 'first_message_configured',
+    label: 'First message configured',
+    status: firstMessage ? 'PASS' : 'WARNING',
+    detail: firstMessage
+      ? `ElevenLabs reports a real first message: "${firstMessage.slice(0, 80)}".`
+      : input.greetingOverride?.trim()
+        ? 'A local greeting override is set, but ElevenLabs did not report its own first_message — this is a local note only, not a provider-verified fact.'
+        : 'Add a greeting override, or configure a first message on the agent in ElevenLabs.',
+  });
+
+  checks.push({
+    key: 'turn_timeout',
+    label: 'Turn timeout',
+    status: 'WARNING',
+    detail:
+      'Turn timeout is not exposed by the ElevenLabs API; verify it in the ElevenLabs console.',
+  });
+
+  const webrtcAvailable = input.webrtcTokenStatus === 'SUCCESS';
+  checks.push({
+    key: 'webrtc_available',
+    label: 'WebRTC bootstrap',
+    status: input.defaultAgentId ? (webrtcAvailable ? 'PASS' : 'FAIL') : 'FAIL',
+    detail: !input.defaultAgentId
+      ? 'No agent is configured to request a WebRTC token for.'
+      : webrtcAvailable
+        ? 'A real WebRTC conversation token was issued for this agent. This proves server-side reachability only — it is not evidence that browser audio works.'
+        : `The WebRTC token endpoint did not succeed: ${input.webrtcErrorMessage ?? 'unknown error'}.`,
+  });
+
+  const websocketAvailable = input.websocketSignedUrlStatus === 'SUCCESS';
+  checks.push({
+    key: 'websocket_fallback',
+    label: 'WebSocket bootstrap',
+    status: input.defaultAgentId ? (websocketAvailable ? 'PASS' : 'FAIL') : 'FAIL',
+    detail: !input.defaultAgentId
+      ? 'No agent is configured to request a signed URL for.'
+      : websocketAvailable
+        ? 'A real signed WebSocket URL was issued for this agent. This proves server-side reachability only — it is not evidence that browser audio works.'
+        : `The signed-URL endpoint did not succeed: ${input.websocketErrorMessage ?? 'unknown error'}.`,
+  });
+
+  if (input.voiceMode === 'WEBRTC_PREFERRED') {
+    checks.push({
+      key: 'fallback_policy_enabled',
+      label: 'Fallback policy enabled',
+      status: webrtcAvailable && websocketAvailable ? 'PASS' : 'WARNING',
+      detail:
+        'Policy configuration verified, not exercised: WebRTC is preferred and a WebSocket fallback path is configured for transport-recoverable browser failures.',
+    });
+  }
+
+  const status: DiagnosticCheckStatus | 'NOT_CONFIGURED' = checks.some((c) => c.status === 'FAIL')
+    ? 'FAIL'
+    : checks.some((c) => c.status === 'WARNING')
+      ? 'WARNING'
+      : 'PASS';
+  return { checks, status };
 }

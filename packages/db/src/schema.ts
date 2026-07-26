@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   index,
@@ -45,6 +46,24 @@ export const providerIntegrationStatusEnum = pgEnum('provider_integration_status
   'DISCONNECTED',
   'ERROR',
 ]);
+/**
+ * The DB column default (WEBSOCKET_ONLY) exists to backfill existing rows without changing their
+ * working runtime behaviour. Newly created integrations get WEBRTC_PREFERRED explicitly at the
+ * application layer (see `ElevenLabsIntegrationService.connect()`) — these are deliberately two
+ * different defaults at two different layers.
+ */
+export const elevenLabsVoiceModeEnum = pgEnum('elevenlabs_voice_mode', [
+  'WEBRTC_PREFERRED',
+  'WEBSOCKET_ONLY',
+]);
+export const elevenLabsDiagnosticStatusEnum = pgEnum('elevenlabs_diagnostic_status', [
+  'PASS',
+  'WARNING',
+  'FAIL',
+  'NOT_CONFIGURED',
+]);
+export const voiceSessionTransportEnum = pgEnum('voice_session_transport', ['WEBRTC', 'WEBSOCKET']);
+export const mediaVerificationStatusEnum = pgEnum('media_verification_status', ['PASS', 'FAILED']);
 export const aiosLifecycleStateEnum = pgEnum('aios_lifecycle_state', [
   'DRAFT',
   'IN_REVIEW',
@@ -285,6 +304,7 @@ export const providerIntegrations = pgTable(
     transcriptCapture: boolean('transcript_capture').default(true).notNull(),
     summaryGeneration: boolean('summary_generation').default(false).notNull(),
     escalationDetection: boolean('escalation_detection').default(false).notNull(),
+    voiceMode: elevenLabsVoiceModeEnum('voice_mode').default('WEBSOCKET_ONLY').notNull(),
     createdBy: text('created_by').notNull(),
     updatedBy: text('updated_by').notNull(),
     ...timestamps,
@@ -307,6 +327,73 @@ export const providerCapabilitySnapshots = pgTable(
   },
   (table) => [
     index('provider_capability_current').on(table.workspaceId, table.capability, table.checkedAt),
+  ],
+);
+
+/**
+ * A persisted run of the ElevenLabs provider diagnostics workflow. Every check is a real round
+ * trip against the provider (or an honest static/config note where the provider API genuinely
+ * doesn't expose the fact, e.g. turn_timeout) — never a config-presence proxy. Modeled after the
+ * existing `readinessEvaluations` shape.
+ */
+export const elevenLabsDiagnosticRuns = pgTable(
+  'elevenlabs_diagnostic_runs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    integrationId: uuid('integration_id')
+      .references(() => providerIntegrations.id)
+      .notNull(),
+    status: elevenLabsDiagnosticStatusEnum('status').notNull(),
+    checks: jsonb('checks')
+      .$type<
+        Array<{
+          key: string;
+          label: string;
+          status: 'PASS' | 'WARNING' | 'FAIL';
+          detail: string;
+        }>
+      >()
+      .notNull(),
+    warnings: text('warnings').array().notNull(),
+    errors: text('errors').array().notNull(),
+    checkedAt: timestamp('checked_at', { withTimezone: true }).defaultNow().notNull(),
+    checkedBy: text('checked_by').notNull(),
+  },
+  (table) => [
+    index('elevenlabs_diagnostic_runs_integration_idx').on(table.integrationId, table.checkedAt),
+  ],
+);
+
+/**
+ * Real evidence that a browser voice session actually connected and exchanged audio, distinct
+ * from `elevenLabsDiagnosticRuns`'s server-side bootstrap checks. A passing token/signed-url round
+ * trip alone never implies this table has a PASS row — this is written only from real Simulation
+ * Lab session lifecycle events (connect, first agent message, disconnect/end).
+ */
+export const elevenLabsMediaVerifications = pgTable(
+  'elevenlabs_media_verifications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    integrationId: uuid('integration_id')
+      .references(() => providerIntegrations.id)
+      .notNull(),
+    voiceSessionId: uuid('voice_session_id').references((): AnyPgColumn => voiceSessions.id),
+    transport: voiceSessionTransportEnum('transport').notNull(),
+    status: mediaVerificationStatusEnum('status').notNull(),
+    microphoneEstablished: boolean('microphone_established').default(false).notNull(),
+    agentAudioReceived: boolean('agent_audio_received').default(false).notNull(),
+    transcriptEventsReceived: boolean('transcript_events_received').default(false).notNull(),
+    connectedAt: timestamp('connected_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endReason: text('end_reason'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('elevenlabs_media_verifications_integration_idx').on(
+      table.integrationId,
+      table.transport,
+      table.verifiedAt,
+    ),
   ],
 );
 
@@ -427,13 +514,26 @@ export const voiceSessions = pgTable('voice_sessions', {
     .notNull(),
   environment: environmentEnum('environment').notNull(),
   status: voiceSessionStatusEnum('status').default('INITIATED').notNull(),
+  transport: voiceSessionTransportEnum('transport').notNull(),
   providerConversationId: text('provider_conversation_id'),
   initiatedBy: text('initiated_by').notNull(),
-  signedUrlExpiresAt: timestamp('signed_url_expires_at', { withTimezone: true }).notNull(),
+  sessionExpiresAt: timestamp('session_expires_at', { withTimezone: true }).notNull(),
   connectedAt: timestamp('connected_at', { withTimezone: true }),
   endedAt: timestamp('ended_at', { withTimezone: true }),
   endReason: text('end_reason'),
   errorCode: text('error_code'),
+  /**
+   * The three fields below make a WebRTC->WebSocket fallback traceable as one continuous attempt
+   * chain under a single ReceptionistSession, never two unrelated runtime records. See
+   * `receptionist-session.service.ts`'s `retryWithFallbackTransport()`.
+   */
+  receptionistSessionId: uuid('receptionist_session_id').references(
+    (): AnyPgColumn => receptionistSessions.id,
+  ),
+  replacesVoiceSessionId: uuid('replaces_voice_session_id').references(
+    (): AnyPgColumn => voiceSessions.id,
+  ),
+  failureCategory: text('failure_category'),
   synthetic: boolean('synthetic').default(false).notNull(),
   ...timestamps,
 });

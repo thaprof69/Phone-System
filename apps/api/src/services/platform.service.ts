@@ -2261,13 +2261,39 @@ export class PlatformService {
    * pipeline. The signed URL is a 15-minute, provider-issued, single-use credential;
    * the permanent API key never leaves this service.
    */
-  async startVoiceSession(input: { agentVersionId: string; principal: Principal }): Promise<
+  /**
+   * `preferWebRTC` is the caller's own decision (VOICE mode may want WebRTC; TEXT mode never
+   * does, per the receptionist session layer above this one) — this method does not decide
+   * mode-vs-transport policy, only whether to honour a WebRTC preference if one is asked for and
+   * the integration's configured `voiceMode` allows it. `forceTransport` lets a fallback retry
+   * explicitly request WebSocket after a WebRTC session failed client-side, without re-deriving
+   * the integration's default preference.
+   */
+  async startVoiceSession(input: {
+    agentVersionId: string;
+    principal: Principal;
+    preferWebRTC?: boolean;
+    forceTransport?: 'WEBRTC' | 'WEBSOCKET';
+    receptionistSessionId?: string;
+    replacesVoiceSessionId?: string;
+  }): Promise<
     | { status: 'NOT_FOUND'; message: string }
     | { status: 'BLOCKED'; blockers: string[] }
     | { status: FailureStatus; error: { code: string; safeMessage: string; retryable: boolean } }
     | {
         status: 'SUCCESS';
         sessionId: string;
+        transport: 'WEBRTC';
+        conversationToken: string;
+        providerConversationId: string;
+        expiresAt: string;
+        environment: 'development' | 'staging' | 'production';
+        synthetic: boolean;
+      }
+    | {
+        status: 'SUCCESS';
+        sessionId: string;
+        transport: 'WEBSOCKET';
         signedUrl: string;
         expiresAt: string;
         environment: 'development' | 'staging' | 'production';
@@ -2302,11 +2328,64 @@ export class PlatformService {
         status: 'BLOCKED',
         blockers: [`ElevenLabs could not confirm this agent: ${agent.error.safeMessage}`],
       };
-    const signed = await provider.getSignedConversationUrl(deployment.providerAgentId);
-    if (signed.status !== 'SUCCESS') return signed;
 
+    const transport = await this.resolveVoiceTransport(input.preferWebRTC, input.forceTransport);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 15 * 60_000);
+
+    if (transport === 'WEBRTC') {
+      const token = await provider.getConversationToken({ agentId: deployment.providerAgentId });
+      if (token.status !== 'SUCCESS') return token;
+      const [session] = await this.database.db
+        .insert(voiceSessions)
+        .values({
+          agentId: release.agentId,
+          agentDeploymentId: deployment.id,
+          workspaceId: deployment.workspaceId,
+          environment: deployment.environment,
+          status: 'INITIATED',
+          transport: 'WEBRTC',
+          providerConversationId: token.data.providerConversationId,
+          initiatedBy: input.principal.subject,
+          sessionExpiresAt: expiresAt,
+          synthetic: deployment.environment !== 'production',
+          ...(input.receptionistSessionId
+            ? { receptionistSessionId: input.receptionistSessionId }
+            : {}),
+          ...(input.replacesVoiceSessionId
+            ? { replacesVoiceSessionId: input.replacesVoiceSessionId }
+            : {}),
+        })
+        .returning();
+      if (!session) throw new Error('Voice session was not persisted');
+      await this.audit.append({
+        actorType: 'USER',
+        actorId: input.principal.subject,
+        action: 'VOICE_SESSION_STARTED',
+        aggregateType: 'VoiceSession',
+        aggregateId: session.id,
+        purpose: 'RELEASE_MANAGEMENT',
+        payload: {
+          agentVersionId: input.agentVersionId,
+          providerAgentId: deployment.providerAgentId,
+          environment: deployment.environment,
+          transport: 'WEBRTC',
+        },
+      });
+      return {
+        status: 'SUCCESS' as const,
+        sessionId: session.id,
+        transport: 'WEBRTC' as const,
+        conversationToken: token.data.conversationToken,
+        providerConversationId: token.data.providerConversationId,
+        expiresAt: expiresAt.toISOString(),
+        environment: deployment.environment,
+        synthetic: session.synthetic,
+      };
+    }
+
+    const signed = await provider.getSignedConversationUrl(deployment.providerAgentId);
+    if (signed.status !== 'SUCCESS') return signed;
     const [session] = await this.database.db
       .insert(voiceSessions)
       .values({
@@ -2315,9 +2394,16 @@ export class PlatformService {
         workspaceId: deployment.workspaceId,
         environment: deployment.environment,
         status: 'INITIATED',
+        transport: 'WEBSOCKET',
         initiatedBy: input.principal.subject,
-        signedUrlExpiresAt: expiresAt,
+        sessionExpiresAt: expiresAt,
         synthetic: deployment.environment !== 'production',
+        ...(input.receptionistSessionId
+          ? { receptionistSessionId: input.receptionistSessionId }
+          : {}),
+        ...(input.replacesVoiceSessionId
+          ? { replacesVoiceSessionId: input.replacesVoiceSessionId }
+          : {}),
       })
       .returning();
     if (!session) throw new Error('Voice session was not persisted');
@@ -2333,17 +2419,40 @@ export class PlatformService {
         agentVersionId: input.agentVersionId,
         providerAgentId: deployment.providerAgentId,
         environment: deployment.environment,
+        transport: 'WEBSOCKET',
       },
     });
 
     return {
       status: 'SUCCESS' as const,
       sessionId: session.id,
+      transport: 'WEBSOCKET' as const,
       signedUrl: signed.data.signedUrl,
       expiresAt: expiresAt.toISOString(),
       environment: deployment.environment,
       synthetic: session.synthetic,
     };
+  }
+
+  /**
+   * `forceTransport` always wins (used by the client-side WebRTC fallback retry). Otherwise
+   * WebRTC is only used when the caller opted in (`preferWebRTC`, e.g. VOICE mode, never TEXT)
+   * AND the integration's configured `voiceMode` is `WEBRTC_PREFERRED`. No server-side fallback
+   * lives here — see the ADR's scope-trim note: a WebRTC-token-endpoint failure and a
+   * signed-url-endpoint failure share the same auth/agent-availability failure surface, so the
+   * only real fallback need (browser WebRTC/ICE/media failure after a token was already issued)
+   * is handled client-side, one layer up.
+   */
+  private async resolveVoiceTransport(
+    preferWebRTC: boolean | undefined,
+    forceTransport: 'WEBRTC' | 'WEBSOCKET' | undefined,
+  ): Promise<'WEBRTC' | 'WEBSOCKET'> {
+    if (forceTransport) return forceTransport;
+    if (!preferWebRTC) return 'WEBSOCKET';
+    const integrationStatus = await this.elevenLabsIntegration.status();
+    const voiceMode =
+      'voiceMode' in integrationStatus ? integrationStatus.voiceMode : 'WEBSOCKET_ONLY';
+    return voiceMode === 'WEBRTC_PREFERRED' ? 'WEBRTC' : 'WEBSOCKET';
   }
 
   async attachVoiceSessionConversation(

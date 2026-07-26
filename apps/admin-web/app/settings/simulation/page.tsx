@@ -1,4 +1,5 @@
-import { humaniseState } from '@quantum-parks/ui';
+import Link from 'next/link';
+import { formatDateTime, humaniseState } from '@quantum-parks/ui';
 import { SettingsPage as DomainPage, LoadFailure } from '../settings-page';
 import { apiGet } from '../../../lib/api';
 import type { AgentListRow } from '../../../lib/types';
@@ -15,13 +16,54 @@ type InstructionsSnapshot = {
   configurationVersion: number;
 };
 
+type ProviderReadinessSummary = {
+  connected: boolean;
+  agentVerified: boolean;
+  latestDiagnosticsStatus: 'PASS' | 'WARNING' | 'FAIL' | 'NOT_CONFIGURED' | null;
+  latestDiagnosticsAt: string | null;
+};
+
+function ProviderReadinessSummaryBanner({ summary }: { summary: ProviderReadinessSummary | null }) {
+  return (
+    <div className="panel" style={{ marginBottom: 18 }}>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 14,
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18 }}>
+          <span>Provider: {summary?.connected ? 'Connected' : 'Not connected'}</span>
+          <span>
+            Diagnostics:{' '}
+            {summary?.latestDiagnosticsStatus
+              ? `${summary.latestDiagnosticsStatus}${summary.latestDiagnosticsAt ? ` (${formatDateTime(summary.latestDiagnosticsAt)})` : ''}`
+              : 'Not yet run'}
+          </span>
+          <span>Agent: {summary?.agentVerified ? 'Verified' : 'Not verified'}</span>
+        </div>
+        <Link className="button ghost small" href="/settings/ai-providers/elevenlabs">
+          Configure ElevenLabs
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export default async function LiveReceptionistTestPage() {
-  const [agentsResponse, sessionsResponse] = await Promise.all([
+  const [agentsResponse, sessionsResponse, readinessResponse] = await Promise.all([
     apiGet<{ items: AgentListRow[] }>('/agents', { purpose: 'QUALITY_REVIEW' }),
     apiGet<ReceptionistSessionRow[]>('/receptionist-sessions/recent', {
       purpose: 'QUALITY_REVIEW',
     }),
+    apiGet<ProviderReadinessSummary>('/admin/integrations/elevenlabs/readiness-summary', {
+      purpose: 'QUALITY_REVIEW',
+    }),
   ]);
+  const readinessSummary = readinessResponse.ok ? readinessResponse.data : null;
 
   const eyebrow = 'Simulation Lab';
   const title = 'Live Receptionist Test';
@@ -54,6 +96,7 @@ export default async function LiveReceptionistTestPage() {
 
   return (
     <DomainPage eyebrow={eyebrow} title={title} description={description}>
+      <ProviderReadinessSummaryBanner summary={readinessSummary} />
       <LiveTestPanel agentVersions={agentOptions} />
 
       {instructionsResponse?.ok ? (

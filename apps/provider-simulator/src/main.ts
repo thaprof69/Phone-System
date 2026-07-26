@@ -177,6 +177,22 @@ app.get<{ Querystring: { agent_id?: string } }>(
   },
 );
 
+app.get<{
+  Querystring: {
+    agent_id?: string;
+    branch_id?: string;
+    environment?: string;
+    participant_name?: string;
+  };
+}>('/v1/convai/conversation/token', async (request, reply) => {
+  const agentId = request.query.agent_id;
+  if (!agentId || !agents.has(agentId)) return reply.code(404).send({ detail: 'Agent not found' });
+  return {
+    token: `synthetic_webrtc_token_${randomUUID()}`,
+    conversation_id: `synthetic_conv_${randomUUID()}`,
+  };
+});
+
 app.post<{ Body: { name: string; text: string } }>(
   '/v1/convai/knowledge-base/text',
   async (request) => {

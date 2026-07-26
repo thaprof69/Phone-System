@@ -25,6 +25,8 @@ function phaseLabel(phase: ConversationPhase): string {
       return 'Requesting session';
     case 'connecting':
       return 'Connecting';
+    case 'falling_back':
+      return 'WebRTC failed — retrying over WebSocket';
     case 'live':
       return 'Live';
     case 'ended':

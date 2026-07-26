@@ -203,4 +203,56 @@ describe('ElevenLabs test adapter contract', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('requests a real WebRTC conversation token for the live-session endpoint and never leaks the key', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; key: string | null }> = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      requests.push({ url, key: headers.get('xi-api-key') });
+      if (url.endsWith('/v1/convai/conversation/token?agent_id=agent-1&branch_id=main'))
+        return new Response(
+          JSON.stringify({ token: 'webrtc-token-abc', conversation_id: 'conv-1' }),
+          { status: 200 },
+        );
+      throw new Error(`Unexpected request ${url}`);
+    };
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'server-only-secret',
+      });
+      const result = await adapter.getConversationToken({ agentId: 'agent-1', branchId: 'main' });
+      expect(result).toEqual({
+        status: 'SUCCESS',
+        data: { conversationToken: 'webrtc-token-abc', providerConversationId: 'conv-1' },
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.key).toBe('server-only-secret');
+      expect(JSON.stringify(result)).not.toContain('server-only-secret');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('maps a failure from the token endpoint to an honest failure, never a fabricated token', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({}), { status: 404 });
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'secret',
+      });
+      const result = await adapter.getConversationToken({ agentId: 'missing-agent' });
+      expect(result).toMatchObject({ status: 'NOT_FOUND', error: { code: 'EL_NOT_FOUND' } });
+      expect(JSON.stringify(result)).not.toContain('token');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

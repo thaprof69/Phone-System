@@ -93,6 +93,12 @@ export interface ElevenLabsPort {
     startedAfterUnix?: number,
   ): Promise<Result<ProviderConversationPage>>;
   getSignedConversationUrl(agentId: string): Promise<Result<{ signedUrl: string }>>;
+  getConversationToken(input: {
+    agentId: string;
+    environment?: string;
+    branchId?: string;
+    participantName?: string;
+  }): Promise<Result<{ conversationToken: string; providerConversationId: string }>>;
 }
 
 export type SecretResolver = (reference: string) => Promise<string>;
@@ -367,6 +373,26 @@ export class HttpElevenLabsAdapter implements ElevenLabsPort {
     );
     if (result.status !== 'SUCCESS') return result;
     return success({ signedUrl: result.data.signed_url }, result.requestId);
+  }
+
+  async getConversationToken(input: {
+    agentId: string;
+    environment?: string;
+    branchId?: string;
+    participantName?: string;
+  }): Promise<Result<{ conversationToken: string; providerConversationId: string }>> {
+    const query = new URLSearchParams({ agent_id: input.agentId });
+    if (input.branchId) query.set('branch_id', input.branchId);
+    if (input.environment) query.set('environment', input.environment);
+    if (input.participantName) query.set('participant_name', input.participantName);
+    const result = await this.request<{ token: string; conversation_id: string }>(
+      `/v1/convai/conversation/token?${query.toString()}`,
+    );
+    if (result.status !== 'SUCCESS') return result;
+    return success(
+      { conversationToken: result.data.token, providerConversationId: result.data.conversation_id },
+      result.requestId,
+    );
   }
 }
 

@@ -25,6 +25,7 @@ import { ReceptionistPolicyService } from './services/receptionist-policy.servic
 import { ReceptionistRoutingService } from './services/receptionist-routing.service.js';
 import { QuantumResultService } from './services/quantum-result.service.js';
 import { ReceptionistSessionService } from './services/receptionist-session.service.js';
+import { ConversationLifecycleService } from './services/conversation-lifecycle.service.js';
 
 @Module({
   controllers: [
@@ -53,6 +54,7 @@ import { ReceptionistSessionService } from './services/receptionist-session.serv
     ReceptionistRoutingService,
     QuantumResultService,
     ReceptionistSessionService,
+    ConversationLifecycleService,
     { provide: APP_GUARD, useClass: AccessGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],

@@ -42,6 +42,14 @@ const POST_ROUTES: Array<{ pattern: RegExp; upstream: (match: RegExpExecArray) =
     pattern: new RegExp(`^(${UUID})/end$`),
     upstream: (match) => `/receptionist-sessions/${match[1]}/end`,
   },
+  {
+    pattern: new RegExp(`^(${UUID})/retry-transport$`),
+    upstream: (match) => `/receptionist-sessions/${match[1]}/retry-transport`,
+  },
+  {
+    pattern: new RegExp(`^(${UUID})/media-verification$`),
+    upstream: (match) => `/receptionist-sessions/${match[1]}/media-verification`,
+  },
 ];
 
 function resolve(

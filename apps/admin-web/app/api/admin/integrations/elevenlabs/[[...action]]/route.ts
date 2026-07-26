@@ -2,7 +2,18 @@ import { headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 const apiBase = process.env.API_INTERNAL_URL ?? 'http://localhost:4000/v1';
-const allowedActions = new Set(['status', 'capabilities', 'test', 'connect', 'verify', 'rotate']);
+const allowedActions = new Set([
+  'status',
+  'capabilities',
+  'test',
+  'connect',
+  'verify',
+  'rotate',
+  'diagnostics',
+  'readiness-summary',
+  'media-verification-summary',
+]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function proxy(
   request: Request,
@@ -10,14 +21,16 @@ async function proxy(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
 ) {
   const { action = [] } = await context.params;
-  if (action.length > 1 || (action[0] && !allowedActions.has(action[0])))
+  const isDiagnosticsRun =
+    action[0] === 'diagnostics' && action.length === 2 && uuidPattern.test(action[1] ?? '');
+  if ((action.length > 1 && !isDiagnosticsRun) || (action[0] && !allowedActions.has(action[0])))
     return NextResponse.json({ message: 'Unknown integration operation' }, { status: 404 });
   const requestHeaders = await headers();
   const accessToken = requestHeaders.get('x-amzn-oidc-accesstoken');
   const body = method === 'GET' || method === 'DELETE' ? undefined : await request.text();
   try {
     const response = await fetch(
-      `${apiBase}/admin/integrations/elevenlabs${action[0] ? `/${action[0]}` : ''}`,
+      `${apiBase}/admin/integrations/elevenlabs${action.length ? `/${action.join('/')}` : ''}`,
       {
         method,
         cache: 'no-store',

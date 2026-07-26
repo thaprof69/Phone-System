@@ -5,6 +5,7 @@ import { PlatformService } from '../services/platform.service.js';
 import { ToolRegistryService } from '../services/tool-registry.service.js';
 import { AiosPlatformService } from '../services/aios-platform.service.js';
 import { ReceptionistSessionService } from '../services/receptionist-session.service.js';
+import { ConversationLifecycleService } from '../services/conversation-lifecycle.service.js';
 import { RequirePermission } from '../security/access.guard.js';
 
 const IdSchema = z.uuid();
@@ -211,6 +212,18 @@ const SendReceptionistScenarioSchema = z
   })
   .strict();
 const EndReceptionistSessionSchema = z.object({ reason: z.string().min(1).max(200) }).strict();
+const RetryTransportSchema = z.object({ failureCategory: z.string().min(1).max(200) }).strict();
+const MediaVerificationSchema = z
+  .object({
+    status: z.enum(['PASS', 'FAILED']),
+    microphoneEstablished: z.boolean().optional(),
+    agentAudioReceived: z.boolean().optional(),
+    transcriptEventsReceived: z.boolean().optional(),
+    connectedAt: z.iso.datetime().optional(),
+    endedAt: z.iso.datetime().optional(),
+    endReason: z.string().max(200).optional(),
+  })
+  .strict();
 const StaffTaskSchema = z
   .object({
     conversationId: z.uuid(),
@@ -249,6 +262,7 @@ export class ControlPlaneController {
     private readonly tools: ToolRegistryService,
     private readonly aios: AiosPlatformService,
     private readonly receptionistSessions: ReceptionistSessionService,
+    private readonly conversationLifecycle: ConversationLifecycleService,
   ) {}
   @RequirePermission('agent:write')
   @Get('agents')
@@ -631,7 +645,7 @@ export class ControlPlaneController {
   @Post('receptionist-sessions')
   startReceptionistSession(@Body() body: unknown, @Req() request: AuthenticatedRequest) {
     const input = StartReceptionistSessionSchema.parse(body);
-    return this.receptionistSessions.startSession({ ...input, principal: request.principal });
+    return this.conversationLifecycle.start({ ...input, principal: request.principal });
   }
   @RequirePermission('voice:live')
   @Get('receptionist-sessions')
@@ -656,7 +670,7 @@ export class ControlPlaneController {
     @Req() request: AuthenticatedRequest,
   ) {
     const input = AttachReceptionistSessionSchema.parse(body);
-    return this.receptionistSessions.attachConversation(id, input, request.principal);
+    return this.conversationLifecycle.attachRuntime(id, input, request.principal);
   }
   @RequirePermission('voice:live')
   @Post('receptionist-sessions/:id/turn')
@@ -666,7 +680,7 @@ export class ControlPlaneController {
     @Req() request: AuthenticatedRequest,
   ) {
     const input = RecordReceptionistTurnSchema.parse(body);
-    return this.receptionistSessions.recordTurn(id, input, request.principal);
+    return this.conversationLifecycle.recordTranscriptTurn(id, input, request.principal);
   }
   @RequirePermission('voice:live')
   @Post('receptionist-sessions/:id/preset')
@@ -676,7 +690,7 @@ export class ControlPlaneController {
     @Req() request: AuthenticatedRequest,
   ) {
     const input = SendReceptionistScenarioSchema.parse(body);
-    return this.receptionistSessions.sendPresetScenario(id, input.scenarioKey, request.principal);
+    return this.conversationLifecycle.sendPresetScenario(id, input.scenarioKey, request.principal);
   }
   @RequirePermission('voice:live')
   @Post('receptionist-sessions/:id/end')
@@ -686,7 +700,34 @@ export class ControlPlaneController {
     @Req() request: AuthenticatedRequest,
   ) {
     const input = EndReceptionistSessionSchema.parse(body);
-    return this.receptionistSessions.endSession(id, input, request.principal);
+    return this.conversationLifecycle.endSession(id, input, request.principal);
+  }
+  /**
+   * Called by the client hook only after a real, transport-recoverable WebRTC failure (browser
+   * ICE/media/capability failure) — never for a failure the backend already rejected as
+   * BLOCKED/INVALID_CREDENTIAL/policy-block. Keeps the fallback inside the same
+   * ReceptionistSession; see `ConversationLifecycleService.retryWithFallbackTransport`.
+   */
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/retry-transport')
+  retryReceptionistSessionTransport(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = RetryTransportSchema.parse(body);
+    return this.conversationLifecycle.retryWithFallbackTransport(id, input, request.principal);
+  }
+  /**
+   * Real evidence that a browser voice session actually connected and exchanged audio — written
+   * only from real Simulation Lab session lifecycle events, never inferred from a diagnostics
+   * bootstrap check. See the binding correction in ADR 0014.
+   */
+  @RequirePermission('voice:live')
+  @Post('receptionist-sessions/:id/media-verification')
+  recordReceptionistMediaVerification(@Param('id') id: string, @Body() body: unknown) {
+    const input = MediaVerificationSchema.parse(body);
+    return this.conversationLifecycle.recordMediaVerification(id, input);
   }
   @RequirePermission('voice:live')
   @Get('agent-versions/:id/instructions')

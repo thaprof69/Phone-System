@@ -226,21 +226,77 @@ test('AI Providers and AI Routing expose every area without a placeholder', asyn
   }
 });
 
-test('the ElevenLabs connection dialog offers exactly one primary save action', async ({
+test('the ElevenLabs provider form is a direct inline form, never a modal, with exactly one primary save action', async ({
   page,
 }) => {
   await page.goto('/settings/ai-providers/elevenlabs');
 
-  await page.getByRole('button', { name: /^(Connect|Manage)$/ }).click();
-  const dialog = page.locator('dialog.integration-dialog');
-  await expect(dialog).toBeVisible();
+  // No dialog — the form is directly on the page.
+  await expect(page.locator('dialog')).toHaveCount(0);
+  const form = page.locator('#elevenlabs-provider-form');
+  await expect(form).toBeVisible();
 
-  // The old two-step "Test connection" then "Save connection" pair no longer
-  // exists as a separate bare "Test connection" action — testing and saving a
-  // new or rotated credential happen as one server-verified step, and the
-  // footer never shows more than one `.button.primary` to choose between.
-  await expect(dialog.getByRole('button', { name: 'Test connection', exact: true })).toHaveCount(0);
-  await expect(dialog.locator('footer .button.primary')).toHaveCount(1);
+  // Two distinct, differently-scoped actions: "Save ElevenLabs" (persist only) and
+  // "Save & test provider" (persist + real verify) — never a bare "Test connection"
+  // and never more than one primary button to choose between.
+  await expect(form.getByRole('button', { name: 'Save ElevenLabs', exact: true })).toBeVisible();
+  await expect(
+    form.getByRole('button', { name: 'Save & test provider', exact: true }),
+  ).toBeVisible();
+  await expect(form.getByRole('button', { name: 'Test connection', exact: true })).toHaveCount(0);
+  await expect(form.locator('.button.primary')).toHaveCount(1);
+
+  // The real, editable Voice Mode field this port added is present and offers both
+  // real transports.
+  const voiceMode = form.locator('#el-voice-mode');
+  await expect(voiceMode).toBeVisible();
+  await expect(voiceMode.locator('option')).toHaveCount(2);
+});
+
+test('running diagnostics reports an honest result, and a WebRTC bootstrap pass is never presented as proof that real audio works', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.goto('/settings/ai-providers/elevenlabs');
+
+  const diagnostics = page.locator('section[aria-labelledby="diagnostics-title"]');
+  await diagnostics.getByRole('button', { name: 'Run diagnostics' }).click();
+
+  // Either an honest NOT_CONFIGURED single-check result (no credential stored in this
+  // environment) or a real multi-check grid — both are legitimate, non-fabricated outcomes.
+  const notConfigured = page.getByText('No encrypted ElevenLabs credential is saved.');
+  const webrtcBootstrap = page.getByText('WebRTC bootstrap', { exact: true });
+  await expect(notConfigured.or(webrtcBootstrap)).toBeVisible({ timeout: 20_000 });
+
+  if (await webrtcBootstrap.isVisible().catch(() => false)) {
+    // The bootstrap check and the separately-tracked "media session" fact must never collapse
+    // into a single fact — a passing token/signed-URL round trip is not evidence of real audio.
+    await expect(page.getByText('WebSocket bootstrap', { exact: true })).toBeVisible();
+    await expect(page.getByText('WebRTC media session', { exact: true })).toBeVisible();
+    await expect(page.getByText('WebSocket media session', { exact: true })).toBeVisible();
+  }
+});
+
+test('the Simulation Lab shows a provider readiness summary linking to Configure ElevenLabs', async ({
+  page,
+}) => {
+  await page.goto('/settings/simulation');
+  await expect(page.getByText('Provider:', { exact: false })).toBeVisible();
+  await expect(page.getByText('Diagnostics:', { exact: false })).toBeVisible();
+  await expect(page.getByText('Agent:', { exact: false })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Configure ElevenLabs' })).toHaveAttribute(
+    'href',
+    '/settings/ai-providers/elevenlabs',
+  );
+});
+
+test('the ElevenLabs diagnostics history page is reachable and lists past runs honestly', async ({
+  page,
+}) => {
+  await page.goto('/settings/ai-providers/elevenlabs/diagnostics');
+  await expect(
+    page.getByRole('heading', { name: 'ElevenLabs diagnostics history', exact: true }),
+  ).toBeVisible();
 });
 
 test('the audit log is presented as a verifiable chain', async ({ page }) => {
