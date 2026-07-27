@@ -1,8 +1,9 @@
 import { createDecipheriv, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   aggregateFacts,
+  aiArtifacts,
   callClassifications,
   callEntities,
   callOutcomes,
@@ -11,6 +12,7 @@ import {
   agentConfigVersions,
   agentDeployments,
   agentDriftFindings,
+  conversationIntelligenceManifests,
   conversations,
   createDatabase,
   handoffs,
@@ -348,6 +350,71 @@ export function buildAggregateRows(input: {
       synthetic: input.synthetic,
     });
   return rows;
+}
+
+/**
+ * Names today's required-outputs profile (summary/classification/outcome). Bumping this is the
+ * entire cost of adding a future required output (sentiment, quality, follow-up, knowledge gap):
+ * every existing manifest keeps meaning exactly what it meant when it was written, since each
+ * manifest stores the profile version it was computed under rather than always reading this
+ * constant.
+ */
+export const CURRENT_PROCESSING_PROFILE_VERSION = 1;
+
+export type ManifestArtifactPresence = {
+  summary: boolean;
+  classification: boolean;
+  outcome: boolean;
+};
+
+/**
+ * Pure completeness computation for one conversation's manifest, extracted for direct unit
+ * testing — mirrors the `buildAggregateRows`/`buildClassificationInsert` convention.
+ */
+export function computeManifestCompleteness(present: ManifestArtifactPresence): {
+  expectedArtifactCount: number;
+  presentArtifactCount: number;
+  completenessRatio: number;
+} {
+  const expectedArtifactCount = 3;
+  const presentArtifactCount = [present.summary, present.classification, present.outcome].filter(
+    Boolean,
+  ).length;
+  return {
+    expectedArtifactCount,
+    presentArtifactCount,
+    completenessRatio: presentArtifactCount / expectedArtifactCount,
+  };
+}
+
+/**
+ * A transcript-unavailable conversation cannot be evaluated at all (INSUFFICIENT_EVIDENCE, worse
+ * than PARTIAL). Otherwise: zero required outputs is FAILED; every required output present AND no
+ * earlier finalisation stage reported partial completion is COMPLETE; anything else is PARTIAL.
+ */
+export function deriveManifestStatus(
+  completenessRatio: number,
+  partialSoFar: boolean,
+  transcriptAvailable: boolean,
+): 'COMPLETE' | 'PARTIAL' | 'INSUFFICIENT_EVIDENCE' | 'FAILED' {
+  if (!transcriptAvailable) return 'INSUFFICIENT_EVIDENCE';
+  if (completenessRatio === 0) return 'FAILED';
+  if (completenessRatio === 1 && !partialSoFar) return 'COMPLETE';
+  return 'PARTIAL';
+}
+
+export function buildManifestWarnings(
+  present: ManifestArtifactPresence,
+  partialSoFar: boolean,
+): string[] {
+  const warnings: string[] = [];
+  if (!present.summary) warnings.push('Missing call summary');
+  if (!present.classification) warnings.push('Missing call classification');
+  if (!present.outcome) warnings.push('Missing deterministic outcome');
+  if (partialSoFar && present.summary && present.classification && present.outcome) {
+    warnings.push('An earlier finalisation stage reported partial completion');
+  }
+  return warnings;
 }
 
 export const activities: PostCallActivities = {
@@ -756,6 +823,99 @@ export const activities: PostCallActivities = {
         .set({ processingState: 'AGGREGATED', updatedAt: new Date() })
         .where(eq(conversations.id, input.conversationId));
     });
+    return { state: 'COMPLETED' as const };
+  },
+
+  async buildConversationIntelligenceManifest(input) {
+    const existing = await db.query.conversationIntelligenceManifests.findFirst({
+      where: and(
+        eq(conversationIntelligenceManifests.conversationId, input.conversationId),
+        isNull(conversationIntelligenceManifests.supersededAt),
+      ),
+    });
+    if (existing) return { state: 'COMPLETED' as const };
+
+    const conversation = await db.query.conversations.findFirst({
+      where: eq(conversations.id, input.conversationId),
+    });
+    if (!conversation) throw new Error('Conversation not found for manifest build');
+
+    const [transcriptRevision, summary, classification, outcome] = await Promise.all([
+      db.query.transcriptRevisions.findFirst({
+        where: eq(transcriptRevisions.id, input.transcriptRevisionId),
+      }),
+      db.query.callSummaries.findFirst({
+        where: eq(callSummaries.conversationId, input.conversationId),
+        orderBy: (table, { desc }) => [desc(table.revision)],
+      }),
+      db.query.callClassifications.findFirst({
+        where: eq(callClassifications.conversationId, input.conversationId),
+        orderBy: (table, { desc }) => [desc(table.revision)],
+      }),
+      db.query.callOutcomes.findFirst({
+        where: eq(callOutcomes.conversationId, input.conversationId),
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+      }),
+    ]);
+
+    const artifactIds = [summary?.aiArtifactId, classification?.aiArtifactId].filter(
+      (value): value is string => value !== null && value !== undefined,
+    );
+    const artifacts = artifactIds.length
+      ? await db.select().from(aiArtifacts).where(inArray(aiArtifacts.id, artifactIds))
+      : [];
+    const artifactById = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+
+    const present: ManifestArtifactPresence = {
+      summary: Boolean(summary),
+      classification: Boolean(classification),
+      outcome: Boolean(outcome),
+    };
+    const completeness = computeManifestCompleteness(present);
+    const status = deriveManifestStatus(
+      completeness.completenessRatio,
+      input.partialSoFar,
+      Boolean(transcriptRevision),
+    );
+    const warnings = buildManifestWarnings(present, input.partialSoFar);
+
+    const artifactIndex: Record<string, unknown> = {};
+    if (summary) {
+      artifactIndex.summary = {
+        callSummaryId: summary.id,
+        aiArtifactId: summary.aiArtifactId,
+        intelligenceState: summary.aiArtifactId
+          ? (artifactById.get(summary.aiArtifactId)?.intelligenceState ?? null)
+          : null,
+      };
+    }
+    if (classification) {
+      artifactIndex.classification = {
+        callClassificationId: classification.id,
+        aiArtifactId: classification.aiArtifactId,
+        intelligenceState: classification.aiArtifactId
+          ? (artifactById.get(classification.aiArtifactId)?.intelligenceState ?? null)
+          : null,
+      };
+    }
+    if (outcome) {
+      artifactIndex.outcome = { callOutcomeId: outcome.id };
+    }
+
+    await db.insert(conversationIntelligenceManifests).values({
+      conversationId: input.conversationId,
+      transcriptRevisionId: transcriptRevision?.id ?? null,
+      manifestVersion: 1,
+      processingProfileVersion: CURRENT_PROCESSING_PROFILE_VERSION,
+      synthetic: conversation.synthetic,
+      status,
+      expectedArtifactCount: completeness.expectedArtifactCount,
+      presentArtifactCount: completeness.presentArtifactCount,
+      completenessRatio: completeness.completenessRatio.toFixed(4),
+      artifactIndex,
+      warnings,
+    });
+
     return { state: 'COMPLETED' as const };
   },
 

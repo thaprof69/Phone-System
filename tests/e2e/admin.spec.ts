@@ -742,10 +742,15 @@ test('a governed prompt refuses a transition it has already made', async ({ page
   test.setTimeout(120_000);
   await page.goto('/settings/ai-routing/prompts');
 
+  // Targets the dedicated E2E_GOVERNANCE_FIXTURE prompt (seed.ts), never a real prompt a
+  // production capability depends on. ROLLBACK has no path back to ACTIVE in the governance
+  // state machine, so this test permanently retires whatever row it targets — it must never be
+  // "the first row" positionally, since that used to be whichever real capability's prompt
+  // happened to sort first, silently disabling it for every later verification.
   const promptRow = page
     .getByRole('region', { name: 'Prompt versions' })
     .locator('tbody tr')
-    .first();
+    .filter({ hasText: 'E2E_GOVERNANCE_FIXTURE' });
   const move = await openDisclosure(promptRow, 'Move');
   await move.getByLabel('Action').selectOption('ROLLBACK');
   await move.getByLabel('Reason').fill('Rolling back for browser verification');

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildAggregateRows, buildClassificationInsert } from './activities.js';
+import {
+  buildAggregateRows,
+  buildClassificationInsert,
+  buildManifestWarnings,
+  computeManifestCompleteness,
+  deriveManifestStatus,
+} from './activities.js';
 
 describe('buildAggregateRows', () => {
   it('always contributes the three total dimension rows for one conversation', () => {
@@ -184,5 +190,73 @@ describe('buildClassificationInsert', () => {
       aiArtifactId: null,
     });
     expect(entities).toEqual([]);
+  });
+});
+
+describe('computeManifestCompleteness', () => {
+  it('counts all three required outputs present as full completeness', () => {
+    expect(
+      computeManifestCompleteness({ summary: true, classification: true, outcome: true }),
+    ).toEqual({ expectedArtifactCount: 3, presentArtifactCount: 3, completenessRatio: 1 });
+  });
+
+  it('counts zero present outputs as zero completeness', () => {
+    expect(
+      computeManifestCompleteness({ summary: false, classification: false, outcome: false }),
+    ).toEqual({ expectedArtifactCount: 3, presentArtifactCount: 0, completenessRatio: 0 });
+  });
+
+  it('counts a partial mix correctly', () => {
+    expect(
+      computeManifestCompleteness({ summary: true, classification: false, outcome: true }),
+    ).toEqual({
+      expectedArtifactCount: 3,
+      presentArtifactCount: 2,
+      completenessRatio: 2 / 3,
+    });
+  });
+});
+
+describe('deriveManifestStatus', () => {
+  it('is INSUFFICIENT_EVIDENCE whenever no transcript is available, regardless of completeness', () => {
+    expect(deriveManifestStatus(1, false, false)).toBe('INSUFFICIENT_EVIDENCE');
+    expect(deriveManifestStatus(0, false, false)).toBe('INSUFFICIENT_EVIDENCE');
+  });
+
+  it('is FAILED when the transcript exists but zero required outputs are present', () => {
+    expect(deriveManifestStatus(0, false, true)).toBe('FAILED');
+  });
+
+  it('is COMPLETE only at full completeness with no partial finalisation stage', () => {
+    expect(deriveManifestStatus(1, false, true)).toBe('COMPLETE');
+  });
+
+  it('is PARTIAL at full completeness if an earlier stage still reported partial', () => {
+    expect(deriveManifestStatus(1, true, true)).toBe('PARTIAL');
+  });
+
+  it('is PARTIAL for any incomplete-but-nonzero completeness', () => {
+    expect(deriveManifestStatus(2 / 3, false, true)).toBe('PARTIAL');
+    expect(deriveManifestStatus(1 / 3, true, true)).toBe('PARTIAL');
+  });
+});
+
+describe('buildManifestWarnings', () => {
+  it('warns about each missing required output by name', () => {
+    expect(
+      buildManifestWarnings({ summary: false, classification: false, outcome: true }, false),
+    ).toEqual(['Missing call summary', 'Missing call classification']);
+  });
+
+  it('produces no warnings when everything is present and nothing was partial', () => {
+    expect(
+      buildManifestWarnings({ summary: true, classification: true, outcome: true }, false),
+    ).toEqual([]);
+  });
+
+  it('warns about an earlier partial stage even when all three outputs are present', () => {
+    expect(
+      buildManifestWarnings({ summary: true, classification: true, outcome: true }, true),
+    ).toEqual(['An earlier finalisation stage reported partial completion']);
   });
 });

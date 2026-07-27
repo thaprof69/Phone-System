@@ -1055,3 +1055,86 @@ suite before/after.
 | `pnpm check` (full, after the fix)                           | exit 0, all 17 tasks                                                                                                                                                                                  |
 | `pnpm test:e2e --project=admin-chromium` (run 1 of 2)        | 91 passed, 1 failed (the same pre-existing, already-documented Reports-domain flake from the 2026-07-26 dual-transport evidence entry — reproduced consistently in isolation, unrelated to this task) |
 | `pnpm test:e2e --project=admin-chromium` (run 2 of 2)        | 91 passed, 1 failed (identical result — stable)                                                                                                                                                       |
+
+## 2026-07-27 — Canonical Conversation Intelligence Manifest
+
+See ADR 0016 for the full decision record. Summary: `conversation_intelligence_manifests` is the
+new canonical, per-conversation discovery/completeness index — artifacts remain the intelligence
+authority, the manifest never duplicates their payloads. One new `buildConversationIntelligenceManifest`
+finalisation-pipeline stage builds it after `AGGREGATE`, with zero `postCallWorkflow` code changes.
+`getCall()` gained an additive `manifest` field; `computeReportLineage()` now reads manifests instead
+of re-deriving the same join; Call Detail gained a "Conversation intelligence" panel. A deterministic
+backfill covered all 212 completed/partial conversations (real and synthetic alike, per the user's
+binding scope decision).
+
+| Command                                               | Result                                                                                           |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @quantum-parks/db generate` + review   | Clean migration, hand-edited to append the deterministic backfill, reviewed before applying      |
+| `pnpm --filter @quantum-parks/db migrate`             | Applied cleanly against the local dev database                                                   |
+| `pnpm --filter @quantum-parks/workflows build/test`   | exit 0; 8 passed (updated stage-order/known-activity assertions)                                 |
+| `pnpm --filter @quantum-parks/worker typecheck/test`  | exit 0; 19 passed (`computeManifestCompleteness`/`deriveManifestStatus`/`buildManifestWarnings`) |
+| `pnpm --filter @quantum-parks/api typecheck`          | exit 0                                                                                           |
+| `pnpm --filter @quantum-parks/admin-web typecheck`    | exit 0                                                                                           |
+| `pnpm check` (full monorepo)                          | exit 0, all 17 tasks                                                                             |
+| `pnpm architecture:check`                             | passed                                                                                           |
+| `pnpm test:e2e --project=admin-chromium` (run 1 of 2) | 91 passed, 1 failed (same pre-existing Reports-domain flake)                                     |
+| `pnpm test:e2e --project=admin-chromium` (run 2 of 2) | 91 passed, 1 failed (identical result — stable)                                                  |
+
+**Backfill counts** (per the user's binding rule 10), verified directly against the dev database
+after applying the migration:
+
+| Split                                          | Result                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Total completed/partial conversations          | 212                                                                                                                                                                                                                                                                                                                                         |
+| Manifests created                              | 212 (0 skipped — no current manifest existed for any of them)                                                                                                                                                                                                                                                                               |
+| Real (`synthetic = false`)                     | 1, status `COMPLETE`                                                                                                                                                                                                                                                                                                                        |
+| Synthetic (`synthetic = true`)                 | 211, all status `COMPLETE`                                                                                                                                                                                                                                                                                                                  |
+| `PARTIAL` / `FAILED` / `INSUFFICIENT_EVIDENCE` | 0                                                                                                                                                                                                                                                                                                                                           |
+| Missing required outputs                       | None — direct verification confirmed all 212 conversations already had exactly one `call_summaries`/`call_classifications`/`call_outcomes` row each, including the 16 whose `processingState` was `PARTIAL` for an unrelated historical reason (they satisfy the complete profile per rule 6, so they backfilled `COMPLETE`, not `PARTIAL`) |
+
+**Real end-to-end verification against the live local stack** (same API/worker/Temporal/
+provider-simulator stack proven in the ADR 0015 verification, rebuilt fresh for this task's code):
+a second signed webhook round trip was posted for a brand-new conversation. It reached
+`processing_state = PARTIAL` on the first attempt — genuinely, not a bug in this task's own code:
+investigation found two real AI prompt versions (`INTERACTION_ANALYSIS`'s and
+`EVIDENCE_LINKED_INTELLIGENCE`/`CALL_SUMMARY`'s) had been left in `ROLLED_BACK` state, confirmed via
+`audit_events` as a side effect of the `admin.spec.ts` test "a governed prompt refuses a transition
+it has already made" (`AI_PROMPT_ROLLBACK` action), which grabbed `tbody tr :first-child` on the
+Prompts governance table — whichever real prompt happened to sort first — and rolled it back
+destructively with no restoration. The manifest mechanism itself behaved perfectly honestly under
+this real degradation: it recorded `status: PARTIAL`, `presentArtifactCount: 1`, and warnings
+`["Missing call summary", "Missing call classification"]` — exactly the outcome
+`deriveManifestStatus`/`buildManifestWarnings` are supposed to produce when real capabilities fail.
+
+**This was fixed as a genuine test-isolation/governance-integrity defect, not worked around**:
+
+1. Confirmed via the governance transition state machine (`aios-platform.service.ts`) that
+   `ROLLED_BACK` has no path back to `ACTIVE` through any exposed transition (`ACTIVATE` only
+   accepts `from: ['APPROVED']`) — so no "supported governance path" restoration was possible for an
+   already-rolled-back version, and the real defect was that the test rolled back a real,
+   production-relied-upon prompt at all.
+2. Added a dedicated, disposable `E2E_GOVERNANCE_FIXTURE` prompt to `packages/db/src/seed.ts` —
+   seeded `ACTIVE`, referenced by no real capability's service version — so the test always has a
+   safe-to-destroy target.
+3. Retargeted the test to filter on `E2E_GOVERNANCE_FIXTURE` by name instead of taking the first row
+   positionally.
+4. Added a "Prompt" column to the Prompts governance table (`governance-view.tsx`) and joined the
+   parent prompt's `key` into `AiosPlatformService.catalogue()`'s prompts query — the rows were
+   previously visually indistinguishable, which is what let the test target "whichever one sorts
+   first" without anyone noticing which real prompt was at risk.
+5. Restored both real prompts to `ACTIVE` — not via raw SQL, but by re-running
+   `pnpm --filter @quantum-parks/db seed`, since the AIOS governance section's own
+   `onConflictDoUpdate({..., set: {state: 'ACTIVE', ...}})` upserts already restore exactly this
+   state on every re-seed; no ad-hoc repair statement was needed.
+6. Re-ran the corrected test in isolation — passed, and confirmed both real prompts stayed `ACTIVE`
+   afterward while the fixture alone moved to `ROLLED_BACK`.
+7. Re-ran the full e2e suite twice (results above) — confirmed both real prompts remained `ACTIVE`
+   after both runs, and a second live webhook round trip then produced a genuine
+   `conversation_intelligence_manifests` row with `status = 'COMPLETE'`, `presentArtifactCount: 3`,
+   real `FINAL`-state artifact references for both summary and classification. Call Detail's new
+   "Conversation intelligence" panel was browser-verified rendering it live: "Status: Complete",
+   "Completeness: 100.0% (3 of 3 required outputs)", "Processing profile: Version 1".
+
+Acceptance criteria confirmed: governance e2e tests no longer mutate real, production-relied-upon
+capability state; no manual SQL repair was required for the final restoration; live verification was
+performed only after the governance state was confirmed clean.

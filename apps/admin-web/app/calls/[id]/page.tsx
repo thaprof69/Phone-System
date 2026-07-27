@@ -107,6 +107,16 @@ type CallDetail = {
     confidence: string;
     evidenceIds: string[];
   }>;
+  manifest: {
+    id: string;
+    status: string;
+    expectedArtifactCount: number;
+    presentArtifactCount: number;
+    completenessRatio: string;
+    processingProfileVersion: number;
+    warnings: string[];
+    processingCompletedAt: string;
+  } | null;
 };
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -451,6 +461,43 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
                 { term: 'Handling', value: call.sensitive ? 'Sensitive' : 'Standard' },
               ]}
             />
+          </Panel>
+
+          <Panel title="Conversation intelligence" eyebrow="Canonical completeness index">
+            {call.manifest ? (
+              <>
+                <DefinitionList
+                  columns={1}
+                  items={[
+                    { term: 'Status', value: humaniseState(call.manifest.status) },
+                    {
+                      term: 'Completeness',
+                      value: `${formatPercent(Number(call.manifest.completenessRatio))} (${call.manifest.presentArtifactCount} of ${call.manifest.expectedArtifactCount} required outputs)`,
+                    },
+                    {
+                      term: 'Processing profile',
+                      value: `Version ${call.manifest.processingProfileVersion}`,
+                    },
+                    {
+                      term: 'Finalised',
+                      value: formatDateTime(call.manifest.processingCompletedAt),
+                    },
+                  ]}
+                />
+                {call.manifest.warnings.length > 0 ? (
+                  <ul className="tool-list">
+                    {call.manifest.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <EmptyState
+                title="No manifest yet"
+                detail="A canonical intelligence manifest is built once the finalisation pipeline completes."
+              />
+            )}
           </Panel>
 
           <Panel title="Provider evidence" eyebrow="Kept distinct from canonical records">

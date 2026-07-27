@@ -25,6 +25,7 @@ import { ArtefactActions, BudgetForm } from './ai-actions';
 export type PromptVersion = {
   id: string;
   promptId: string;
+  promptKey: string;
   version: number;
   state: string;
   checksum: string;
@@ -122,6 +123,7 @@ export function GovernanceView({
   const overBudget = dailyLimit !== null && spendMicros > dailyLimit;
 
   const promptColumns: Column<PromptVersion>[] = [
+    { key: 'prompt', header: 'Prompt', render: (row) => row.promptKey },
     { key: 'version', header: 'Version', render: (row) => `v${row.version}` },
     {
       key: 'state',

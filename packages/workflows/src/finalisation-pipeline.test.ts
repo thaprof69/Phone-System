@@ -11,6 +11,7 @@ describe('CONVERSATION_FINALISATION_PIPELINE', () => {
       'DERIVE_OUTCOME',
       'LINK_AND_FOLLOW_UP',
       'AGGREGATE',
+      'BUILD_INTELLIGENCE_MANIFEST',
     ]);
   });
 
@@ -34,6 +35,7 @@ describe('CONVERSATION_FINALISATION_PIPELINE', () => {
       'deriveOutcome',
       'linkAndFollowUp',
       'aggregateConversation',
+      'buildConversationIntelligenceManifest',
       'completeProcessing',
       'publishAgent',
       'readBackAgent',

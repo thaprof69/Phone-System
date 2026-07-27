@@ -606,7 +606,21 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
       this.database.db.select().from(aiProviderConnections),
       this.database.db.select().from(aiModels),
       this.database.db.select().from(aiRouteVersions),
-      this.database.db.select().from(aiPromptVersions),
+      this.database.db
+        .select({
+          id: aiPromptVersions.id,
+          promptId: aiPromptVersions.promptId,
+          promptKey: aiPrompts.key,
+          version: aiPromptVersions.version,
+          state: aiPromptVersions.state,
+          checksum: aiPromptVersions.checksum,
+          authorId: aiPromptVersions.authorId,
+          approvedBy: aiPromptVersions.approvedBy,
+          activatedAt: aiPromptVersions.activatedAt,
+          createdAt: aiPromptVersions.createdAt,
+        })
+        .from(aiPromptVersions)
+        .innerJoin(aiPrompts, eq(aiPrompts.id, aiPromptVersions.promptId)),
       this.database.db.select().from(aiOutputSchemaVersions),
       this.database.db.select().from(aiTaxonomyVersions),
       this.database.db.select().from(aiBudgetPolicies),
@@ -622,7 +636,7 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
       providers: providers.map((provider) => this.safeConnection(provider)),
       models,
       routes,
-      prompts: prompts.map(({ content: _content, ...prompt }) => prompt),
+      prompts,
       schemas: schemas.map(({ jsonSchema: _jsonSchema, ...schema }) => schema),
       taxonomies,
       budgets,

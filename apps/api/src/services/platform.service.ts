@@ -18,6 +18,7 @@ import {
   callEntities,
   callOutcomes,
   callSummaries,
+  conversationIntelligenceManifests,
   conversationProcessingRuns,
   conversations,
   correctionHistory,
@@ -1795,6 +1796,25 @@ export class PlatformService {
     return { items, nextCursor: null };
   }
 
+  /**
+   * The canonical, current manifest for a conversation — the partial unique index on
+   * (conversationId, supersededAt IS NULL) guarantees at most one row matches. Reprocessing is not
+   * implemented yet, so supersededAt is never set today, but every read already filters on it.
+   */
+  private async getCurrentManifest(conversationId: string) {
+    const [manifest] = await this.database.db
+      .select()
+      .from(conversationIntelligenceManifests)
+      .where(
+        and(
+          eq(conversationIntelligenceManifests.conversationId, conversationId),
+          isNull(conversationIntelligenceManifests.supersededAt),
+        ),
+      )
+      .limit(1);
+    return manifest ?? null;
+  }
+
   async getCall(id: string) {
     const call = await this.database.db
       .select({
@@ -1827,7 +1847,7 @@ export class PlatformService {
     const allowedRevision =
       revisions.find((revision) => revision.revisionType === 'REDACTED') ??
       revisions.find((revision) => revision.revisionType === 'CANONICAL');
-    const [turns, summaries, classifications, outcomes, tools] = await Promise.all([
+    const [turns, summaries, classifications, outcomes, tools, manifest] = await Promise.all([
       allowedRevision
         ? this.database.db
             .select()
@@ -1855,6 +1875,7 @@ export class PlatformService {
         .from(toolInvocations)
         .where(eq(toolInvocations.conversationId, id))
         .orderBy(toolInvocations.requestedAt),
+      this.getCurrentManifest(id),
     ]);
     const artifactIds = [
       ...summaries.map((summary) => summary.aiArtifactId),
@@ -1883,6 +1904,7 @@ export class PlatformService {
       toolInvocations: tools,
       evidenceArtifacts,
       entities,
+      manifest,
     };
   }
 
@@ -3210,22 +3232,30 @@ export class PlatformService {
       .reduce((sum, fact) => sum + fact.count, 0);
 
     // Honest coverage, not a dashboard-only number: how many of this period's real
-    // conversations actually reached a FINAL (post-conversation, non-provisional)
-    // classification artefact, versus how many exist at all.
-    const classified = await this.database.db
-      .selectDistinct({ conversationId: callClassifications.conversationId })
-      .from(callClassifications)
-      .innerJoin(aiArtifacts, eq(callClassifications.aiArtifactId, aiArtifacts.id))
-      .innerJoin(conversations, eq(callClassifications.conversationId, conversations.id))
+    // conversations have a canonical manifest recording a FINAL (post-conversation,
+    // non-provisional) classification, versus how many conversations exist at all. Reads the
+    // manifest's own artifactIndex rather than re-joining callClassifications/aiArtifacts directly
+    // — the manifest is now the thing that join was approximating.
+    const manifests = await this.database.db
+      .select({ artifactIndex: conversationIntelligenceManifests.artifactIndex })
+      .from(conversationIntelligenceManifests)
+      .innerJoin(
+        conversations,
+        eq(conversationIntelligenceManifests.conversationId, conversations.id),
+      )
       .where(
         and(
-          eq(aiArtifacts.intelligenceState, 'FINAL'),
+          isNull(conversationIntelligenceManifests.supersededAt),
           eq(conversations.synthetic, false),
           gte(conversations.startedAt, periodStart),
           lte(conversations.startedAt, periodEnd),
         ),
       );
-    const conversationsWithFinalClassification = classified.length;
+    const conversationsWithFinalClassification = manifests.filter((manifest) => {
+      const classification = manifest.artifactIndex?.classification as
+        { intelligenceState?: string } | undefined;
+      return classification?.intelligenceState === 'FINAL';
+    }).length;
     const classificationCoverage =
       conversationCount > 0 ? conversationsWithFinalClassification / conversationCount : null;
 
@@ -3234,7 +3264,7 @@ export class PlatformService {
       conversationCount,
       conversationsWithFinalClassification,
       classificationCoverage,
-      generatedFrom: 'aggregate_facts',
+      generatedFrom: 'conversation_intelligence_manifests',
     };
   }
 

@@ -609,6 +609,41 @@ if ((process.env.QP_ENVIRONMENT ?? 'development') !== 'production') {
         })
         .onConflictDoNothing();
   }
+
+  // A dedicated, disposable prompt fixture for e2e coverage of prompt-governance transitions
+  // (submit/approve/activate/rollback and repeat-transition refusal). Deliberately not referenced
+  // by any aiServiceVersions row, so no real capability depends on its state — the e2e test that
+  // exercises ROLLBACK against it can permanently roll it back without ever affecting a real,
+  // production-relied-upon prompt (INTERACTION_ANALYSIS/EVIDENCE_LINKED_INTELLIGENCE previously
+  // paid that cost, since the test targeted "the first prompt row" positionally).
+  const [e2eFixturePrompt] = await db
+    .insert(aiPrompts)
+    .values({
+      key: 'E2E_GOVERNANCE_FIXTURE',
+      purpose: 'Disposable prompt for e2e transition tests',
+    })
+    .onConflictDoUpdate({ target: aiPrompts.key, set: { updatedAt: new Date() } })
+    .returning();
+  if (e2eFixturePrompt) {
+    const fixtureContent =
+      'This prompt exists only to give e2e governance tests something safe to mutate.';
+    await db
+      .insert(aiPromptVersions)
+      .values({
+        promptId: e2eFixturePrompt.id,
+        version: 1,
+        state: 'ACTIVE',
+        content: fixtureContent,
+        checksum: checksum(fixtureContent),
+        authorId: developmentActor,
+        approvedBy: developmentActor,
+        activatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [aiPromptVersions.promptId, aiPromptVersions.version],
+        set: { state: 'ACTIVE', updatedAt: new Date() },
+      });
+  }
 }
 // The business dataset the control plane is built and verified against. Guarded
 // on the environment for the same reason as the AIOS registry above: synthetic

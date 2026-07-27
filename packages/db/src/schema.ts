@@ -1187,6 +1187,63 @@ export const callOutcomes = pgTable('call_outcomes', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * The canonical, per-conversation index of which intelligence is current, complete, and eligible
+ * for operational use. Artifacts (aiArtifacts, callSummaries, callClassifications, callOutcomes)
+ * remain the source of intelligence truth; this table is the source of discovery/completeness
+ * truth — it never duplicates artifact payload content, only references and counts them.
+ */
+export const conversationIntelligenceManifestStatusEnum = pgEnum(
+  'conversation_intelligence_manifest_status',
+  ['COMPLETE', 'PARTIAL', 'INSUFFICIENT_EVIDENCE', 'FAILED'],
+);
+
+export const conversationIntelligenceManifests = pgTable(
+  'conversation_intelligence_manifests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .references(() => conversations.id)
+      .notNull(),
+    // Nullable: an INSUFFICIENT_EVIDENCE manifest has no transcript revision to reference at all.
+    transcriptRevisionId: uuid('transcript_revision_id').references(() => transcriptRevisions.id),
+    // Tracks supersession of the same profile (a future reprocessing/transcript-correction run
+    // replacing this manifest) — distinct from processingProfileVersion below. Reserved headroom:
+    // no code path sets this above 1 yet, matching the ai_intelligence_state SUPERSEDED precedent.
+    manifestVersion: integer('manifest_version').default(1).notNull(),
+    // Which version of the required-outputs profile (summary/classification/outcome today)
+    // computed this manifest's completeness. When a future capability (sentiment, quality,
+    // follow-up, knowledge gap) joins the required set, that becomes profile version 2; this
+    // manifest's completeness ratio always means "against its own profile version," never
+    // silently reinterpreted against a later, larger required-outputs set.
+    processingProfileVersion: integer('processing_profile_version').default(1).notNull(),
+    synthetic: boolean('synthetic').default(false).notNull(),
+    status: conversationIntelligenceManifestStatusEnum('status').notNull(),
+    expectedArtifactCount: integer('expected_artifact_count').notNull(),
+    presentArtifactCount: integer('present_artifact_count').notNull(),
+    completenessRatio: numeric('completeness_ratio', { precision: 5, scale: 4 }).notNull(),
+    artifactIndex: jsonb('artifact_index').$type<Record<string, unknown>>().notNull(),
+    warnings: text('warnings').array().default([]).notNull(),
+    // Reserved for a future reprocessing/versioning system — never set by any code path yet.
+    supersedesManifestId: uuid('supersedes_manifest_id'),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    processingCompletedAt: timestamp('processing_completed_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Partial unique index — only one CURRENT manifest per conversation (supersededAt IS NULL),
+    // deliberately not a permanent constraint on conversationId alone: it must remain possible for
+    // a future reprocessing/transcript-correction run to insert manifestVersion 2 while the prior
+    // row is preserved (supersededAt set), without a later destructive uniqueness migration. Every
+    // current-manifest read or idempotency check filters on conversationId + supersededAt IS NULL.
+    uniqueIndex('conversation_intelligence_manifest_current_unique')
+      .on(table.conversationId)
+      .where(sql`${table.supersededAt} IS NULL`),
+  ],
+);
+
 export const qualityEvaluations = pgTable('quality_evaluations', {
   id: uuid('id').defaultRandom().primaryKey(),
   conversationId: uuid('conversation_id')

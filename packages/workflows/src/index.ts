@@ -28,6 +28,11 @@ export interface PostCallActivities {
     transcriptRevisionId: string;
     partialSoFar: boolean;
   }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
+  buildConversationIntelligenceManifest(input: {
+    conversationId: string;
+    transcriptRevisionId: string;
+    partialSoFar: boolean;
+  }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
   completeProcessing(input: {
     inboxId: string;
     conversationId: string;

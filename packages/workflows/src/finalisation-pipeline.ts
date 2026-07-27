@@ -77,6 +77,15 @@ export const CONVERSATION_FINALISATION_PIPELINE: readonly FinalisationStage[] = 
     outputArtifactTable: 'aggregate_facts',
     retryPolicy: { maximumAttempts: 5 },
   },
+  {
+    key: 'BUILD_INTELLIGENCE_MANIFEST',
+    activityName: 'buildConversationIntelligenceManifest',
+    kind: 'DETERMINISTIC',
+    requiresTranscriptState: 'REDACTED',
+    blocking: false,
+    outputArtifactTable: 'conversation_intelligence_manifests',
+    retryPolicy: { maximumAttempts: 5 },
+  },
 ] as const;
 
 /** The uniform shape every stage after NORMALIZE_AND_REDACT is invoked with and returns. */
