@@ -29,6 +29,22 @@ export const CATEGORICAL_SERIES = [
 ] as const;
 
 /**
+ * A broader scale for bars that represent independent categories within one
+ * measure. Unlike a multi-series legend, each bar is already identified by its
+ * axis label, so a longer palette improves scanning without implying shared
+ * series identity.
+ */
+export const CATEGORICAL_BARS = [
+  ...CATEGORICAL_SERIES,
+  '#2f7f83', // 7 teal
+  '#b24f81', // 8 magenta
+  '#5668b4', // 9 indigo
+  '#7a6a32', // 10 olive
+  '#c25c9c', // 11 pink
+  '#43733d', // 12 forest
+] as const;
+
+/**
  * Forms that compare every series against every other — scatter, bubble — cannot
  * use all six: the full set does not clear the all-pairs floors. Cap those at this
  * validated subset and fold the remainder into "Other" or facet instead.
@@ -91,6 +107,19 @@ export function seriesColor(index: number): string {
   // series 1 identical, which silently misreads as the same entity.
   const clamped = Math.min(Math.max(index, 0), CATEGORICAL_SERIES.length - 1);
   return CATEGORICAL_SERIES[clamped] ?? CATEGORICAL_SERIES[0];
+}
+
+export function categoryColor(index: number): string {
+  const safeIndex = Math.max(0, Math.floor(index));
+  const paletteColor = CATEGORICAL_BARS[safeIndex];
+  if (paletteColor) return paletteColor;
+
+  // Golden-angle spacing prevents long category lists from collapsing into one
+  // repeated tail colour while keeping neighbouring bars visibly distinct.
+  const overflowIndex = safeIndex - CATEGORICAL_BARS.length;
+  const hue = Math.round((overflowIndex * 137.508 + 18) % 360);
+  const lightness = 42 + (Math.floor(overflowIndex / 12) % 3) * 6;
+  return `hsl(${hue} 58% ${lightness}%)`;
 }
 
 export const MAX_SERIES = CATEGORICAL_SERIES.length;

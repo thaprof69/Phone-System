@@ -1322,15 +1322,17 @@ quiet, while progressively busier cells receive visibly stronger blue shades. Li
 use separate contrast-safe scales; high-density cells switch foreground colour for legibility.
 Clicking a cell still opens the same evidence drawer over the same source calls.
 
-Single-measure categorical bar charts now assign the validated categorical palette by category
-slot through the shared `BarChart` wrapper. This affects Top call reasons and the equivalent
-breakdown charts across Intelligence and Reports. Multi-series charts and explicit status colours
-retain their established series semantics.
+Single-measure categorical bar charts now assign a dedicated 12-colour categorical palette by
+category slot through the shared `BarChart` wrapper. Longer lists continue with deterministic
+golden-angle colours instead of clamping every remaining bar to the final palette colour. This
+affects Top call reasons and the equivalent breakdown charts across Intelligence and Reports.
+Multi-series charts and explicit status colours retain their established series semantics.
 
 | Check                  | Result                                                                                       |
 | ---------------------- | -------------------------------------------------------------------------------------------- |
 | GitNexus impact        | `IntelligenceCockpit` LOW: one page caller; shared `BarChart` LOW: `ComparisonChart` caller  |
 | Admin strict typecheck | Passed                                                                                       |
+| Shared UI tests        | 37 passed; first 12 category colours are unique and overflow does not repeat the final colour |
 | Focused browser test   | Verifies 28 heat cells, distinct value bands/backgrounds and multi-colour categorical bars   |
 | Accessibility          | Values, labels and table fallbacks remain available independently of colour                  |
 | Behavior boundary      | Filters, chart values, evidence drill-downs, source records and domain actions are unchanged |

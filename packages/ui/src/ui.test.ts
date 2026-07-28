@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CATEGORICAL_SERIES, MAX_SERIES, seriesColor } from './chart-theme';
+import {
+  CATEGORICAL_BARS,
+  CATEGORICAL_SERIES,
+  MAX_SERIES,
+  categoryColor,
+  seriesColor,
+} from './chart-theme';
 import { collapseContext, diffLines, summariseDiff } from './diff';
 import {
   formatCurrencyFromMicros,
@@ -215,5 +221,15 @@ describe('chart palette', () => {
 
   it('clamps negative indexes to the first slot', () => {
     expect(seriesColor(-2)).toBe(CATEGORICAL_SERIES[0]);
+  });
+
+  it('keeps long categorical bar runs visually distinct', () => {
+    const colours = Array.from({ length: CATEGORICAL_BARS.length }, (_, index) =>
+      categoryColor(index),
+    );
+    expect(new Set(colours).size).toBe(CATEGORICAL_BARS.length);
+    expect(categoryColor(CATEGORICAL_BARS.length)).not.toBe(
+      categoryColor(CATEGORICAL_BARS.length - 1),
+    );
   });
 });

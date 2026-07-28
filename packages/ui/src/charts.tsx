@@ -24,6 +24,7 @@ import {
   CHART_SURFACE,
   MARK,
   MAX_SERIES,
+  categoryColor,
   seriesColor,
 } from './chart-theme';
 
@@ -280,7 +281,7 @@ export function BarChart({
           >
             {useCategoryColours
               ? data.map((datum, datumIndex) => (
-                  <Cell key={`${datum.label}-${datumIndex}`} fill={seriesColor(datumIndex)} />
+                  <Cell key={`${datum.label}-${datumIndex}`} fill={categoryColor(datumIndex)} />
                 ))
               : null}
           </Bar>
