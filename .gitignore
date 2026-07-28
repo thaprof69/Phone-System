@@ -18,3 +18,10 @@ artifacts/
 *.tfstate
 *.tfstate.*
 .terraform/
+
+# Local agent tooling and generated code-intelligence reports
+.claude/settings.local.json
+.claude/skills/
+CLAUDE.md
+graphify-out/
+**/graphify-out/
