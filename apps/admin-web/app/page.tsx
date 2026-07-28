@@ -50,6 +50,8 @@ export default async function MissionControlPage() {
   const data = response.data;
   const { receptionist, runtime, today, attention, readiness } = data;
   const simulator = runtime.capabilityMode !== 'live';
+  const affectedAlertRecords = attention.reduce((sum, item) => sum + item.count, 0);
+  const criticalAlerts = attention.filter((item) => item.severity === 'critical').length;
 
   const columns: Column<RecentCall>[] = [
     {
@@ -143,6 +145,7 @@ export default async function MissionControlPage() {
       ) : null}
 
       <Panel
+        className="mission-release-panel"
         title={receptionist.name}
         eyebrow="Current release"
         action={
@@ -233,73 +236,82 @@ export default async function MissionControlPage() {
       </Panel>
 
       <h2 className="section-title">Today</h2>
-      <MetricGrid>
-        <MetricCard
-          label="Calls received"
-          value={formatNumber(today.callsReceived)}
-          detail={`${formatNumber(today.callsCompleted)} fully processed`}
-          href="/calls"
-        />
-        <MetricCard
-          label="Answered by the receptionist"
-          value={
-            today.knowledgeAnswerRate === null
-              ? 'No data yet'
-              : formatPercent(today.knowledgeAnswerRate)
-          }
-          detail={
-            today.knowledgeAnswerRate === null
-              ? 'No call today carries an outcome'
-              : 'Resolved without a transfer or callback'
-          }
-          tone={rateTone(today.knowledgeAnswerRate, 0.7, 0.5)}
-        />
-        <MetricCard
-          label="Transferred"
-          value={today.transferRate === null ? 'No data yet' : formatPercent(today.transferRate)}
-          detail={`${formatNumber(today.transfers)} calls passed to a person`}
-          href="/calls/handoffs"
-        />
-        <MetricCard
-          label="Unresolved"
-          value={formatNumber(today.unresolved)}
-          detail="Knowledge gap, disconnect or technical failure"
-          tone={today.unresolved > 0 ? 'warning' : 'good'}
-          href="/calls"
-        />
-        <MetricCard
-          label="Callbacks overdue"
-          value={formatNumber(today.callbacksDue)}
-          detail={`${formatNumber(today.callbacksOpen)} open in total`}
-          tone={today.callbacksDue > 0 ? 'danger' : 'good'}
-          href="/calls/callbacks?due=overdue"
-        />
-        <MetricCard
-          label="Open staff tasks"
-          value={formatNumber(today.openTasks)}
-          detail="Raised from calls, awaiting completion"
-          tone={today.openTasks > 0 ? 'warning' : 'good'}
-          href="/calls/tasks"
-        />
-        <MetricCard
-          label="Failed processing"
-          value={formatNumber(today.failedProcessing)}
-          detail={`${formatNumber(today.partialProcessing)} only partly processed`}
-          tone={today.failedProcessing > 0 ? 'danger' : 'good'}
-          href="/calls/failed"
-        />
-        <MetricCard
-          label="Tests"
-          value={humaniseState(today.testStatus)}
-          detail={
-            today.testFailures > 0
-              ? `${formatNumber(today.testFailures)} failing checks`
-              : 'No failing checks on the last completed run'
-          }
-          tone={today.testFailures > 0 ? 'danger' : toneForState(today.testStatus)}
-          href="/settings/advanced/provider-test-runs"
-        />
-      </MetricGrid>
+      <div className="mission-metrics">
+        <MetricGrid>
+          <MetricCard
+            label="Calls received"
+            value={formatNumber(today.callsReceived)}
+            detail={`${formatNumber(today.callsCompleted)} fully processed`}
+            href="/calls"
+          />
+          <MetricCard
+            label="Answered by the receptionist"
+            value={
+              today.knowledgeAnswerRate === null
+                ? 'No data yet'
+                : formatPercent(today.knowledgeAnswerRate)
+            }
+            detail={
+              today.knowledgeAnswerRate === null
+                ? 'No call today carries an outcome'
+                : 'Resolved without a transfer or callback'
+            }
+            tone={rateTone(today.knowledgeAnswerRate, 0.7, 0.5)}
+          />
+          <MetricCard
+            label="Transferred"
+            value={today.transferRate === null ? 'No data yet' : formatPercent(today.transferRate)}
+            detail={`${formatNumber(today.transfers)} calls passed to a person`}
+            href="/calls/handoffs"
+          />
+          <MetricCard
+            label="Unresolved"
+            value={formatNumber(today.unresolved)}
+            detail="Knowledge gap, disconnect or technical failure"
+            tone={today.unresolved > 0 ? 'warning' : 'good'}
+            href="/calls"
+          />
+          <MetricCard
+            label="Callbacks overdue"
+            value={formatNumber(today.callbacksDue)}
+            detail={`${formatNumber(today.callbacksOpen)} open in total`}
+            tone={today.callbacksDue > 0 ? 'danger' : 'good'}
+            href="/calls/callbacks?due=overdue"
+          />
+          <MetricCard
+            label="Open staff tasks"
+            value={formatNumber(today.openTasks)}
+            detail="Raised from calls, awaiting completion"
+            tone={today.openTasks > 0 ? 'warning' : 'good'}
+            href="/calls/tasks"
+          />
+          <MetricCard
+            label="Alerts"
+            value={formatNumber(attention.length)}
+            detail={`${formatNumber(affectedAlertRecords)} affected records · ${formatNumber(criticalAlerts)} critical signals`}
+            tone={criticalAlerts > 0 ? 'danger' : attention.length > 0 ? 'warning' : 'good'}
+            href="/alerts"
+          />
+          <MetricCard
+            label="Failed processing"
+            value={formatNumber(today.failedProcessing)}
+            detail={`${formatNumber(today.partialProcessing)} only partly processed`}
+            tone={today.failedProcessing > 0 ? 'danger' : 'good'}
+            href="/calls/failed"
+          />
+          <MetricCard
+            label="Tests"
+            value={humaniseState(today.testStatus)}
+            detail={
+              today.testFailures > 0
+                ? `${formatNumber(today.testFailures)} failing checks`
+                : 'No failing checks on the last completed run'
+            }
+            tone={today.testFailures > 0 ? 'danger' : toneForState(today.testStatus)}
+            href="/settings/advanced/provider-test-runs"
+          />
+        </MetricGrid>
+      </div>
 
       <div className="mission-columns">
         <Panel

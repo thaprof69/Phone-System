@@ -39,6 +39,7 @@ import {
   providerTestMappings,
   providerWorkspaces,
   qualityEvaluations,
+  receptionistSessions,
   permissions,
   reportDefinitions,
   reportRuns,
@@ -67,7 +68,6 @@ import {
   type ElevenLabsPort,
   type ProviderTestRun,
 } from '@quantum-parks/elevenlabs';
-import { runtimeSecret } from '@quantum-parks/config';
 import {
   attemptsPolicyOverride,
   evaluateReleaseGate,
@@ -76,11 +76,14 @@ import {
   type FailureStatus,
   type ReleaseDependency,
 } from '@quantum-parks/domain';
+import { InteractionEvidenceSchema } from '@quantum-parks/intelligence';
 import { DatabaseService } from './database.service.js';
 import { WorkflowDispatchService } from './workflow-dispatch.service.js';
 import { ElevenLabsIntegrationService } from './elevenlabs-integration.service.js';
 import { AiosPlatformService } from './aios-platform.service.js';
 import { AuditService } from './audit.service.js';
+import { deriveCallListStatus, deriveCallOrigin } from './call-list-projection.js';
+import { buildCallOperatorProjection, type OperatorWorkItem } from './call-operator-projection.js';
 
 const developmentActorId = '00000000-0000-4000-8000-000000000001';
 
@@ -127,23 +130,22 @@ export class PlatformService {
   private async providerAdapter(): Promise<ElevenLabsPort> {
     const configured = await this.elevenLabsIntegration.resolveActiveCredential();
     if (configured) {
-      const production =
-        configured.integration.environment === 'PRODUCTION' ||
-        (process.env.QP_ENVIRONMENT ?? 'development') === 'production';
+      // Resolved centrally so live voice sessions target the same host as credential
+      // verification. This previously duplicated the host decision and sent every live
+      // call to the local simulator whenever the integration was SANDBOX.
       return new HttpElevenLabsAdapter({
-        baseUrl: production
-          ? 'https://api.elevenlabs.io'
-          : (process.env.ELEVENLABS_SANDBOX_BASE_URL ?? 'http://localhost:4100'),
+        baseUrl: this.elevenLabsIntegration.baseUrl(configured.integration.environment),
         apiKeyReference: `integration/${configured.integration.id}`,
         workspaceId: 'configured-provider-workspace',
         resolveSecret: async () => configured.apiKey,
       });
     }
+    // No configured credential means live provider calls fail honestly as not configured.
     return new HttpElevenLabsAdapter({
-      baseUrl: process.env.ELEVENLABS_BASE_URL ?? 'http://localhost:4100',
+      baseUrl: 'https://api.elevenlabs.io',
       apiKeyReference: process.env.ELEVENLABS_SECRET_REF ?? 'local/elevenlabs/api-key',
       workspaceId: process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic',
-      resolveSecret: async () => runtimeSecret('LOCAL_ELEVENLABS_API_KEY', 'synthetic-api-key'),
+      resolveSecret: async () => '',
     });
   }
 
@@ -1765,7 +1767,7 @@ export class PlatformService {
     // only the version *number* (not its id) is useful for the intelligence
     // drill-through link this list exists to support.
     const conversationIds = rows.map((row) => row.id);
-    const [classifications, versions] = await Promise.all([
+    const [classifications, summaries, sessions, versions] = await Promise.all([
       conversationIds.length > 0
         ? this.database.db
             .select({
@@ -1775,6 +1777,25 @@ export class PlatformService {
             })
             .from(callClassifications)
             .where(inArray(callClassifications.conversationId, conversationIds))
+        : Promise.resolve([]),
+      conversationIds.length > 0
+        ? this.database.db
+            .select({
+              conversationId: callSummaries.conversationId,
+              summary: callSummaries.summary,
+              revision: callSummaries.revision,
+            })
+            .from(callSummaries)
+            .where(inArray(callSummaries.conversationId, conversationIds))
+        : Promise.resolve([]),
+      conversationIds.length > 0
+        ? this.database.db
+            .select({
+              conversationId: receptionistSessions.conversationId,
+              mode: receptionistSessions.mode,
+            })
+            .from(receptionistSessions)
+            .where(inArray(receptionistSessions.conversationId, conversationIds))
         : Promise.resolve([]),
       this.database.db
         .select({ id: agentConfigVersions.id, version: agentConfigVersions.version })
@@ -1786,11 +1807,40 @@ export class PlatformService {
         intentByConversation.set(row.conversationId, row.primaryIntent);
       }
     }
+    const summaryByConversation = new Map<string, string>();
+    for (const row of summaries.sort((left, right) => right.revision - left.revision)) {
+      if (summaryByConversation.has(row.conversationId)) continue;
+      const purpose =
+        typeof row.summary === 'object' &&
+        row.summary !== null &&
+        'purpose' in row.summary &&
+        typeof row.summary.purpose === 'object' &&
+        row.summary.purpose !== null &&
+        'text' in row.summary.purpose &&
+        typeof row.summary.purpose.text === 'string'
+          ? row.summary.purpose.text.trim()
+          : '';
+      if (purpose) summaryByConversation.set(row.conversationId, purpose);
+    }
+    const sessionByConversation = new Map(
+      sessions
+        .filter((session): session is typeof session & { conversationId: string } =>
+          Boolean(session.conversationId),
+        )
+        .map((session) => [session.conversationId, session]),
+    );
     const versionById = new Map(versions.map((version) => [version.id, version.version]));
 
     const items = rows.map((row) => ({
       ...row,
       intent: intentByConversation.get(row.id) ?? null,
+      summary: summaryByConversation.get(row.id) ?? null,
+      callStatus: deriveCallListStatus(row.processingState),
+      origin: deriveCallOrigin({
+        hasReceptionistSession: sessionByConversation.has(row.id),
+        synthetic: row.synthetic,
+      }),
+      mode: sessionByConversation.get(row.id)?.mode ?? null,
       agentVersion: row.agentVersionId ? (versionById.get(row.agentVersionId) ?? null) : null,
     }));
     return { items, nextCursor: null };
@@ -1820,6 +1870,9 @@ export class PlatformService {
       .select({
         id: conversations.id,
         processingState: conversations.processingState,
+        startedAt: conversations.startedAt,
+        endedAt: conversations.endedAt,
+        receivedAt: conversations.createdAt,
         language: conversations.language,
         park: conversations.park,
         sensitive: conversations.sensitive,
@@ -1847,7 +1900,17 @@ export class PlatformService {
     const allowedRevision =
       revisions.find((revision) => revision.revisionType === 'REDACTED') ??
       revisions.find((revision) => revision.revisionType === 'CANONICAL');
-    const [turns, summaries, classifications, outcomes, tools, manifest] = await Promise.all([
+    const [
+      turns,
+      summaries,
+      classifications,
+      outcomes,
+      tools,
+      manifest,
+      callbacks,
+      tasks,
+      session,
+    ] = await Promise.all([
       allowedRevision
         ? this.database.db
             .select()
@@ -1876,15 +1939,35 @@ export class PlatformService {
         .where(eq(toolInvocations.conversationId, id))
         .orderBy(toolInvocations.requestedAt),
       this.getCurrentManifest(id),
+      this.database.db
+        .select()
+        .from(callbackRequests)
+        .where(eq(callbackRequests.conversationId, id))
+        .orderBy(desc(callbackRequests.createdAt)),
+      this.database.db
+        .select()
+        .from(staffTasks)
+        .where(eq(staffTasks.conversationId, id))
+        .orderBy(desc(staffTasks.createdAt)),
+      this.database.db.query.receptionistSessions.findFirst({
+        where: eq(receptionistSessions.conversationId, id),
+      }),
     ]);
     const artifactIds = [
       ...summaries.map((summary) => summary.aiArtifactId),
       ...classifications.map((classification) => classification.aiArtifactId),
-    ].filter((value): value is string => value !== null);
+      session?.latestAnalysisArtifactId,
+    ].filter((value): value is string => typeof value === 'string');
     const classificationIds = classifications.map((classification) => classification.id);
-    const [evidenceArtifacts, entities] = await Promise.all([
+    const ownerIds = [...callbacks, ...tasks]
+      .map((item) => item.ownerId)
+      .filter((value): value is string => value !== null);
+    const [evidenceArtifacts, entities, owners] = await Promise.all([
       artifactIds.length
-        ? this.database.db.select().from(aiArtifacts).where(inArray(aiArtifacts.id, artifactIds))
+        ? this.database.db
+            .select()
+            .from(aiArtifacts)
+            .where(inArray(aiArtifacts.id, [...new Set(artifactIds)]))
         : Promise.resolve([]),
       classificationIds.length
         ? this.database.db
@@ -1892,7 +1975,33 @@ export class PlatformService {
             .from(callEntities)
             .where(inArray(callEntities.classificationId, classificationIds))
         : Promise.resolve([]),
+      ownerIds.length
+        ? this.database.db
+            .select({ id: adminUsers.id, displayName: adminUsers.displayName })
+            .from(adminUsers)
+            .where(inArray(adminUsers.id, [...new Set(ownerIds)]))
+        : Promise.resolve([]),
     ]);
+    const ownerNameById = new Map(owners.map((owner) => [owner.id, owner.displayName]));
+    const toOperatorItem = (
+      item: (typeof callbacks)[number] | (typeof tasks)[number],
+    ): OperatorWorkItem => ({
+      status: item.status,
+      ownerId: item.ownerId,
+      ownerName: item.ownerId ? (ownerNameById.get(item.ownerId) ?? null) : null,
+      dueAt: item.dueAt,
+      completedAt: item.completedAt,
+      reason: item.reason,
+      createdAt: item.createdAt,
+    });
+    const interactionArtifactId =
+      classifications[0]?.aiArtifactId ?? session?.latestAnalysisArtifactId ?? null;
+    const interactionArtifact = interactionArtifactId
+      ? evidenceArtifacts.find((artifact) => artifact.id === interactionArtifactId)
+      : null;
+    const interactionEvidence = interactionArtifact
+      ? InteractionEvidenceSchema.safeParse(interactionArtifact.result)
+      : null;
 
     return {
       ...call[0],
@@ -1905,6 +2014,17 @@ export class PlatformService {
       evidenceArtifacts,
       entities,
       manifest,
+      sentiment: interactionEvidence?.success ? interactionEvidence.data.sentiment : null,
+      urgency: interactionEvidence?.success ? interactionEvidence.data.urgency : null,
+      followUp: buildCallOperatorProjection({
+        callbacks: callbacks.map(toOperatorItem),
+        tasks: tasks.map(toOperatorItem),
+      }),
+      callStatus: deriveCallListStatus(call[0].processingState),
+      origin: deriveCallOrigin({
+        hasReceptionistSession: Boolean(session),
+        synthetic: call[0].synthetic,
+      }),
     };
   }
 
@@ -3165,6 +3285,175 @@ export class PlatformService {
       this.database.db.select().from(reportRuns).orderBy(desc(reportRuns.createdAt)),
     ]);
     return { definitions, runs };
+  }
+
+  /**
+   * Canonical call-level reporting dataset used by the interactive BI workspace.
+   *
+   * Every dimension is read from a persisted source: conversations provide timing and
+   * operational state; the latest classification provides intent and confidence; the
+   * linked AI evidence artifact provides sentiment and urgency; outcomes remain
+   * deterministic; and receptionist sessions establish simulation origin. Missing
+   * evidence stays null rather than being inferred for chart completeness.
+   */
+  async reportExplorer() {
+    const rows = await this.database.db
+      .select({
+        id: conversations.id,
+        processingState: conversations.processingState,
+        startedAt: conversations.startedAt,
+        endedAt: conversations.endedAt,
+        receivedAt: conversations.createdAt,
+        language: conversations.language,
+        park: conversations.park,
+        sensitive: conversations.sensitive,
+        synthetic: conversations.synthetic,
+        agentVersionId: conversations.agentVersionId,
+      })
+      .from(conversations)
+      .orderBy(desc(conversations.createdAt))
+      .limit(1000);
+
+    const conversationIds = rows.map((row) => row.id);
+    if (conversationIds.length === 0) {
+      return { generatedAt: new Date().toISOString(), items: [] };
+    }
+
+    const [classifications, summaries, outcomes, sessions, versions] = await Promise.all([
+      this.database.db
+        .select({
+          conversationId: callClassifications.conversationId,
+          primaryIntent: callClassifications.primaryIntent,
+          secondaryIntents: callClassifications.secondaryIntents,
+          confidence: callClassifications.confidence,
+          revision: callClassifications.revision,
+          aiArtifactId: callClassifications.aiArtifactId,
+        })
+        .from(callClassifications)
+        .where(inArray(callClassifications.conversationId, conversationIds)),
+      this.database.db
+        .select({
+          conversationId: callSummaries.conversationId,
+          summary: callSummaries.summary,
+          revision: callSummaries.revision,
+        })
+        .from(callSummaries)
+        .where(inArray(callSummaries.conversationId, conversationIds)),
+      this.database.db
+        .select({
+          conversationId: callOutcomes.conversationId,
+          outcome: callOutcomes.outcome,
+          createdAt: callOutcomes.createdAt,
+        })
+        .from(callOutcomes)
+        .where(inArray(callOutcomes.conversationId, conversationIds)),
+      this.database.db
+        .select({
+          conversationId: receptionistSessions.conversationId,
+          mode: receptionistSessions.mode,
+        })
+        .from(receptionistSessions)
+        .where(inArray(receptionistSessions.conversationId, conversationIds)),
+      this.database.db
+        .select({ id: agentConfigVersions.id, version: agentConfigVersions.version })
+        .from(agentConfigVersions),
+    ]);
+
+    const latestClassification = new Map<string, (typeof classifications)[number]>();
+    for (const classification of classifications.sort(
+      (left, right) => right.revision - left.revision,
+    )) {
+      if (!latestClassification.has(classification.conversationId)) {
+        latestClassification.set(classification.conversationId, classification);
+      }
+    }
+
+    const artifactIds = [
+      ...new Set(
+        [...latestClassification.values()]
+          .map((classification) => classification.aiArtifactId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const artifacts =
+      artifactIds.length > 0
+        ? await this.database.db
+            .select({ id: aiArtifacts.id, result: aiArtifacts.result })
+            .from(aiArtifacts)
+            .where(inArray(aiArtifacts.id, artifactIds))
+        : [];
+    const artifactById = new Map(artifacts.map((artifact) => [artifact.id, artifact.result]));
+
+    const latestSummary = new Map<string, (typeof summaries)[number]>();
+    for (const summary of summaries.sort((left, right) => right.revision - left.revision)) {
+      if (!latestSummary.has(summary.conversationId)) {
+        latestSummary.set(summary.conversationId, summary);
+      }
+    }
+
+    const latestOutcome = new Map<string, (typeof outcomes)[number]>();
+    for (const outcome of outcomes.sort(
+      (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+    )) {
+      if (!latestOutcome.has(outcome.conversationId)) {
+        latestOutcome.set(outcome.conversationId, outcome);
+      }
+    }
+
+    const sessionByConversation = new Map(
+      sessions
+        .filter((session): session is typeof session & { conversationId: string } =>
+          Boolean(session.conversationId),
+        )
+        .map((session) => [session.conversationId, session]),
+    );
+    const versionById = new Map(versions.map((version) => [version.id, version.version]));
+
+    const summaryText = (value: Record<string, unknown> | undefined): string | null => {
+      const purpose = value?.purpose;
+      if (!purpose || typeof purpose !== 'object' || !('text' in purpose)) return null;
+      return typeof purpose.text === 'string' && purpose.text.trim() ? purpose.text.trim() : null;
+    };
+
+    return {
+      generatedAt: new Date().toISOString(),
+      items: rows.map((row) => {
+        const classification = latestClassification.get(row.id);
+        const evidence = classification?.aiArtifactId
+          ? InteractionEvidenceSchema.safeParse(artifactById.get(classification.aiArtifactId))
+          : null;
+        const durationSeconds =
+          row.startedAt && row.endedAt
+            ? Math.max(0, Math.round((row.endedAt.getTime() - row.startedAt.getTime()) / 1000))
+            : null;
+        return {
+          id: row.id,
+          receivedAt: row.receivedAt.toISOString(),
+          startedAt: row.startedAt?.toISOString() ?? null,
+          endedAt: row.endedAt?.toISOString() ?? null,
+          durationSeconds,
+          park: row.park,
+          language: row.language,
+          sensitive: row.sensitive,
+          synthetic: row.synthetic,
+          processingState: row.processingState,
+          callStatus: deriveCallListStatus(row.processingState),
+          origin: deriveCallOrigin({
+            hasReceptionistSession: sessionByConversation.has(row.id),
+            synthetic: row.synthetic,
+          }),
+          mode: sessionByConversation.get(row.id)?.mode ?? null,
+          intent: classification?.primaryIntent ?? null,
+          secondaryIntents: classification?.secondaryIntents ?? [],
+          classificationConfidence: classification ? Number(classification.confidence) : null,
+          sentiment: evidence?.success ? evidence.data.sentiment : null,
+          urgency: evidence?.success ? evidence.data.urgency : null,
+          outcome: latestOutcome.get(row.id)?.outcome ?? null,
+          summary: summaryText(latestSummary.get(row.id)?.summary),
+          agentVersion: row.agentVersionId ? (versionById.get(row.agentVersionId) ?? null) : null,
+        };
+      }),
+    };
   }
 
   async createReportDefinition(input: {

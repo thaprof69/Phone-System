@@ -1,5 +1,14 @@
 # Release Evidence
 
+## Knowledge Hub AI Copilot and document understanding
+
+- Direct-entry enhancements execute only through the configured `AI_COPILOT` route and remain operator-applied drafts.
+- Uploaded PDF, DOCX, XLSX/CSV, Markdown and text files are extracted locally; extracted source is bounded to 80,000 characters and sent through the configured `KNOWLEDGE_HUB` route.
+- AI document analysis is schema validated. Every displayed evidence quote must be an exact substring of extracted source text.
+- No Copilot suggestion or document analysis creates, approves, publishes or synchronises knowledge automatically.
+- URL crawling remains unconnected and reports that state without creating a synthetic ingestion item.
+- Verification evidence: API and admin unit tests, strict typecheck, focused Playwright desktop/mobile/accessibility journey, traceability check and production build.
+
 ## Readiness statement
 
 Current readiness: `EXTERNALLY_BLOCKED`. Buildable engineering checks pass, while live onboarding, deployment, and approval evidence remain unavailable.
@@ -16,6 +25,28 @@ Simulator evidence can establish engineering completeness only. It cannot establ
 ## Evidence log
 
 Real command output, test results, browser screenshots, traces, security scans, load results, restore evidence, failures, and corrections are appended here as work completes.
+
+## 2026-07-27 — Live ElevenLabs provider onboarding and receptionist bootstrap
+
+The runtime provider path now targets `https://api.elevenlabs.io` only. The deterministic provider
+simulator is excluded from the normal Compose stack and retained under the `test` profile. Saving a
+verified provider now encrypts the credential, verifies the selected agent, projects the approved
+active receptionist configuration into ElevenLabs' `conversation_config` DTO, PATCHes the existing
+agent, reads it back, and records `IN_SYNC` only when the projected checksums match. Simulation uses
+the exact mapped agent-version id instead of the first version returned by the agent list.
+
+| Evidence                         | Result                                                                                                                                  |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Production provider verification | Credential accepted; configured agent resolved as `Quantum`                                                                             |
+| Provider mapping                 | Active release mapped to the configured production agent; `IN_SYNC`; local and remote checksums match                                   |
+| Live session bootstrap           | Production WebRTC voice session created with a real ElevenLabs conversation id; permanent API key remained server-side                  |
+| Runtime topology                 | API, admin web, and worker healthy; provider simulator container removed from the normal stack                                          |
+| `pnpm typecheck`                 | 17/17 packages passed                                                                                                                   |
+| Production Docker build          | 17/17 package builds passed and the stack restarted healthy                                                                             |
+| Focused Vitest                   | 3 files, 36 tests passed in a disposable writable Node 24 runtime container                                                             |
+| Traceability checker             | Passed: FR-01–FR-82 and NFR-01–NFR-18 present                                                                                           |
+| Architecture checker             | Ran in Node 24; failed on two pre-existing, unrelated direct AIOS-adapter imports in the intelligence-models controller/routing service |
+| Browser media                    | Bootstrap succeeded; final audio handshake awaits the operator granting microphone permission                                           |
 
 ## 2026-07-22 engineering evidence
 
@@ -1138,3 +1169,168 @@ this real degradation: it recorded `status: PARTIAL`, `presentArtifactCount: 1`,
 Acceptance criteria confirmed: governance e2e tests no longer mutate real, production-relied-upon
 capability state; no manual SQL repair was required for the final restoration; live verification was
 performed only after the governance state was confirmed clean.
+
+## 2026-07-27 — Simplified Test Your AI Receptionist screen
+
+Replaced the multi-panel Simulation Lab composition with the focused `Test Your AI Receptionist`
+experience from Quantum Park OS: one readiness state, live voice controls, preset prompts, chat,
+transcript and a concise Quantum Result. The approved default agent is selected server-side, while
+the existing receptionist lifecycle, short-lived ElevenLabs access, deterministic policy/routing
+and honest refusal behavior remain unchanged. Generated instructions, provider setup summary and
+recent-session content were removed from this route; their dedicated routes remain available.
+
+| Command / check                                                                                  | Result                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/admin-web typecheck`                                               | exit 0                                                                                                                                                                                                                                                      |
+| Docker production build (`docker compose up -d --build admin-web`)                               | exit 0; all 17 package builds passed and the rebuilt admin container started healthy                                                                                                                                                                        |
+| Focused admin Playwright tests (layout, mobile, distinction, honest refusal)                     | 4 passed                                                                                                                                                                                                                                                    |
+| Focused admin Playwright tests (browser secret boundary and live-session response secret safety) | 2 passed                                                                                                                                                                                                                                                    |
+| In-app browser verification                                                                      | Desktop and narrow responsive layouts rendered without horizontal overflow; preset chat exercised the real API and returned the expected no-in-sync-provider-mapping refusal                                                                                |
+| `pnpm --filter @quantum-parks/admin-web test`                                                    | Externally blocked on this host: macOS rejected the installed Rolldown native binding's code signature before Vitest could start                                                                                                                            |
+| `pnpm architecture:check`                                                                        | Blocked by unrelated pre-existing worktree changes in `intelligence-models.controller.ts` and `intelligence-routing.service.ts`, which currently import provider adapters directly; no new architecture violation was reported for this receptionist change |
+
+## 2026-07-27 — Calls mission control and Copilot advisory
+
+The Calls register now begins with live, drillable operational indicators for SLA breaches, failed
+processing, open callbacks, partial/unclassified intelligence and sensitive calls. A ranked queue
+links to the exact filtered register or governed work queue. The advisory reuses the audited
+`AI_COPILOT` route and accepts only bounded aggregates, signal labels and evidence call IDs; cited
+signal IDs are validated server-side. AI failure is labelled explicitly and falls back to local
+evidence guidance without taking an action.
+
+| Check                                              | Result                                                                                                |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @quantum-parks/admin-web typecheck` | Passed                                                                                                |
+| `pnpm --filter @quantum-parks/admin-web test`      | 4 files, 22 tests passed                                                                              |
+| Docker production build                            | All 17 package builds passed; rebuilt admin/API containers healthy                                    |
+| Focused Playwright Calls journey                   | 2 passed; metric drill-down URLs, routed evidence, accessibility and 390px overflow covered           |
+| Live configured AI Copilot route                   | Returned `AI ROUTED` with an evidence-cited SLA recommendation                                        |
+| Desktop browser inspection                         | No horizontal overflow at 1766px; command strip, priority queue and advisory rendered without overlap |
+
+## 2026-07-27 — Whole-app unified operator visual system
+
+Knowledge Hub and Test Your AI Receptionist were used as the visual source of truth. A CSS audit
+established the paper, pale green, forest, ink, muted-copy, border and compact-control vocabulary.
+That contract now spans Mission Control, Calls, Alerts, Intelligence, Reports, Readiness and every
+Settings family. Shared and feature-module surfaces use an `8px` radius, consistent focus treatment,
+accessible muted text, solid rather than gradient forest hierarchy, and restrained hover feedback.
+Reduced-motion support disables movement. No React handler, route, request body, provider endpoint,
+permission or persistence behavior changed.
+
+Verification evidence:
+
+| Check                     | Result                                                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admin strict typecheck    | Passed                                                                                                                                               |
+| Admin unit tests          | Passed: 4 files, 22 tests                                                                                                                            |
+| Production Docker build   | Passed: 17 packages; rebuilt admin container healthy                                                                                                 |
+| Cross-app visual contract | Passed: 18 desktop route families and five 390px mobile stress routes                                                                                |
+| Focused browser journeys  | Passed: Calls, Knowledge Hub, Intelligence, Reports, ElevenLabs provider and Receptionist Simulation                                                 |
+| Complete browser suite    | Attempted: 42 passed before stopping; six pre-existing stale assertions target removed simulator/provider-registry/governance UI, with 51 not run    |
+| Provider behavior         | Both existing save actions and both voice transports remain available                                                                                |
+| Provider computed style   | Paper `rgb(252, 252, 248)`, ink `rgb(23, 32, 29)`, `8px` radius                                                                                      |
+| Accessibility             | ElevenLabs and Intelligence axe scans passed; Intelligence muted-label contrast corrected                                                            |
+| Responsive visual audit   | No overflow across the route contract; mobile Administration had zero clipped controls and a stable 27px heading                                     |
+| Visual inspection         | Mission Control, Intelligence, Reports, Intelligence Models and mobile Administration inspected without overlap or style-family drift                |
+| Motion accessibility      | Global and feature-module `prefers-reduced-motion` fallbacks present                                                                                 |
+| Traceability policy       | Passed: FR-01–FR-82 and NFR-01–NFR-18 present                                                                                                        |
+| Architecture policy       | Existing unrelated failures remain in `intelligence-models.controller.ts` and `intelligence-routing.service.ts` for direct AIOS adapter dependencies |
+
+## 2026-07-27 — Mission Control and Call Detail alignment refinement
+
+Refined the two remaining visually inconsistent operator screens without changing their data,
+routes or actions. Mission Control now gives release facts consistent internal gutters, holds metric
+labels/values/details to stable baselines, expands the final three metrics across the available row,
+and aligns attention/readiness content. Call Detail now presents the at-a-glance strip as one
+bounded surface, uses compact summary and follow-up rails, removes the oversized missing-summary
+state, and renders the canonical transcript as calm scan rows instead of nested cards.
+
+| Check                       | Result                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| GitNexus upstream impact    | `MissionControlPage` LOW, zero callers/processes; `CallDetailPage` LOW, zero callers/processes               |
+| Admin strict typecheck      | Passed                                                                                                       |
+| Production Docker build     | Passed: all 17 packages; rebuilt admin/API containers healthy                                                |
+| Focused Playwright journeys | 4 passed: Mission Control, desktop Call Detail, 390px Call Detail, and the 18-route shared visual contract   |
+| Accessibility               | Focused Mission Control and Call Detail axe scans passed                                                     |
+| Visual inspection           | Mission Control plus completed and failed Call Detail states inspected at 1680×1050 without overlap/overflow |
+| Behavior boundary           | No API request, route, status derivation, callback/SLA action, provider call or persistence behavior changed |
+
+## 2026-07-28 — Quantum Parks purple navigation
+
+The fixed operator sidebar now uses the official Quantum Parks purple `#3F2599`, sourced from the
+public website palette. Navigation structure, active-route logic and semantic status colours are
+unchanged; the shared `AppShell` was not edited.
+
+| Check                    | Result                                                                                        |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| GitNexus upstream impact | `AppShell` CRITICAL: 9 direct dependants, 56 flows and 16 modules; implementation is CSS-only |
+| Production Docker build  | Passed: all 17 packages; rebuilt admin/API containers healthy                                 |
+| Cross-app contract       | Passed: purple token and computed sidebar background across all 18 desktop route families     |
+| Live browser inspection  | `/calls/live` renders `rgb(63, 37, 153)` with no horizontal overflow                          |
+| Traceability policy      | Passed: FR-01–FR-82 and NFR-01–NFR-18 present                                                 |
+| Architecture policy      | Existing unrelated AI-router adapter-boundary violations remain in two API files              |
+| Accessibility            | Purple navigation retains light high-contrast text, visible active state and focus treatment  |
+| Behavior boundary        | No component, route, request, provider, permission or persistence logic changed               |
+
+## 2026-07-28 — Authentic Quantum Parks shell logo
+
+Replaced both `QP` text placeholders in the shared shell with the supplied Quantum Parks mark.
+The source artwork was preserved at 225×225 while black and near-black background pixels were
+converted to a real alpha channel, allowing the shell background to show through on purple and
+white. Link targets, accessible identity text, user context and navigation behavior are unchanged.
+
+| Check                    | Result                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| Source asset             | Supplied PNG preserved at 225×225; output reports `hasAlpha: yes`                       |
+| GitNexus upstream impact | `AppShell` CRITICAL: 9 direct dependants, 56 flows and 16 modules                       |
+| Production Docker build  | Passed: all 17 packages; rebuilt admin/API containers healthy                           |
+| Browser contract         | Passed: both shell images complete with non-zero natural width on all 18 desktop routes |
+| Live browser inspection  | Optimized 48px/32px images loaded; no `QP` placeholders and no horizontal overflow      |
+| Traceability policy      | Passed: FR-01–FR-82 and NFR-01–NFR-18 present                                           |
+| Behavior boundary        | Only static image elements and presentation sizing changed                              |
+
+## 2026-07-28 — Persisted blue-indigo dark mode
+
+Added a compact light/dark icon toggle immediately before the header logo and removed the
+redundant authenticated-user/activity copy. The preference is persisted locally, defaults to the
+operating-system preference on first use, and is reconciled during pre-paint and client startup so
+hard refreshes retain the selected appearance. Dark mode uses a navy and blue-indigo surface
+system that complements the Quantum Parks identity. The navigation rail uses deep brand navy
+`#082B57` in light mode and recedes to `#051A35` in dark mode. Both are darker relatives of the
+blue edge in the supplied logo, preserving its silhouette while avoiding a distracting contrast
+against the dark canvas. Cyan-blue is reserved for interactive accents and semantic
+green/red/amber states remain distinct. No route, provider, permission, request or domain behavior
+changed.
+
+| Check                     | Result                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| GitNexus upstream impact  | `AppShell` CRITICAL: 9 direct dependants, 56 flows and 16 modules; `RootLayout` LOW                            |
+| Admin strict typecheck    | Passed                                                                                                         |
+| Production Docker build   | Passed: all 17 packages; rebuilt admin/API containers healthy                                                  |
+| Light/dark route contract | Passed: 18 desktop route families in both modes and five 390px mobile stress routes                            |
+| Persistence and header    | Passed: dark selection survives hard navigation; accessible toggle label updates; removed header copy absent   |
+| Live visual inspection    | Dark canvas `#0C1020` and rail `#051A35` preserve the logo silhouette without distracting contrast or overflow |
+| Traceability policy       | Passed: FR-01–FR-82 and NFR-01–NFR-18 present                                                                  |
+| Architecture policy       | Existing unrelated AI-router adapter-boundary violations remain in two API files                               |
+| Behavior boundary         | Appearance state is browser-local; no server or provider data path changed                                     |
+
+## 2026-07-28 — Value-scaled Intelligence visualisation
+
+Replaced the flat peak-time grid treatment with six explicit intensity bands derived from each
+cell's canonical call count relative to the busiest visible cell. Empty and low-volume cells remain
+quiet, while progressively busier cells receive visibly stronger blue shades. Light and dark modes
+use separate contrast-safe scales; high-density cells switch foreground colour for legibility.
+Clicking a cell still opens the same evidence drawer over the same source calls.
+
+Single-measure categorical bar charts now assign the validated categorical palette by category
+slot through the shared `BarChart` wrapper. This affects Top call reasons and the equivalent
+breakdown charts across Intelligence and Reports. Multi-series charts and explicit status colours
+retain their established series semantics.
+
+| Check                  | Result                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| GitNexus impact        | `IntelligenceCockpit` LOW: one page caller; shared `BarChart` LOW: `ComparisonChart` caller  |
+| Admin strict typecheck | Passed                                                                                       |
+| Focused browser test   | Verifies 28 heat cells, distinct value bands/backgrounds and multi-colour categorical bars   |
+| Accessibility          | Values, labels and table fallbacks remain available independently of colour                  |
+| Behavior boundary      | Filters, chart values, evidence drill-downs, source records and domain actions are unchanged |

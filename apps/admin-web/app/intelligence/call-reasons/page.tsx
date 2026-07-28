@@ -12,6 +12,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { IntelligenceDetailExplorer } from '../detail-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +76,33 @@ export default async function CallReasonsPage() {
       description="Why people call, over the last 90 days. Each reason drills through to the calls behind it."
       meta={<StatusPill tone="neutral">{formatNumber(rows.length)} distinct reasons</StatusPill>}
     >
+      <IntelligenceDetailExplorer
+        eyebrow="Demand investigation"
+        title="Rank, compare, and open the calls behind each reason"
+        description="Volume and share use the same classified-call facts as the report explorer."
+        rows={rows.map((row) => ({
+          id: row.intent,
+          label: humaniseState(row.intent),
+          subtitle: `${formatNumber(row.value)} calls in the 90-day cohort`,
+          href: `/calls?intent=${encodeURIComponent(row.intent)}`,
+          metrics: {
+            calls: row.value,
+            share: totals.received > 0 ? row.value / totals.received : null,
+          },
+          evidence: [
+            { label: 'Primary reason', value: humaniseState(row.intent) },
+            { label: 'Calls', value: formatNumber(row.value) },
+            { label: 'Source', value: 'Latest persisted call classification' },
+          ],
+        }))}
+        metrics={[
+          { key: 'calls', label: 'Call volume', format: 'number' },
+          { key: 'share', label: 'Share of calls', format: 'percent' },
+        ]}
+        sourceHref="/calls"
+        sourceLabel="Canonical calls"
+      />
+
       {rows.length > 0 ? (
         <Panel title="Calls by reason" eyebrow="Ranked, most common first">
           <BarChart

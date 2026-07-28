@@ -276,6 +276,11 @@ export const encryptedProviderCredentials = pgTable('encrypted_provider_credenti
   initializationVector: text('initialization_vector').notNull(),
   authenticationTag: text('authentication_tag').notNull(),
   keyVersion: text('key_version').notNull(),
+  /**
+   * Last four characters of the plaintext secret, retained so the settings UI can show a
+   * "sk_...1234" summary without ever decrypting or returning the key itself.
+   */
+  lastFour: text('last_four'),
   rotatedAt: timestamp('rotated_at', { withTimezone: true }),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
   ...timestamps,
@@ -2296,4 +2301,138 @@ export const inboxEvents = pgTable(
     ...timestamps,
   },
   (table) => [uniqueIndex('inbox_source_unique').on(table.source, table.sourceEventId)],
+);
+
+/* ---------------------------------------------------------------------------
+ * Intelligence models and routing
+ *
+ * A configured intelligence model is a provider + submodel + encrypted credential
+ * the operator has explicitly added. A route binds a backend capability to a
+ * primary (and optional fallback) configured model. Every routed execution is
+ * recorded as evidence, so "which provider actually answered" is a fact on
+ * record rather than an assumption.
+ * ------------------------------------------------------------------------- */
+
+export const intelligenceProviderEnum = pgEnum('intelligence_provider', [
+  'OPENAI',
+  'ANTHROPIC',
+  'DEEPSEEK',
+  'KIMI',
+  'QWEN',
+  'GEMINI',
+]);
+
+export const intelligenceModelStatusEnum = pgEnum('intelligence_model_status', [
+  /** Saved, never successfully tested. */
+  'NOT_TESTED',
+  /** Latest live test passed. */
+  'CONNECTED',
+  /** Latest live test failed. */
+  'FAILED',
+  /** Explicitly disabled by the operator. */
+  'DISABLED',
+]);
+
+export const intelligenceCapabilityEnum = pgEnum('intelligence_capability', [
+  'TRANSCRIPT_SUMMARY',
+  'AI_COPILOT',
+  'CONTEXTUAL_GUIDE',
+  'KNOWLEDGE_HUB',
+  'EMAIL_AND_ALERTS',
+]);
+
+export const intelligenceRouteStatusEnum = pgEnum('intelligence_route_status', [
+  'READY',
+  'MISSING_MODEL',
+  'PROVIDER_UNAVAILABLE',
+  'FALLBACK_ACTIVE',
+]);
+
+export const intelligenceExecutionTierEnum = pgEnum('intelligence_execution_tier', [
+  'PRIMARY',
+  'FALLBACK',
+]);
+
+export const intelligenceExecutionOutcomeEnum = pgEnum('intelligence_execution_outcome', [
+  'SUCCESS',
+  'FAILURE',
+]);
+
+/**
+ * Normalised, provider-agnostic failure categories. Adapters map their own error
+ * shapes onto these so routing decisions never depend on provider wording.
+ */
+export const intelligenceErrorCategoryEnum = pgEnum('intelligence_error_category', [
+  'AUTHENTICATION',
+  'AUTHORIZATION',
+  'MODEL_NOT_FOUND',
+  'RATE_LIMIT',
+  'TIMEOUT',
+  'NETWORK',
+  'PROVIDER_ERROR',
+  'INVALID_RESPONSE',
+  'INVALID_REQUEST',
+  'UNKNOWN',
+]);
+
+export const intelligenceModels = pgTable(
+  'intelligence_models',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    provider: intelligenceProviderEnum('provider').notNull(),
+    /** The provider-side model identifier, validated server-side before save. */
+    submodel: text('submodel').notNull(),
+    credentialReferenceId: uuid('credential_reference_id')
+      .references(() => providerCredentialReferences.id)
+      .notNull(),
+    enabled: boolean('enabled').default(true).notNull(),
+    status: intelligenceModelStatusEnum('status').default('NOT_TESTED').notNull(),
+    lastSuccessfulTestAt: timestamp('last_successful_test_at', { withTimezone: true }),
+    lastFailureAt: timestamp('last_failure_at', { withTimezone: true }),
+    lastFailureCategory: intelligenceErrorCategoryEnum('last_failure_category'),
+    lastFailureReason: text('last_failure_reason'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('intelligence_model_provider_submodel_unique').on(table.provider, table.submodel),
+  ],
+);
+
+export const intelligenceRoutes = pgTable(
+  'intelligence_routes',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    capability: intelligenceCapabilityEnum('capability').notNull(),
+    primaryModelId: uuid('primary_model_id').references(() => intelligenceModels.id),
+    fallbackModelId: uuid('fallback_model_id').references(() => intelligenceModels.id),
+    status: intelligenceRouteStatusEnum('status').default('MISSING_MODEL').notNull(),
+    lastTestedAt: timestamp('last_tested_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex('intelligence_route_capability_unique').on(table.capability)],
+);
+
+export const intelligenceExecutions = pgTable(
+  'intelligence_executions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    capability: intelligenceCapabilityEnum('capability').notNull(),
+    routeId: uuid('route_id').references(() => intelligenceRoutes.id),
+    configuredModelId: uuid('configured_model_id').references(() => intelligenceModels.id),
+    provider: intelligenceProviderEnum('provider').notNull(),
+    submodel: text('submodel').notNull(),
+    tier: intelligenceExecutionTierEnum('tier').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    latencyMs: integer('latency_ms'),
+    outcome: intelligenceExecutionOutcomeEnum('outcome').notNull(),
+    errorCategory: intelligenceErrorCategoryEnum('error_category'),
+    errorMessage: text('error_message'),
+    /** Provider-side request or trace id, when the provider supplies one. */
+    providerRequestId: text('provider_request_id'),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index('intelligence_execution_capability_idx').on(table.capability, table.startedAt)],
 );

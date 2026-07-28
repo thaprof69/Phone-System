@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Conversation, type TextConversation, type VoiceConversation } from '@elevenlabs/client';
 import type { ReceptionistScenarioKey } from '@quantum-parks/domain';
+import { shouldRecordProviderTranscriptEvent } from './receptionist-transcript';
 
 /**
  * Shared ElevenLabs conversation wiring for the Live Receptionist Test workflow — voice and
@@ -47,6 +48,35 @@ export type QuantumResult = {
   toolEvaluation: { invoked: boolean; calls: Array<{ tool: string; status: string }> };
   evidenceIds: string[];
   contextManifest: unknown;
+  intelligenceState: 'PROVISIONAL' | 'FINAL' | 'SUPERSEDED';
+};
+
+export type CallIntelligence = {
+  status: 'WAITING' | 'PROVISIONAL' | 'ANALYSING' | 'READY' | 'PARTIAL';
+  summary: string | null;
+  callerRequests: string[];
+  unresolvedItems: string[];
+  sentiment: string | null;
+  classification: string | null;
+  urgency: string | null;
+  confidence: number | null;
+  evidenceCoverage: number | null;
+  intelligenceState: 'PROVISIONAL' | 'FINAL' | 'SUPERSEDED' | null;
+  summaryIssue: string | null;
+};
+
+const emptyCallIntelligence: CallIntelligence = {
+  status: 'WAITING',
+  summary: null,
+  callerRequests: [],
+  unresolvedItems: [],
+  sentiment: null,
+  classification: null,
+  urgency: null,
+  confidence: null,
+  evidenceCoverage: null,
+  intelligenceState: null,
+  summaryIssue: null,
 };
 
 async function call(
@@ -89,11 +119,26 @@ export function useReceptionistConversation() {
   const [blockers, setBlockers] = useState<string[]>([]);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [quantumResult, setQuantumResult] = useState<QuantumResult | null>(null);
+  const [callIntelligence, setCallIntelligence] = useState<CallIntelligence>(emptyCallIntelligence);
   const [muted, setMuted] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'VOICE' | 'TEXT' | null>(null);
   const conversationRef = useRef<VoiceConversation | TextConversation | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const entryId = useRef(0);
+
+  useEffect(() => {
+    if (phase !== 'ended' || callIntelligence.status !== 'ANALYSING' || !sessionId) return;
+    const timer = window.setInterval(() => {
+      void call(`/${sessionId}`, 'GET').then((result) => {
+        if (result.callIntelligence) {
+          setCallIntelligence(result.callIntelligence as CallIntelligence);
+        }
+        if (result.quantumResult) setQuantumResult(result.quantumResult as QuantumResult);
+      });
+    }, 1_500);
+    return () => window.clearInterval(timer);
+  }, [callIntelligence.status, phase, sessionId]);
 
   useEffect(
     () => () => {
@@ -131,14 +176,17 @@ export function useReceptionistConversation() {
     setBlockers([]);
     setTranscript([]);
     setQuantumResult(null);
+    setMode(input.mode);
     const data = await call('', 'POST', input);
     if (data.status === 'BLOCKED') {
+      setMode(null);
       setPhase('error');
       setMessage('The platform refused to start this session.');
       setBlockers(Array.isArray(data.blockers) ? (data.blockers as string[]) : []);
       return false;
     }
     if (data.status !== 'SUCCESS') {
+      setMode(null);
       setPhase('error');
       setMessage(String(data.message ?? 'ElevenLabs did not return a live session.'));
       return false;
@@ -147,7 +195,9 @@ export function useReceptionistConversation() {
     sessionIdRef.current = newSessionId;
     setSessionId(newSessionId);
     setPhase('connecting');
-    return startWithTransport(data, input, newSessionId);
+    const started = await startWithTransport(data, input, newSessionId);
+    if (!started) setMode(null);
+    return started;
   }
 
   async function startWithTransport(
@@ -160,6 +210,39 @@ export function useReceptionistConversation() {
     activeSessionId: string,
   ): Promise<boolean> {
     const transport = data.transport === 'WEBRTC' ? 'WEBRTC' : 'WEBSOCKET';
+    let resolveAttachment: (attached: boolean) => void = () => {};
+    const attachmentReady = new Promise<boolean>((resolve) => {
+      resolveAttachment = resolve;
+    });
+
+    async function attachConversation(providerConversationId: string) {
+      const attached = await call(`/${activeSessionId}/attach`, 'POST', {
+        providerConversationId,
+      });
+      if (attached.status === 'CONNECTED') {
+        setPhase('live');
+        return true;
+      }
+      setPhase('error');
+      setMessage(String(attached.message ?? 'The live conversation could not be attached.'));
+      return false;
+    }
+
+    async function recordProviderMessage(role: 'user' | 'agent', text: string) {
+      // Text messages are recorded by sendMessage()/sendPreset() before the SDK can echo them.
+      // Voice caller turns exist only in ElevenLabs transcript events and must be captured here.
+      if (!shouldRecordProviderTranscriptEvent(input.mode, role)) return;
+      pushTranscript(role, text);
+      const attached = await attachmentReady;
+      if (!attached) return;
+      await call(`/${activeSessionId}/turn`, 'POST', { role, text });
+      if (input.mode === 'VOICE')
+        postMediaVerification({
+          status: 'PASS',
+          ...(role === 'agent' ? { agentAudioReceived: true } : {}),
+          transcriptEventsReceived: true,
+        });
+    }
 
     try {
       const conversation =
@@ -168,11 +251,18 @@ export function useReceptionistConversation() {
               conversationToken: String(data.conversationToken),
               connectionType: 'webrtc',
               onConnect: () => {
-                setPhase('live');
-                postMediaVerification({
-                  status: 'PASS',
-                  microphoneEstablished: true,
-                  connectedAt: new Date().toISOString(),
+                const providerConversationId =
+                  typeof data.providerConversationId === 'string'
+                    ? data.providerConversationId
+                    : '';
+                void attachConversation(providerConversationId).then((attached) => {
+                  resolveAttachment(attached);
+                  if (attached)
+                    postMediaVerification({
+                      status: 'PASS',
+                      microphoneEstablished: true,
+                      connectedAt: new Date().toISOString(),
+                    });
                 });
               },
               onDisconnect: (details) => {
@@ -190,14 +280,7 @@ export function useReceptionistConversation() {
                 });
               },
               onMessage: ({ message: text, role }) => {
-                if (role !== 'agent') return;
-                pushTranscript('agent', text);
-                postMediaVerification({
-                  status: 'PASS',
-                  agentAudioReceived: true,
-                  transcriptEventsReceived: true,
-                });
-                void call(`/${activeSessionId}/turn`, 'POST', { role: 'agent', text });
+                void recordProviderMessage(role, text);
               },
               onError: (errorMessage) => {
                 setPhase('error');
@@ -208,16 +291,15 @@ export function useReceptionistConversation() {
               signedUrl: String(data.signedUrl),
               textOnly: input.mode === 'TEXT',
               onConnect: ({ conversationId }) => {
-                setPhase('live');
-                void call(`/${activeSessionId}/attach`, 'POST', {
-                  providerConversationId: conversationId,
+                void attachConversation(conversationId).then((attached) => {
+                  resolveAttachment(attached);
+                  if (attached && input.mode === 'VOICE')
+                    postMediaVerification({
+                      status: 'PASS',
+                      microphoneEstablished: true,
+                      connectedAt: new Date().toISOString(),
+                    });
                 });
-                if (input.mode === 'VOICE')
-                  postMediaVerification({
-                    status: 'PASS',
-                    microphoneEstablished: true,
-                    connectedAt: new Date().toISOString(),
-                  });
               },
               onDisconnect: (details) => {
                 conversationRef.current = null;
@@ -235,18 +317,7 @@ export function useReceptionistConversation() {
                   });
               },
               onMessage: ({ message: text, role }) => {
-                // Only the agent's real reply is recorded here — the customer's own turn is
-                // recorded immediately by sendMessage()/sendPreset() so it is never missed if the
-                // SDK does not echo the caller's own text back for a given connection type.
-                if (role !== 'agent') return;
-                pushTranscript('agent', text);
-                if (input.mode === 'VOICE')
-                  postMediaVerification({
-                    status: 'PASS',
-                    agentAudioReceived: true,
-                    transcriptEventsReceived: true,
-                  });
-                void call(`/${activeSessionId}/turn`, 'POST', { role: 'agent', text });
+                void recordProviderMessage(role, text);
               },
               onError: (errorMessage) => {
                 setPhase('error');
@@ -254,7 +325,7 @@ export function useReceptionistConversation() {
               },
             });
       conversationRef.current = conversation;
-      return true;
+      return attachmentReady;
     } catch (error) {
       if (transport === 'WEBRTC' && isRecoverableTransportFailure(error)) {
         setPhase('falling_back');
@@ -286,7 +357,11 @@ export function useReceptionistConversation() {
     conversationRef.current?.sendUserMessage(text);
     pushTranscript('user', text);
     const result = await call(`/${id}/turn`, 'POST', { role: 'user', text });
-    if (result.quantumResult) setQuantumResult(result.quantumResult as QuantumResult);
+    if (result.quantumResult) applyProvisionalResult(result.quantumResult as QuantumResult);
+    if (result.status !== 'SUCCESS') {
+      setMessage(String(result.message ?? 'The caller turn could not be analysed.'));
+      setBlockers(Array.isArray(result.blockers) ? result.blockers.map(String) : []);
+    }
   }
 
   async function sendPreset(scenarioKey: ReceptionistScenarioKey, message: string) {
@@ -295,6 +370,31 @@ export function useReceptionistConversation() {
     conversationRef.current?.sendUserMessage(message);
     pushTranscript('user', message);
     const result = await call(`/${id}/preset`, 'POST', { scenarioKey });
+    if (result.quantumResult) applyProvisionalResult(result.quantumResult as QuantumResult);
+    if (result.status !== 'SUCCESS') {
+      setMessage(String(result.message ?? 'The preset turn could not be analysed.'));
+      setBlockers(Array.isArray(result.blockers) ? result.blockers.map(String) : []);
+    }
+  }
+
+  function applyProvisionalResult(result: QuantumResult) {
+    setQuantumResult(result);
+    setCallIntelligence((current) => ({
+      ...current,
+      status: 'PROVISIONAL',
+      sentiment: result.sentiment,
+      classification: result.intent,
+      urgency: result.urgency,
+      confidence: result.confidence,
+      intelligenceState: result.intelligenceState,
+    }));
+  }
+
+  async function refreshCallIntelligence(activeSessionId: string) {
+    const result = await call(`/${activeSessionId}`, 'GET');
+    if (result.callIntelligence) {
+      setCallIntelligence(result.callIntelligence as CallIntelligence);
+    }
     if (result.quantumResult) setQuantumResult(result.quantumResult as QuantumResult);
   }
 
@@ -310,8 +410,31 @@ export function useReceptionistConversation() {
     await conversationRef.current?.endSession();
     conversationRef.current = null;
     const id = sessionIdRef.current;
-    if (id) await call(`/${id}/end`, 'POST', { reason: 'USER_ENDED' });
+    if (id) {
+      const ended = await call(`/${id}/end`, 'POST', { reason: 'USER_ENDED' });
+      if (ended.processingQueued) {
+        setCallIntelligence((current) => ({ ...current, status: 'ANALYSING' }));
+      }
+      await refreshCallIntelligence(id);
+    }
     setPhase('ended');
+  }
+
+  async function resetSession() {
+    if (conversationRef.current || sessionIdRef.current) {
+      await endSession();
+    }
+    conversationRef.current = null;
+    sessionIdRef.current = null;
+    setPhase('idle');
+    setMessage('');
+    setBlockers([]);
+    setTranscript([]);
+    setQuantumResult(null);
+    setCallIntelligence(emptyCallIntelligence);
+    setMuted(false);
+    setSessionId(null);
+    setMode(null);
   }
 
   return {
@@ -320,12 +443,15 @@ export function useReceptionistConversation() {
     blockers,
     transcript,
     quantumResult,
+    callIntelligence,
     muted,
     sessionId,
+    mode,
     startSession,
     sendMessage,
     sendPreset,
     toggleMute,
     endSession,
+    resetSession,
   };
 }

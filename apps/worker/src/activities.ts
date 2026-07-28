@@ -41,8 +41,12 @@ import {
 import { HttpAIOSServiceGateway } from '@quantum-parks/aios';
 import { InteractionEvidenceSchema, SummarySchema } from '@quantum-parks/intelligence';
 import type { PostCallActivities } from '@quantum-parks/workflows';
-import { HttpElevenLabsAdapter, canonicalProviderChecksum } from '@quantum-parks/elevenlabs';
-import { runtimeSecret } from '@quantum-parks/config';
+import {
+  canonicalProviderChecksum,
+  HttpElevenLabsAdapter,
+  projectElevenLabsAgentConfiguration,
+  toElevenLabsAgentConfiguration,
+} from '@quantum-parks/elevenlabs';
 
 const connection = createDatabase(
   process.env.DATABASE_URL ??
@@ -91,11 +95,7 @@ async function providerAdapter() {
         decipher.final(),
       ]).toString('utf8');
       return new HttpElevenLabsAdapter({
-        baseUrl:
-          integration.environment === 'PRODUCTION' ||
-          (process.env.QP_ENVIRONMENT ?? 'development') === 'production'
-            ? 'https://api.elevenlabs.io'
-            : (process.env.ELEVENLABS_SANDBOX_BASE_URL ?? 'http://localhost:4100'),
+        baseUrl: 'https://api.elevenlabs.io',
         apiKeyReference: `integration/${integration.id}`,
         workspaceId: 'configured-provider-workspace',
         resolveSecret: async () => apiKey,
@@ -103,22 +103,30 @@ async function providerAdapter() {
     }
   }
   return new HttpElevenLabsAdapter({
-    baseUrl: process.env.ELEVENLABS_BASE_URL ?? 'http://localhost:4100',
+    baseUrl: 'https://api.elevenlabs.io',
     apiKeyReference: process.env.ELEVENLABS_SECRET_REF ?? 'local/elevenlabs/api-key',
     workspaceId: process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic',
-    resolveSecret: async () => runtimeSecret('LOCAL_ELEVENLABS_API_KEY', 'synthetic-api-key'),
+    resolveSecret: async () => '',
   });
 }
 
-function projectRemote(
-  remote: Record<string, unknown>,
-  local: Record<string, unknown>,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.keys(local)
-      .filter((key) => remote[key] !== undefined)
-      .map((key) => [key, remote[key]]),
-  );
+async function providerWorkspace() {
+  const integration = await db.query.providerIntegrations.findFirst({
+    where: eq(providerIntegrations.provider, 'ELEVENLABS'),
+  });
+  if (integration && integration.status !== 'DISCONNECTED') {
+    const workspace = await db.query.providerWorkspaces.findFirst({
+      where: eq(providerWorkspaces.id, integration.workspaceId),
+    });
+    if (workspace) return { workspace, integration };
+  }
+  const workspace = await db.query.providerWorkspaces.findFirst({
+    where: eq(
+      providerWorkspaces.providerWorkspaceId,
+      process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic',
+    ),
+  });
+  return { workspace, integration: null };
 }
 
 type ProviderTurn = { role?: unknown; message?: unknown; time_in_call_secs?: unknown };
@@ -438,45 +446,73 @@ export const activities: PostCallActivities = {
       };
     }
 
-    const rows = await db
-      .select({ transcript: providerConversations.providerTranscript })
-      .from(conversations)
-      .innerJoin(
-        providerConversations,
-        eq(conversations.providerConversationId, providerConversations.id),
-      )
-      .where(eq(conversations.id, input.conversationId))
-      .limit(1);
-    const row = rows[0];
-    if (!row) throw new Error('Conversation does not have provider transcript evidence');
-    const normalized = normalizeTurns(row.transcript);
-    if (normalized.length === 0) throw new Error('Provider transcript contains no usable turns');
+    const canonical = await db.query.transcriptRevisions.findFirst({
+      where: and(
+        eq(transcriptRevisions.conversationId, input.conversationId),
+        eq(transcriptRevisions.revisionType, 'CANONICAL'),
+      ),
+    });
+    const existingCanonicalTurns = canonical
+      ? await db
+          .select({
+            speaker: transcriptTurns.speaker,
+            content: transcriptTurns.content,
+            startedAtMs: transcriptTurns.startedAtMs,
+          })
+          .from(transcriptTurns)
+          .where(eq(transcriptTurns.revisionId, canonical.id))
+          .orderBy(transcriptTurns.sequence)
+      : [];
+
+    let normalized: Array<{ speaker: string; content: string; startedAtMs: number | null }> =
+      existingCanonicalTurns;
+    if (!canonical) {
+      const rows = await db
+        .select({ transcript: providerConversations.providerTranscript })
+        .from(conversations)
+        .innerJoin(
+          providerConversations,
+          eq(conversations.providerConversationId, providerConversations.id),
+        )
+        .where(eq(conversations.id, input.conversationId))
+        .limit(1);
+      const row = rows[0];
+      if (!row) throw new Error('Conversation does not have provider transcript evidence');
+      normalized = normalizeTurns(row.transcript);
+    }
+    if (normalized.length === 0)
+      throw new Error('Conversation transcript contains no usable turns');
 
     return db.transaction(async (tx) => {
       await tx
         .update(conversations)
         .set({ processingState: 'NORMALIZING', updatedAt: new Date() })
         .where(eq(conversations.id, input.conversationId));
-      const [canonical] = await tx
-        .insert(transcriptRevisions)
-        .values({
-          conversationId: input.conversationId,
-          revision: 1,
-          revisionType: 'CANONICAL',
-          reason: 'Normalized from immutable provider transcript evidence',
-        })
-        .returning({ id: transcriptRevisions.id });
-      if (!canonical) throw new Error('Canonical transcript revision was not created');
-      await tx.insert(transcriptTurns).values(
-        normalized.map((turn, sequence) => ({
-          revisionId: canonical.id,
-          sequence,
-          speaker: turn.speaker,
-          content: turn.content,
-          startedAtMs: turn.startedAtMs,
-          classification: 'CONFIDENTIAL' as const,
-        })),
-      );
+      let canonicalRevisionId = canonical?.id;
+      if (!canonicalRevisionId) {
+        const [createdCanonical] = await tx
+          .insert(transcriptRevisions)
+          .values({
+            conversationId: input.conversationId,
+            revision: 1,
+            revisionType: 'CANONICAL',
+            reason: 'Normalized from immutable provider transcript evidence',
+          })
+          .returning({ id: transcriptRevisions.id });
+        if (!createdCanonical) throw new Error('Canonical transcript revision was not created');
+        const createdCanonicalId = createdCanonical.id;
+        canonicalRevisionId = createdCanonicalId;
+        await tx.insert(transcriptTurns).values(
+          normalized.map((turn, sequence) => ({
+            revisionId: createdCanonicalId,
+            sequence,
+            speaker: turn.speaker,
+            content: turn.content,
+            startedAtMs: turn.startedAtMs,
+            classification: 'CONFIDENTIAL' as const,
+          })),
+        );
+      }
 
       const [redacted] = await tx
         .insert(transcriptRevisions)
@@ -484,7 +520,7 @@ export const activities: PostCallActivities = {
           conversationId: input.conversationId,
           revision: 2,
           revisionType: 'REDACTED',
-          sourceRevisionId: canonical.id,
+          sourceRevisionId: canonicalRevisionId,
           reason: 'Automated restricted-data redaction',
         })
         .returning({ id: transcriptRevisions.id });
@@ -569,23 +605,29 @@ export const activities: PostCallActivities = {
         sourceId: turn.id,
       })),
     });
-    if (enriched.state !== 'SUCCESS' && enriched.state !== 'FALLBACK_USED')
-      return { state: 'PARTIAL' };
-    const summary = SummarySchema.safeParse(enriched.data.result);
-    if (!summary.success) return { state: 'PARTIAL' };
+    const routedSummary =
+      enriched.state === 'SUCCESS' || enriched.state === 'FALLBACK_USED'
+        ? SummarySchema.safeParse(enriched.data.result)
+        : null;
+    if (!routedSummary?.success || !('data' in enriched)) {
+      throw new Error(
+        'The AI Router did not produce a valid transcript summary. Configure and test the Transcript Summaries route.',
+      );
+    }
+    const summary = routedSummary.data;
 
     await db.transaction(async (tx) => {
       await tx.insert(callSummaries).values({
         conversationId: input.conversationId,
         transcriptRevisionId: input.transcriptRevisionId,
         revision: 1,
-        summary: summary.data,
+        summary,
         provider: enriched.data.providerKey,
         model: enriched.data.modelId,
         promptVersion: enriched.data.promptVersionId,
         schemaVersion: enriched.data.schemaVersionId,
         aiArtifactId: enriched.data.artifactId ?? null,
-        evidenceCoverage: String(summary.data.evidence_coverage),
+        evidenceCoverage: String(summary.evidence_coverage),
       });
       await tx
         .update(conversations)
@@ -925,10 +967,12 @@ export const activities: PostCallActivities = {
         .update(conversations)
         .set({ processingState: input.partial ? 'PARTIAL' : 'COMPLETED', updatedAt: new Date() })
         .where(eq(conversations.id, input.conversationId));
-      await tx
-        .update(webhookInboxEntries)
-        .set({ state: 'PROCESSED', processedAt: new Date(), updatedAt: new Date() })
-        .where(eq(webhookInboxEntries.id, input.inboxId));
+      if (input.inboxId) {
+        await tx
+          .update(webhookInboxEntries)
+          .set({ state: 'PROCESSED', processedAt: new Date(), updatedAt: new Date() })
+          .where(eq(webhookInboxEntries.id, input.inboxId));
+      }
     });
   },
 
@@ -939,29 +983,22 @@ export const activities: PostCallActivities = {
     const requiredState = input.purpose === 'TEST' ? 'APPROVED_FOR_TEST' : 'APPROVED_FOR_PUBLISH';
     if (!version || version.state !== requiredState)
       throw new Error(`Agent release is not approved for ${input.purpose.toLowerCase()}`);
-    const workspace = await db.query.providerWorkspaces.findFirst({
-      where: eq(
-        providerWorkspaces.providerWorkspaceId,
-        process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic',
-      ),
-    });
+    const { workspace, integration } = await providerWorkspace();
     if (!workspace) throw new Error('Provider workspace mapping is not configured');
-    const expectedChecksum = canonicalProviderChecksum(version.configuration);
+    const providerConfiguration = toElevenLabsAgentConfiguration(version.configuration);
+    const expectedChecksum = canonicalProviderChecksum(providerConfiguration);
     const existing = await db.query.agentDeployments.findFirst({
       where: and(
         eq(agentDeployments.agentVersionId, version.id),
         eq(agentDeployments.workspaceId, workspace.id),
       ),
     });
-    const published = existing?.providerAgentId
+    const targetAgentId = existing?.providerAgentId ?? integration?.defaultAgentId;
+    const published = targetAgentId
       ? await (
           await providerAdapter()
-        ).updateAgent(
-          existing.providerAgentId,
-          existing.providerBranchId ?? undefined,
-          version.configuration,
-        )
-      : await (await providerAdapter()).createAgent(version.configuration);
+        ).updateAgent(targetAgentId, existing?.providerBranchId ?? undefined, providerConfiguration)
+      : await (await providerAdapter()).createAgent(providerConfiguration);
     if (published.status !== 'SUCCESS') throw new Error(published.error.safeMessage);
     if (existing) {
       await db
@@ -1012,8 +1049,9 @@ export const activities: PostCallActivities = {
       await providerAdapter()
     ).getAgent(input.providerAgentId, deployment.providerBranchId ?? undefined);
     if (remote.status !== 'SUCCESS') throw new Error(remote.error.safeMessage);
+    const expectedConfiguration = toElevenLabsAgentConfiguration(version.configuration);
     const remoteChecksum = canonicalProviderChecksum(
-      projectRemote(remote.data, version.configuration),
+      projectElevenLabsAgentConfiguration(remote.data, expectedConfiguration),
     );
     const synchronized = remoteChecksum === input.expectedChecksum;
     await db
@@ -1047,12 +1085,7 @@ export const activities: PostCallActivities = {
       where: eq(knowledgeAssets.id, version.assetId),
     });
     if (!asset) throw new Error('Knowledge asset is unavailable');
-    const workspace = await db.query.providerWorkspaces.findFirst({
-      where: eq(
-        providerWorkspaces.providerWorkspaceId,
-        process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic',
-      ),
-    });
+    const { workspace } = await providerWorkspace();
     if (!workspace) throw new Error('Provider workspace mapping is not configured');
     const existing = await db.query.knowledgeSyncs.findFirst({
       where: and(
@@ -1145,7 +1178,12 @@ export const activities: PostCallActivities = {
       );
       const remoteChecksum =
         remote.status === 'SUCCESS'
-          ? canonicalProviderChecksum(projectRemote(remote.data, mapping.version.configuration))
+          ? canonicalProviderChecksum(
+              projectElevenLabsAgentConfiguration(
+                remote.data,
+                toElevenLabsAgentConfiguration(mapping.version.configuration),
+              ),
+            )
           : null;
       const synchronized = remoteChecksum === mapping.deployment.localChecksum;
       if (!synchronized) {

@@ -16,9 +16,12 @@
     "@quantum-parks/domain": "workspace:*",
     "@quantum-parks/ui": "workspace:*",
     "lucide-react": "0.575.0",
+    "mammoth": "^1.12.0",
     "next": "16.2.11",
+    "pdfjs-dist": "^6.1.200",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "read-excel-file": "^9.3.4"
   },
   "devDependencies": {
     "@types/node": "26.1.1",

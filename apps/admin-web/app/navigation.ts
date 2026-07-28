@@ -46,11 +46,6 @@ export const DOMAINS = [
         description: 'Live state, today’s activity and the attention queue.',
       },
       {
-        href: '/alerts',
-        label: 'Alerts',
-        description: 'Everything currently blocked, failing, drifted or overdue.',
-      },
-      {
         href: '/readiness',
         label: 'Readiness',
         description: 'Whether this platform can carry production traffic, and what is stopping it.',
@@ -113,6 +108,20 @@ export const DOMAINS = [
         href: '/calls/sla',
         label: 'SLA and failures',
         description: 'Overdue, failed and blocked work first.',
+      },
+    ],
+  },
+  {
+    key: 'alerts',
+    href: '/alerts',
+    label: 'Alerts',
+    icon: 'BellRing',
+    description: 'Urgent work, human approvals and governed escalation.',
+    areas: [
+      {
+        href: '/alerts',
+        label: 'Alerts',
+        description: 'Urgent work, human approvals and governed escalation.',
       },
     ],
   },
@@ -269,6 +278,12 @@ export const SETTINGS_GROUPS = [
     areas: [
       {
         href: '/settings/knowledge',
+        label: 'Ingest & overview',
+        description:
+          'Bring in documents, URLs and business facts, then review what the ingestion layer understood.',
+      },
+      {
+        href: '/settings/knowledge/library',
         label: 'Library',
         description: 'All knowledge assets with owner, risk, effective dates and sync state.',
       },
@@ -301,14 +316,14 @@ export const SETTINGS_GROUPS = [
         description: 'The voice runtime connection: capabilities, health and drift.',
       },
       {
-        href: '/settings/ai-providers/intelligence',
-        label: 'Intelligence providers',
-        description: 'Providers connected for post-call enrichment, with test-before-save proof.',
+        href: '/settings/ai-providers/models',
+        label: 'Intelligence Models',
+        description: 'The AI models Quantum Parks may use for intelligence tasks.',
       },
       {
-        href: '/settings/ai-providers/models',
-        label: 'Models',
-        description: 'Discovered models, approval by environment, and recorded pricing.',
+        href: '/settings/ai-providers/routing',
+        label: 'Model Routing',
+        description: 'Which configured model handles each intelligence task.',
       },
       {
         href: '/settings/ai-providers/health',
@@ -362,6 +377,30 @@ export const SETTINGS_GROUPS = [
         href: '/settings/ai-routing/monitoring',
         label: 'Monitoring',
         description: 'Success, fallback and failure rates, drilling through to runs.',
+      },
+    ],
+  },
+  {
+    key: 'communications',
+    href: '/settings/communications',
+    label: 'Email & WhatsApp',
+    description:
+      'Central channel identity, authentication and policy for alerts and future digital receptionists.',
+    areas: [
+      {
+        href: '/settings/communications',
+        label: 'Overview',
+        description: 'Channel readiness, shared policy and dependent features.',
+      },
+      {
+        href: '/settings/communications/email',
+        label: 'Email',
+        description: 'Gmail identity, OAuth, inbound sync and reply controls.',
+      },
+      {
+        href: '/settings/communications/whatsapp',
+        label: 'WhatsApp',
+        description: 'Meta business account, phone identity, templates and webhooks.',
       },
     ],
   },
@@ -469,8 +508,9 @@ export const SETTINGS_GROUPS = [
 
 /** Path prefixes each domain owns. Mission Control owns the root and its siblings. */
 const DOMAIN_PREFIXES: Record<string, readonly string[]> = {
-  'mission-control': ['/alerts', '/readiness'],
+  'mission-control': ['/readiness'],
   calls: ['/calls'],
+  alerts: ['/alerts'],
   intelligence: ['/intelligence'],
   reports: ['/reports'],
   settings: ['/settings'],

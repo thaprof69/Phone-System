@@ -237,6 +237,7 @@ export function BarChart({
   horizontal?: boolean;
 }) {
   const visible = cappedSeries(series);
+  const useCategoryColours = visible.length === 1 && !visible[0]?.color;
   return (
     <ChartFrame
       title={title}
@@ -276,7 +277,13 @@ export function BarChart({
                 : [MARK.barRadius, MARK.barRadius, 0, 0]
             }
             isAnimationActive={false}
-          />
+          >
+            {useCategoryColours
+              ? data.map((datum, datumIndex) => (
+                  <Cell key={`${datum.label}-${datumIndex}`} fill={seriesColor(datumIndex)} />
+                ))
+              : null}
+          </Bar>
         ))}
       </RechartsBarChart>
     </ChartFrame>

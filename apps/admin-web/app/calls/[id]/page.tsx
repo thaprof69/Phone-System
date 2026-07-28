@@ -2,47 +2,45 @@ import Link from 'next/link';
 import {
   Banner,
   Breadcrumbs,
-  DefinitionList,
   EmptyState,
   ErrorState,
-  JsonInspector,
   PageHeading,
   Panel,
   StatusPill,
   SyntheticBadge,
-  Tabs,
-  TechnicalDetails,
   formatDateTime,
   formatDuration,
   formatPercent,
+  formatRelativeTime,
   humaniseState,
   toneForState,
 } from '@quantum-parks/ui';
 import { AppShell } from '../../shell';
 import { apiGet } from '../../../lib/api';
-import { ProposeCorrectionForm, type CorrectionTarget } from '../call-actions';
 
 export const dynamic = 'force-dynamic';
 
+type Claim = { text: string; evidence_ids: string[] };
+
 type CallDetail = {
   id: string;
+  callStatus: 'COMPLETED' | 'FAILED';
+  origin: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
   processingState: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  receivedAt: string;
   language: string | null;
   park: string | null;
   sensitive: boolean;
   synthetic: boolean;
-  providerConversationId: string;
-  providerAgentId: string;
-  providerBranchId: string | null;
-  providerVersionId: string | null;
   providerMetadata: Record<string, unknown> | null;
-  providerAnalysisMetadata: Record<string, unknown> | null;
+  sentiment: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | null;
+  urgency: 'LOW' | 'MEDIUM' | 'HIGH' | null;
   transcriptRevision: {
     id: string;
     revision: number;
     revisionType: string;
-    reason: string;
-    createdAt: string;
   } | null;
   transcriptTurns: Array<{
     id: string;
@@ -50,15 +48,10 @@ type CallDetail = {
     speaker: string;
     content: string;
     startedAtMs: number | null;
-    classification: string;
   }>;
   summaries: Array<{
     id: string;
     summary: Record<string, unknown>;
-    provider: string;
-    model: string;
-    promptVersion: string;
-    schemaVersion: string;
     evidenceCoverage: string;
     createdAt: string;
   }>;
@@ -66,57 +59,23 @@ type CallDetail = {
     id: string;
     primaryIntent: string;
     secondaryIntents: string[];
-    taxonomyVersion: string;
-    provider: string;
-    model: string;
     confidence: string;
-    evidenceIds: string[];
   }>;
-  deterministicOutcomes: Array<{
-    id: string;
-    outcome: string;
-    evidenceIds: string[];
-    policyVersion: string;
-    createdAt: string;
-  }>;
-  toolInvocations: Array<{
-    id: string;
-    registryKey: string;
-    resultStatus: string;
-    verificationState: string;
-    requestedAt: string;
-    completedAt: string | null;
-  }>;
-  evidenceArtifacts: Array<{
-    id: string;
-    providerKey: string;
-    modelId: string;
-    promptVersionId: string;
-    schemaVersionId: string;
-    resultState: string;
-    intelligenceState: string;
-    confidence: string | null;
-    fallbackUsed: boolean;
-    generatedAt: string;
-  }>;
-  entities: Array<{
-    id: string;
-    classificationId: string;
-    entityType: string;
-    value: string;
-    confidence: string;
-    evidenceIds: string[];
-  }>;
-  manifest: {
-    id: string;
-    status: string;
-    expectedArtifactCount: number;
-    presentArtifactCount: number;
-    completenessRatio: string;
-    processingProfileVersion: number;
-    warnings: string[];
-    processingCompletedAt: string;
-  } | null;
+  followUp: {
+    caseStatus: 'OPEN' | 'CLOSED';
+    sla: {
+      status: 'BREACHED' | 'ON_TRACK' | 'NOT_SET' | 'MET' | 'NOT_REQUIRED';
+      dueAt: string | null;
+    };
+    callback: {
+      status: string;
+      reason: string;
+      dueAt: string | null;
+      completedAt: string | null;
+      returned: boolean;
+    } | null;
+    assignedOperator: { id: string; name: string } | null;
+  };
 };
 
 export default async function CallDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -138,72 +97,47 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
   const call = response.data;
   const summary = call.summaries[0];
   const classification = call.classifications[0];
-  const outcome = call.deterministicOutcomes[0];
-
-  // A correction targets whichever artefacts this specific call actually has. Offering
-  // a target that does not exist here would be refused server-side anyway, but naming
-  // only the real ones is what the operator actually needs to choose between.
-  const correctionTargets: CorrectionTarget[] = [
-    ...(call.transcriptRevision
-      ? [
-          {
-            value: `${call.transcriptRevision.revisionType === 'REDACTED' ? 'REDACTED_TRANSCRIPT' : 'CANONICAL_TRANSCRIPT'}:${call.transcriptRevision.id}`,
-            label: `Transcript (${humaniseState(call.transcriptRevision.revisionType)})`,
-            recordId: call.transcriptRevision.id,
-          },
-        ]
-      : []),
-    ...(summary
-      ? [{ value: `SUMMARY:${summary.id}`, label: 'Summary', recordId: summary.id }]
-      : []),
-    ...(classification
-      ? [
-          {
-            value: `CLASSIFICATION:${classification.id}`,
-            label: 'Classification',
-            recordId: classification.id,
-          },
-        ]
-      : []),
-  ];
-
-  const durationSeconds =
-    typeof call.providerMetadata?.call_duration_secs === 'number'
-      ? call.providerMetadata.call_duration_secs
-      : null;
-
-  type Claim = { text: string; evidence_ids: string[] };
   const summaryBody = summary?.summary as
     | {
         purpose?: Claim;
         caller_requests?: Claim[];
+        information_provided?: Claim[];
         unresolved_items?: Claim[];
         unconfirmed_requests?: Claim[];
-        evidence_coverage?: number;
       }
     | undefined;
+  const durationSeconds = callDurationSeconds(call);
+  const callbackLabel = call.followUp.callback
+    ? humaniseState(call.followUp.callback.status)
+    : 'Not requested';
+  const ownerLabel = call.followUp.assignedOperator?.name ?? 'Unassigned';
+  const reasonLabel = classification
+    ? humaniseState(classification.primaryIntent)
+    : 'Not classified';
+  const nextAction = deriveNextAction(call, summaryBody);
 
   return (
     <AppShell>
-      <Breadcrumbs
-        trail={[{ label: 'Calls', href: '/calls' }, { label: `Call ${call.id.slice(0, 8)}` }]}
-      />
+      <Breadcrumbs trail={[{ label: 'Calls', href: '/calls' }, { label: reasonLabel }]} />
       <PageHeading
-        eyebrow="Canonical call record"
-        title={summaryBody?.purpose?.text ?? `Call ${call.id.slice(0, 8)}`}
-        description={`${titleCase(call.park)} · ${(call.language ?? '—').toUpperCase()} · ${formatDuration(durationSeconds)}`}
+        eyebrow="Call record"
+        title={summaryBody?.purpose?.text ?? reasonLabel}
+        description={`${formatDateTime(call.receivedAt)} · ${titleCase(call.park)} · ${(call.language ?? '—').toUpperCase()} · ${formatDuration(durationSeconds)}`}
         meta={
           <>
-            <StatusPill tone={toneForState(call.processingState)}>
-              {humaniseState(call.processingState)}
+            <StatusPill tone={toneForState(call.callStatus)}>
+              {humaniseState(call.callStatus)}
             </StatusPill>
-            {outcome ? (
-              <StatusPill tone={toneForState(outcome.outcome)}>
-                {humaniseState(outcome.outcome)}
+            <StatusPill tone={toneForState(call.followUp.caseStatus)}>
+              {humaniseState(call.followUp.caseStatus)}
+            </StatusPill>
+            {call.origin === 'SYNTHETIC' ? (
+              <SyntheticBadge />
+            ) : (
+              <StatusPill tone={call.origin === 'SIMULATION' ? 'info' : 'neutral'}>
+                {humaniseState(call.origin)}
               </StatusPill>
-            ) : null}
-            {call.sensitive ? <StatusPill tone="warning">Sensitive</StatusPill> : null}
-            {call.synthetic ? <SyntheticBadge /> : null}
+            )}
           </>
         }
         actions={
@@ -213,327 +147,221 @@ export default async function CallDetailPage({ params }: { params: Promise<{ id:
         }
       />
 
-      {call.processingState !== 'COMPLETED' ? (
-        <Banner
-          tone={call.processingState.startsWith('FAILED') ? 'danger' : 'warning'}
-          title={
-            call.processingState.startsWith('FAILED')
-              ? 'This call did not finish processing'
-              : 'This call is only partly processed'
-          }
-          action={
-            <Link className="button ghost small" href="/calls/reconciliation">
-              Reconciliation
-            </Link>
-          }
-        >
-          Summary, classification or outcome may be missing. The transcript below is still
-          authoritative for what was said.
+      {call.callStatus === 'FAILED' ? (
+        <Banner tone="danger" title="This call record is incomplete">
+          The transcript remains authoritative, but summary or classification information may be
+          missing.
         </Banner>
       ) : null}
 
-      <div className="call-layout">
-        <div>
+      <dl className="operator-call-strip" aria-label="Call at a glance">
+        <CallFact label="Reason" value={reasonLabel} />
+        <CallFact
+          label="Sentiment"
+          value={call.sentiment ? humaniseState(call.sentiment) : 'Not available'}
+          tone={
+            call.sentiment === 'NEGATIVE'
+              ? 'danger'
+              : call.sentiment === 'POSITIVE'
+                ? 'good'
+                : undefined
+          }
+        />
+        <CallFact
+          label="Urgency"
+          value={call.urgency ? humaniseState(call.urgency) : 'Not available'}
+          tone={call.urgency === 'HIGH' ? 'danger' : undefined}
+        />
+        <CallFact
+          label="SLA"
+          value={slaLabel(call.followUp.sla.status)}
+          tone={slaTone(call.followUp.sla.status)}
+        />
+        <CallFact label="Callback" value={callbackLabel} />
+        <CallFact label="Owner" value={ownerLabel} />
+      </dl>
+
+      <div className="operator-call-layout">
+        <section className="operator-call-summary">
+          <Panel title="Call summary" eyebrow="What the operator needs to know">
+            {summaryBody ? (
+              <div className="summary-body">
+                <p className="summary-purpose">{summaryBody.purpose?.text}</p>
+                <SummaryList
+                  title="Caller needs"
+                  items={summaryBody.caller_requests?.map((claim) => claim.text)}
+                />
+                <SummaryList
+                  title="Information provided"
+                  items={summaryBody.information_provided?.map((claim) => claim.text)}
+                />
+                <SummaryList
+                  title="Still unresolved"
+                  items={[
+                    ...(summaryBody.unresolved_items ?? []),
+                    ...(summaryBody.unconfirmed_requests ?? []),
+                  ].map((claim) => claim.text)}
+                />
+              </div>
+            ) : (
+              <EmptyState
+                title="No summary available"
+                detail="Use the transcript below to review what was said."
+              />
+            )}
+          </Panel>
+        </section>
+
+        <section className="operator-call-transcript">
           <Panel
-            title="Transcript"
+            title="Call transcript"
             eyebrow={
               call.transcriptRevision
-                ? `Revision ${call.transcriptRevision.revision} · ${humaniseState(call.transcriptRevision.revisionType)}`
-                : 'No revision'
+                ? `${humaniseState(call.transcriptRevision.revisionType)} transcript`
+                : 'No transcript'
             }
-            {...(call.transcriptRevision?.revisionType === 'REDACTED'
-              ? {
-                  description:
-                    'This is the redacted revision. The canonical revision is retained separately and is not shown by default.',
-                }
-              : {})}
           >
             {call.transcriptTurns.length === 0 ? (
               <EmptyState
                 title="No transcript available"
-                detail="The redacted revision appears once the post-call workflow completes normalisation."
+                detail="A transcript appears after the call has been received and normalised."
               />
             ) : (
               <ol className="transcript">
-                {call.transcriptTurns.map((turn) => (
-                  <li key={turn.id} className={`turn turn-${turn.speaker}`}>
-                    <div className="turn-meta">
-                      <strong>{turn.speaker === 'agent' ? 'Receptionist' : 'Caller'}</strong>
-                      {turn.startedAtMs !== null ? (
-                        <span>{formatDuration(Math.round(turn.startedAtMs / 1000))}</span>
-                      ) : null}
-                    </div>
-                    <p>{turn.content}</p>
-                  </li>
-                ))}
+                {call.transcriptTurns.map((turn) => {
+                  const receptionist = turn.speaker.toUpperCase() === 'AGENT';
+                  return (
+                    <li key={turn.id} className={`turn turn-${turn.speaker.toLowerCase()}`}>
+                      <div className="turn-meta">
+                        <strong>{receptionist ? 'Receptionist' : 'Caller'}</strong>
+                        {turn.startedAtMs !== null ? (
+                          <span>{formatDuration(Math.round(turn.startedAtMs / 1000))}</span>
+                        ) : null}
+                      </div>
+                      <p>{turn.content}</p>
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </Panel>
+        </section>
 
-          <Panel title="Intelligence" eyebrow="Evidence-linked, never asserted">
-            <Tabs
-              label="Call intelligence"
-              panels={[
-                {
-                  value: 'summary',
-                  label: 'Summary',
-                  content: summaryBody ? (
-                    <div className="summary-body">
-                      <p className="summary-purpose">{summaryBody.purpose?.text}</p>
-                      <SummaryList
-                        title="Caller asked for"
-                        items={summaryBody.caller_requests?.map((claim) => claim.text)}
-                      />
-                      <SummaryList
-                        title="Left unresolved"
-                        items={summaryBody.unresolved_items?.map((claim) => claim.text)}
-                      />
-                      <SummaryList
-                        title="Commitments made"
-                        items={summaryBody.unconfirmed_requests?.map((claim) => claim.text)}
-                      />
-                      {summary ? (
-                        <p className="evidence-note">
-                          Evidence coverage {formatPercent(Number(summary.evidenceCoverage))} ·
-                          generated by {summary.provider} {summary.model}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <EmptyState
-                      title="No summary"
-                      detail="A summary is produced only when enrichment completes and the output satisfies its schema."
-                    />
-                  ),
-                },
-                {
-                  value: 'classification',
-                  label: 'Classification',
-                  content: classification ? (
-                    <DefinitionList
-                      items={[
-                        {
-                          term: 'Primary reason',
-                          value: humaniseState(classification.primaryIntent),
-                        },
-                        {
-                          term: 'Also mentioned',
-                          value:
-                            classification.secondaryIntents.length > 0
-                              ? classification.secondaryIntents.map(humaniseState).join(', ')
-                              : 'None',
-                        },
-                        {
-                          term: 'Confidence',
-                          value: formatPercent(Number(classification.confidence)),
-                        },
-                        { term: 'Taxonomy', value: classification.taxonomyVersion },
-                        {
-                          term: 'Evidence',
-                          value: `${classification.evidenceIds.length} linked transcript spans`,
-                        },
-                      ]}
-                    />
-                  ) : (
-                    <EmptyState title="Not classified" detail="No classification was produced." />
-                  ),
-                },
-                {
-                  value: 'outcome',
-                  label: 'Outcome',
-                  content: outcome ? (
-                    <>
-                      <DefinitionList
-                        items={[
-                          { term: 'Outcome', value: humaniseState(outcome.outcome) },
-                          { term: 'Policy version', value: outcome.policyVersion },
-                          { term: 'Determined at', value: formatDateTime(outcome.createdAt) },
-                        ]}
-                      />
-                      <p className="evidence-note">
-                        Outcomes are derived from persisted tool results, transfers and delivery
-                        receipts. They are never asserted by a model.
-                      </p>
-                    </>
-                  ) : (
-                    <EmptyState
-                      title="No outcome recorded"
-                      detail="Processing did not reach the outcome stage."
-                    />
-                  ),
-                },
-                {
-                  value: 'tools',
-                  label: 'Tool calls',
-                  badge: call.toolInvocations.length,
-                  content:
-                    call.toolInvocations.length === 0 ? (
-                      <EmptyState
-                        title="No tools were called"
-                        detail="This call was answered from approved knowledge alone."
-                      />
-                    ) : (
-                      <ul className="tool-list">
-                        {call.toolInvocations.map((tool) => (
-                          <li key={tool.id}>
-                            <div>
-                              <strong>{humaniseState(tool.registryKey)}</strong>
-                              <span>{formatDateTime(tool.requestedAt)}</span>
-                            </div>
-                            <StatusPill tone={toneForState(tool.resultStatus)}>
-                              {humaniseState(tool.resultStatus)}
-                            </StatusPill>
-                          </li>
-                        ))}
-                      </ul>
-                    ),
-                },
-                {
-                  value: 'evidence',
-                  label: 'Evidence',
-                  badge: call.evidenceArtifacts.length,
-                  content:
-                    call.evidenceArtifacts.length === 0 ? (
-                      <EmptyState
-                        title="No governed artefacts"
-                        detail="Evidence appears once a summary or classification has been produced by a governed AI capability."
-                      />
-                    ) : (
-                      <div className="evidence-list">
-                        {call.evidenceArtifacts.map((artifact) => (
-                          <DefinitionList
-                            key={artifact.id}
-                            items={[
-                              {
-                                term: 'Intelligence state',
-                                value: humaniseState(artifact.intelligenceState),
-                              },
-                              { term: 'Result', value: humaniseState(artifact.resultState) },
-                              { term: 'Provider', value: artifact.providerKey },
-                              { term: 'Model', value: artifact.modelId },
-                              { term: 'Prompt version', value: artifact.promptVersionId },
-                              { term: 'Schema version', value: artifact.schemaVersionId },
-                              {
-                                term: 'Confidence',
-                                value:
-                                  artifact.confidence !== null
-                                    ? formatPercent(Number(artifact.confidence))
-                                    : '—',
-                              },
-                              {
-                                term: 'Fallback used',
-                                value: artifact.fallbackUsed ? 'Yes' : 'No',
-                              },
-                              { term: 'Generated', value: formatDateTime(artifact.generatedAt) },
-                            ]}
-                          />
-                        ))}
-                        {call.entities.length > 0 ? (
-                          <div className="summary-section">
-                            <p className="eyebrow">Extracted entities</p>
-                            <ul>
-                              {call.entities.map((entity) => (
-                                <li key={entity.id}>
-                                  {humaniseState(entity.entityType)}: {entity.value} (
-                                  {formatPercent(Number(entity.confidence))})
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    ),
-                },
-              ]}
-            />
-          </Panel>
-        </div>
+        <aside className="operator-call-follow-up" aria-label="Follow-up">
+          <Panel title="Follow-up" eyebrow="Ownership and customer commitment">
+            <div
+              className={`operator-next-action ${
+                call.followUp.sla.status === 'BREACHED' ? 'is-urgent' : ''
+              }`}
+            >
+              <span>Next action</span>
+              <strong>{nextAction}</strong>
+            </div>
 
-        <aside className="call-rail" aria-label="Call context">
-          <Panel title="Call details" eyebrow="Context">
-            <DefinitionList
-              columns={1}
-              items={[
-                { term: 'Park', value: titleCase(call.park) },
-                { term: 'Language', value: (call.language ?? '—').toUpperCase() },
-                { term: 'Duration', value: formatDuration(durationSeconds) },
-                { term: 'Processing', value: humaniseState(call.processingState) },
-                { term: 'Handling', value: call.sensitive ? 'Sensitive' : 'Standard' },
-              ]}
-            />
-          </Panel>
-
-          <Panel title="Conversation intelligence" eyebrow="Canonical completeness index">
-            {call.manifest ? (
-              <>
-                <DefinitionList
-                  columns={1}
-                  items={[
-                    { term: 'Status', value: humaniseState(call.manifest.status) },
-                    {
-                      term: 'Completeness',
-                      value: `${formatPercent(Number(call.manifest.completenessRatio))} (${call.manifest.presentArtifactCount} of ${call.manifest.expectedArtifactCount} required outputs)`,
-                    },
-                    {
-                      term: 'Processing profile',
-                      value: `Version ${call.manifest.processingProfileVersion}`,
-                    },
-                    {
-                      term: 'Finalised',
-                      value: formatDateTime(call.manifest.processingCompletedAt),
-                    },
-                  ]}
-                />
-                {call.manifest.warnings.length > 0 ? (
-                  <ul className="tool-list">
-                    {call.manifest.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </>
-            ) : (
-              <EmptyState
-                title="No manifest yet"
-                detail="A canonical intelligence manifest is built once the finalisation pipeline completes."
+            <dl className="operator-follow-up-list">
+              <FollowUpFact
+                term="Case"
+                value={humaniseState(call.followUp.caseStatus)}
+                tone={toneForState(call.followUp.caseStatus)}
               />
-            )}
-          </Panel>
+              <FollowUpFact
+                term="SLA status"
+                value={slaLabel(call.followUp.sla.status)}
+                detail={
+                  call.followUp.sla.dueAt
+                    ? `Due ${formatDateTime(call.followUp.sla.dueAt)} (${formatRelativeTime(call.followUp.sla.dueAt)})`
+                    : undefined
+                }
+                tone={slaTone(call.followUp.sla.status)}
+              />
+              <FollowUpFact
+                term="Callback"
+                value={callbackLabel}
+                detail={call.followUp.callback?.reason}
+                tone={
+                  call.followUp.callback ? toneForState(call.followUp.callback.status) : 'neutral'
+                }
+              />
+              <FollowUpFact
+                term="Assigned operator"
+                value={ownerLabel}
+                tone={call.followUp.assignedOperator ? 'info' : 'neutral'}
+              />
+              <FollowUpFact
+                term="Call returned"
+                value={
+                  !call.followUp.callback
+                    ? 'Not required'
+                    : call.followUp.callback.returned
+                      ? 'Yes'
+                      : 'Not yet'
+                }
+                detail={
+                  call.followUp.callback?.completedAt
+                    ? `Completed ${formatDateTime(call.followUp.callback.completedAt)}`
+                    : undefined
+                }
+                tone={
+                  call.followUp.callback?.returned
+                    ? 'good'
+                    : call.followUp.callback
+                      ? 'warning'
+                      : 'neutral'
+                }
+              />
+            </dl>
 
-          <Panel title="Provider evidence" eyebrow="Kept distinct from canonical records">
-            <p className="rail-note">
-              The provider transcript and analysis are stored verbatim and are never edited. The
-              revisions shown here are Quantum Parks records derived from them.
-            </p>
-            <TechnicalDetails summary="Provider metadata">
-              <JsonInspector label="Provider metadata" value={call.providerMetadata} />
-              <JsonInspector label="Provider analysis" value={call.providerAnalysisMetadata} />
-              <dl className="technical-grid">
-                <div>
-                  <dt>Provider conversation</dt>
-                  <dd>{call.providerConversationId}</dd>
-                </div>
-                <div>
-                  <dt>Provider agent</dt>
-                  <dd>{call.providerAgentId}</dd>
-                </div>
-                <div>
-                  <dt>Provider version</dt>
-                  <dd>{call.providerVersionId ?? '—'}</dd>
-                </div>
-              </dl>
-            </TechnicalDetails>
-          </Panel>
-
-          <Panel
-            title="Propose a correction"
-            description="Reviewed independently before it changes anything. Approving records the decision permanently; it does not itself rewrite the transcript, summary or classification."
-          >
-            <ProposeCorrectionForm conversationId={call.id} targets={correctionTargets} />
+            {call.followUp.caseStatus === 'OPEN' ? (
+              <Link
+                className="button secondary small"
+                href={call.followUp.callback ? '/calls/callbacks' : '/calls/tasks'}
+              >
+                Manage follow-up
+              </Link>
+            ) : null}
           </Panel>
         </aside>
       </div>
     </AppShell>
+  );
+}
+
+function CallFact({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: 'good' | 'warning' | 'danger' | 'info' | 'neutral' | undefined;
+}) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd className={tone ? `tone-${tone}` : undefined}>{value}</dd>
+    </div>
+  );
+}
+
+function FollowUpFact({
+  term,
+  value,
+  detail,
+  tone,
+}: {
+  term: string;
+  value: string;
+  detail?: string | undefined;
+  tone: 'good' | 'warning' | 'danger' | 'info' | 'neutral';
+}) {
+  return (
+    <div>
+      <dt>{term}</dt>
+      <dd>
+        <StatusPill tone={tone}>{value}</StatusPill>
+        {detail ? <small>{detail}</small> : null}
+      </dd>
+    </div>
   );
 }
 
@@ -543,7 +371,7 @@ function SummaryList({ title, items }: { title: string; items: string[] | undefi
     <div className="summary-section">
       <p className="eyebrow">{title}</p>
       <ul>
-        {items.map((item) => (
+        {[...new Set(items)].map((item) => (
           <li key={item}>{item}</li>
         ))}
       </ul>
@@ -551,7 +379,64 @@ function SummaryList({ title, items }: { title: string; items: string[] | undefi
   );
 }
 
+function callDurationSeconds(call: CallDetail): number | null {
+  if (typeof call.providerMetadata?.call_duration_secs === 'number') {
+    return call.providerMetadata.call_duration_secs;
+  }
+  if (!call.startedAt || !call.endedAt) return null;
+  return Math.max(0, (Date.parse(call.endedAt) - Date.parse(call.startedAt)) / 1000);
+}
+
+function slaLabel(status: CallDetail['followUp']['sla']['status']): string {
+  if (status === 'ON_TRACK') return 'On track';
+  if (status === 'NOT_SET') return 'Not set';
+  if (status === 'NOT_REQUIRED') return 'Not required';
+  return humaniseState(status);
+}
+
+function slaTone(
+  status: CallDetail['followUp']['sla']['status'],
+): 'good' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'BREACHED') return 'danger';
+  if (status === 'ON_TRACK' || status === 'NOT_SET') return 'warning';
+  if (status === 'MET') return 'good';
+  return 'neutral';
+}
+
+function deriveNextAction(
+  call: CallDetail,
+  summary:
+    | {
+        unresolved_items?: Claim[];
+        unconfirmed_requests?: Claim[];
+      }
+    | undefined,
+): string {
+  if (call.followUp.sla.status === 'BREACHED') {
+    return call.followUp.callback?.returned
+      ? 'Review the breached SLA and close the remaining work.'
+      : 'Return the customer call now. The SLA has been breached.';
+  }
+  if (call.followUp.caseStatus === 'OPEN' && !call.followUp.assignedOperator) {
+    return 'Assign an operator to own the outstanding follow-up.';
+  }
+  if (call.followUp.callback && !call.followUp.callback.returned) {
+    const owner = call.followUp.assignedOperator?.name ?? 'The assigned operator';
+    return call.followUp.callback.dueAt
+      ? `${owner} should return the call by ${formatDateTime(call.followUp.callback.dueAt)}.`
+      : `${owner} should return the customer call.`;
+  }
+  if (call.followUp.caseStatus === 'OPEN') {
+    return `${call.followUp.assignedOperator?.name ?? 'The assigned operator'} owns the remaining follow-up.`;
+  }
+  const unresolvedCount =
+    (summary?.unresolved_items?.length ?? 0) + (summary?.unconfirmed_requests?.length ?? 0);
+  return unresolvedCount > 0
+    ? 'No follow-up is assigned. Review the unresolved items if action is still needed.'
+    : 'No further action is required.';
+}
+
 function titleCase(value: string | null): string {
-  if (!value) return '—';
+  if (!value) return 'All parks';
   return value.charAt(0).toUpperCase() + value.slice(1);
 }

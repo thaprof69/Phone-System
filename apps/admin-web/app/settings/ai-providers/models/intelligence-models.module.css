@@ -1,0 +1,301 @@
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.primaryButton {
+  border-radius: var(--radius);
+  border: 1px solid var(--forest);
+  background: var(--forest-solid);
+  color: var(--on-solid);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    box-shadow var(--motion-surface),
+    transform 180ms ease;
+}
+.primaryButton:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--forest-solid) 86%, white);
+  box-shadow: 0 10px 24px rgb(20 42 35 / 12%);
+  transform: translateY(-1px);
+}
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ghostButton,
+.dangerButton {
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-surface),
+    transform 180ms ease;
+}
+.ghostButton:hover:not(:disabled) {
+  background: var(--forest-soft);
+  border-color: var(--line);
+  transform: translateY(-1px);
+}
+.dangerButton {
+  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+  color: var(--red);
+}
+.dangerButton:hover:not(:disabled) {
+  background: var(--red-soft);
+  transform: translateY(-1px);
+}
+.ghostButton:disabled,
+.dangerButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ------------------------------------------------------------------ empty */
+
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.emptyTitle {
+  font-size: 16px;
+  font-weight: 650;
+}
+.emptyBody {
+  margin-top: 6px;
+  margin-bottom: 18px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------- list */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-surface),
+    transform 180ms ease;
+}
+
+.row:hover {
+  border-color: var(--line);
+  box-shadow: var(--shadow-raised);
+  transform: translateY(-2px);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  height: 38px;
+  width: 38px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--forest-soft);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.identity {
+  min-width: 160px;
+  flex: 1 1 160px;
+}
+.provider {
+  font-size: 15px;
+  font-weight: 650;
+}
+.submodel {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.meta {
+  min-width: 200px;
+  flex: 1 1 200px;
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.subtle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.failure {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.dot {
+  height: 9px;
+  width: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.dotGreen {
+  background: var(--forest-solid);
+}
+.dotAmber {
+  background: var(--amber);
+}
+.dotRed {
+  background: var(--red);
+}
+.dotGrey {
+  background: var(--muted);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ----------------------------------------------------------------- dialog */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(20 42 35 / 45%);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 22px;
+}
+
+.dialogTitle {
+  font-size: 18px;
+  font-weight: 650;
+  margin-bottom: 16px;
+}
+.dialogBody {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: block;
+  margin-bottom: 16px;
+}
+.label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.input {
+  width: 100%;
+  height: 42px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 0 12px;
+  font-size: 14px;
+  color: inherit;
+}
+.input:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgb(49 108 123 / 14%);
+  outline: 0;
+}
+.input:disabled {
+  background: var(--forest-soft);
+  cursor: not-allowed;
+}
+.help {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notice {
+  margin: 14px 0;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--forest) 30%, var(--line));
+  background: var(--forest-soft);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--forest);
+}
+.noticeError {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton,
+  .ghostButton,
+  .dangerButton,
+  .row {
+    transition: none;
+  }
+
+  .primaryButton:hover,
+  .ghostButton:hover,
+  .dangerButton:hover,
+  .row:hover {
+    transform: none;
+  }
+}

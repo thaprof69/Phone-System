@@ -14,6 +14,7 @@ import { DomainPage, LoadFailure } from '../../../domain-page';
 import { SettingsPage } from '../../settings-page';
 import { apiGet } from '../../../../lib/api';
 import { ConvertGapButton } from './gap-actions';
+import { IntelligenceDetailExplorer } from '../../../intelligence/detail-explorer';
 
 export type GapRow = {
   id: string;
@@ -136,6 +137,37 @@ export async function KnowledgeGapsView({ eyebrow }: { eyebrow: 'Knowledge' | 'I
         </>
       }
     >
+      {eyebrow === 'Intelligence' ? (
+        <IntelligenceDetailExplorer
+          eyebrow="Knowledge pressure"
+          title="Prioritise gaps by recurrence and evidence"
+          description="Search gaps, switch between ask frequency and source coverage, then open a supporting call."
+          rows={gaps.map((gap) => ({
+            id: gap.id,
+            label: gap.title,
+            subtitle: `${gap.language.toUpperCase()} · ${gap.park ? titleCase(gap.park) : 'All parks'} · ${humaniseState(gap.status)}`,
+            ...(gap.evidenceIds[0] ? { href: `/calls/${gap.evidenceIds[0]}` } : {}),
+            metrics: {
+              asks: gap.frequency,
+              evidence: gap.evidenceIds.length,
+              open: gap.status === 'OPEN' ? 1 : 0,
+            },
+            evidence: [
+              { label: 'Workflow state', value: humaniseState(gap.status) },
+              { label: 'Owner', value: gap.ownerId ? gap.ownerId.slice(0, 8) : 'Unassigned' },
+              { label: 'Supporting calls', value: formatNumber(gap.evidenceIds.length) },
+            ],
+          }))}
+          metrics={[
+            { key: 'asks', label: 'Times asked', format: 'number' },
+            { key: 'evidence', label: 'Evidence calls', format: 'number' },
+            { key: 'open', label: 'Open workflow signal', format: 'number' },
+          ]}
+          sourceHref="/settings/knowledge/gaps"
+          sourceLabel="Knowledge review workflow"
+        />
+      ) : null}
+
       <Banner tone="info" title="Gaps are detected, never answered automatically">
         A gap becomes knowledge only when a person drafts it and an approver signs it off. Nothing
         here is published to the voice runtime on its own.

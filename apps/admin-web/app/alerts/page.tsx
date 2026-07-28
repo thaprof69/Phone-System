@@ -1,94 +1,83 @@
-import Link from 'next/link';
-import { EmptyState, Panel, StatusPill, formatNumber } from '@quantum-parks/ui';
+import { StatusPill, formatNumber } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../domain-page';
 import { apiGet } from '../../lib/api';
 import type { MissionControl } from '../../lib/types';
+import { AlertsCommandCenter, type CommunicationsReadiness } from './alerts-command-center';
 
 export const dynamic = 'force-dynamic';
 
-const SEVERITY_TONE = {
-  critical: 'danger',
-  high: 'warning',
-  medium: 'info',
-} as const;
-
-const SEVERITY_COPY = {
-  critical: 'Callers may be getting the wrong answer, or a release cannot proceed.',
-  high: 'A commitment to a customer or a release gate is at risk.',
-  medium: 'Worth clearing before it becomes urgent.',
-} as const;
-
 export default async function AlertsPage() {
-  const response = await apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' });
+  const [mission, communications] = await Promise.all([
+    apiGet<MissionControl>('/mission-control', { purpose: 'OPERATIONS' }),
+    apiGet<CommunicationsReadiness>('/admin/communications/readiness', {
+      purpose: 'RELEASE_MANAGEMENT',
+    }),
+  ]);
 
-  if (!response.ok) {
+  if (!mission.ok) {
     return (
       <DomainPage
         eyebrow="Mission Control"
-        title="Alerts"
-        description="Everything currently blocked, failing, drifted or overdue."
+        title="Attention & Alerts"
+        description="Human attention, governed escalation and delivery evidence."
       >
-        <LoadFailure subject="Alerts" reason={response.reason} />
+        <LoadFailure subject="Alerts" reason={mission.reason} />
       </DomainPage>
     );
   }
 
-  const { attention } = response.data;
-  const groups = (['critical', 'high', 'medium'] as const).map((severity) => ({
-    severity,
-    items: attention.filter((item) => item.severity === severity),
-  }));
-  const total = attention.reduce((sum, item) => sum + item.count, 0);
+  const total = mission.data.attention.reduce((sum, item) => sum + item.count, 0);
 
   return (
     <DomainPage
       eyebrow="Mission Control"
-      title="Alerts"
-      description="Everything currently blocked, failing, drifted or overdue, grouped by how urgently it needs a person."
+      title="Attention & Alerts"
+      description="Detect urgent work, route it to the right people and prove every escalation was handled."
       meta={
-        <StatusPill tone={attention.length === 0 ? 'good' : 'warning'}>
+        <StatusPill tone={mission.data.attention.length ? 'warning' : 'good'}>
           {formatNumber(total)} affected records
         </StatusPill>
       }
-      badges={{ '/alerts': attention.length }}
+      badges={{ '/alerts': mission.data.attention.length }}
     >
-      {attention.length === 0 ? (
-        <Panel title="No open alerts" eyebrow="All clear">
-          <EmptyState
-            title="Nothing needs attention"
-            detail="No drift, failed publication, overdue work or failing test is currently outstanding."
-          />
-        </Panel>
-      ) : (
-        groups
-          .filter((group) => group.items.length > 0)
-          .map((group) => (
-            <Panel
-              key={group.severity}
-              title={`${group.severity.charAt(0).toUpperCase()}${group.severity.slice(1)}`}
-              eyebrow={`${group.items.length} ${group.items.length === 1 ? 'alert' : 'alerts'}`}
-              description={SEVERITY_COPY[group.severity]}
-              action={
-                <StatusPill tone={SEVERITY_TONE[group.severity]}>{group.severity}</StatusPill>
+      <AlertsCommandCenter
+        generatedAt={mission.data.generatedAt}
+        initialAttention={mission.data.attention}
+        communications={
+          communications.ok
+            ? communications.data
+            : {
+                generatedAt: new Date().toISOString(),
+                gmail: {
+                  provider: 'GMAIL',
+                  status: 'UNAVAILABLE',
+                  sender: null,
+                  auth: 'OAUTH_2',
+                  requiredScopes: [],
+                  supports: [],
+                },
+                whatsapp: {
+                  provider: 'WHATSAPP_CLOUD',
+                  status: 'UNAVAILABLE',
+                  phoneNumberId: null,
+                  businessAccountId: null,
+                  auth: 'SYSTEM_USER_ACCESS_TOKEN',
+                  supports: [],
+                },
+                inboundFoundation: {
+                  gmail: { status: 'PLANNED', boundary: communications.reason },
+                  whatsapp: { status: 'PLANNED', boundary: communications.reason },
+                  zendesk: { status: 'ADAPTER_NOT_INSTALLED', boundary: communications.reason },
+                },
+                policy: {
+                  defaultMode: 'HUMAN_APPROVAL_REQUIRED',
+                  automaticRepliesEnabled: false,
+                  bookingWritesEnabled: false,
+                  approvedWhatsAppTemplatesRequired: true,
+                },
               }
-            >
-              <ul className="attention-list">
-                {group.items.map((item) => (
-                  <li key={item.id} className={`attention-item severity-${item.severity}`}>
-                    <Link href={item.href}>
-                      <span className="attention-count">{formatNumber(item.count)}</span>
-                      <span className="attention-body">
-                        <strong>{item.title}</strong>
-                        <span>{item.detail}</span>
-                      </span>
-                      <span className="attention-severity">Resolve</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          ))
-      )}
+        }
+      />
     </DomainPage>
   );
 }

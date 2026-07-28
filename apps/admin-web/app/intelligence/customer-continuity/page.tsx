@@ -10,6 +10,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { IntelligenceDetailExplorer } from '../detail-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,39 @@ export default async function CustomerContinuityPage() {
 
       {repeatContact ? (
         <>
+          <IntelligenceDetailExplorer
+            eyebrow="Continuity evidence"
+            title="Inspect the platform-wide repeat-contact signal"
+            description="The single available cohort is shown without inventing park, language, or version attribution."
+            rows={[
+              {
+                id: repeatContact.id,
+                label: 'Platform-wide repeat contact',
+                subtitle: `${new Date(repeatContact.periodStart).toLocaleDateString()} – ${new Date(repeatContact.periodEnd).toLocaleDateString()}`,
+                metrics: {
+                  change: repeatContact.metric,
+                  confidence: repeatContact.confidence,
+                },
+                evidence: [
+                  { label: 'Scope', value: 'Platform-wide only' },
+                  {
+                    label: 'Period',
+                    value: `${new Date(repeatContact.periodStart).toLocaleDateString()} – ${new Date(repeatContact.periodEnd).toLocaleDateString()}`,
+                  },
+                  {
+                    label: 'Evidence fields',
+                    value: `${Object.keys(repeatContact.evidence).length} persisted fields`,
+                  },
+                ],
+              },
+            ]}
+            metrics={[
+              { key: 'change', label: 'Repeat-contact change', format: 'signed-percent' },
+              { key: 'confidence', label: 'Confidence', format: 'percent', higherIsBetter: true },
+            ]}
+            sourceLabel="Persisted trend evidence"
+          />
+
           <MetricGrid>
             <MetricCard
               label="Repeat contact rate"

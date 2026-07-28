@@ -17,16 +17,14 @@ x-application-environment: &application-environment
   OIDC_CLIENT_ID: quantum-parks-admin
   OIDC_AUDIENCE: quantum-parks-api
   OIDC_CLIENT_SECRET_REF: local/keycloak/quantum-parks-admin
-  ELEVENLABS_BASE_URL: http://provider-simulator:4100
-  ELEVENLABS_SANDBOX_BASE_URL: http://provider-simulator:4100
+  ELEVENLABS_BASE_URL: https://api.elevenlabs.io
   ELEVENLABS_WORKSPACE_ID: workspace_synthetic
   ELEVENLABS_SECRET_REF: local/elevenlabs/api-key
   ELEVENLABS_WEBHOOK_SECRET_REF: local/elevenlabs/webhook-secret
-  LOCAL_ELEVENLABS_API_KEY: synthetic-api-key
   LOCAL_ELEVENLABS_WEBHOOK_SECRET: synthetic-webhook-secret
   LOCAL_TOOL_TOKEN: synthetic-tool-token
   METRICS_TOKEN: synthetic-metrics-token
-  ELEVENLABS_CAPABILITY_MODE: simulator
+  ELEVENLABS_CAPABILITY_MODE: live
   AUDIO_INGESTION_ENABLED: 'false'
   CUSTOM_VOICE_ENABLED: 'false'
   BOOKING_WRITES_ENABLED: 'false'
@@ -119,6 +117,7 @@ services:
     security_opt: ['no-new-privileges:true']
 
   provider-simulator:
+    profiles: ['test']
     image: quantum-parks-voice-platform-runtime:local
     pull_policy: never
     command: ['node', 'apps/provider-simulator/dist/main.js']
@@ -170,7 +169,6 @@ services:
       seed: { condition: service_completed_successfully }
       minio-init: { condition: service_completed_successfully }
       temporal: { condition: service_healthy }
-      provider-simulator: { condition: service_healthy }
     ports: ['4000:4000']
     healthcheck:
       {

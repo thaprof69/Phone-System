@@ -12,6 +12,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { IntelligenceDetailExplorer, type DetailRow } from '../detail-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,6 +98,28 @@ export default async function CostsPage() {
 
   const data = response.data;
   const columns = costColumns(data.currency);
+  const visualRows: DetailRow[] = [
+    ...data.byProvider.map((row) => ({ ...row, group: 'Provider' })),
+    ...data.byModel.map((row) => ({ ...row, group: 'Model' })),
+    ...data.byCapability.map((row) => ({ ...row, group: 'Capability' })),
+  ].map((row) => ({
+    id: `${row.group}-${row.key}`,
+    label: row.label,
+    subtitle: `${row.group} · ${formatNumber(row.executionCount)} runs`,
+    href: '/settings/ai-routing/executions',
+    metrics: {
+      spend: row.costMicros / 1_000_000,
+      runs: row.executionCount,
+      input: row.inputTokens,
+      output: row.outputTokens,
+      costPerRun: row.executionCount ? row.costMicros / 1_000_000 / row.executionCount : null,
+    },
+    evidence: [
+      { label: 'Cohort type', value: row.group },
+      { label: 'Input tokens', value: formatNumber(row.inputTokens) },
+      { label: 'Output tokens', value: formatNumber(row.outputTokens) },
+    ],
+  }));
   const budgetColumns: Column<BudgetRow>[] = [
     { key: 'key', header: 'Budget', render: (row) => row.key },
     { key: 'scopeLabel', header: 'Scope', render: (row) => row.scopeLabel ?? row.scopeType },
@@ -149,6 +172,22 @@ export default async function CostsPage() {
         </StatusPill>
       }
     >
+      <IntelligenceDetailExplorer
+        eyebrow="Cost investigation"
+        title="Find what is driving AI spend"
+        description="Compare providers, models, and capabilities by spend, run volume, token use, or unit cost."
+        rows={visualRows}
+        metrics={[
+          { key: 'spend', label: 'Spend', format: 'currency', currency: data.currency },
+          { key: 'costPerRun', label: 'Cost per run', format: 'currency', currency: data.currency },
+          { key: 'runs', label: 'Execution volume', format: 'number' },
+          { key: 'input', label: 'Input tokens', format: 'number' },
+          { key: 'output', label: 'Output tokens', format: 'number' },
+        ]}
+        sourceHref="/settings/ai-routing/executions"
+        sourceLabel="Costed executions"
+      />
+
       <MetricGrid>
         <MetricCard
           label="Total spend"

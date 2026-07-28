@@ -66,6 +66,9 @@ import {
   validateCredentialPayload,
 } from './provider-registry.js';
 import { AuditService } from './audit.service.js';
+import { IntelligenceRoutingService } from './intelligence-routing.service.js';
+import type { ErrorCategory } from '@quantum-parks/aios-adapters';
+import type { AiosResultState } from '@quantum-parks/aios-contracts';
 import { ProviderCredentialVaultService } from './provider-credential-vault.service.js';
 
 type Environment = 'development' | 'staging' | 'production';
@@ -101,6 +104,32 @@ type UsageGroup = {
   outputTokens: number;
 };
 
+/** Maps a normalised adapter failure onto the AIOS result vocabulary. */
+function summaryFailureState(
+  category: ErrorCategory,
+): Exclude<AiosResultState, 'SUCCESS' | 'FALLBACK_USED'> {
+  switch (category) {
+    case 'INVALID_REQUEST':
+      return 'VALIDATION_FAILED';
+    case 'AUTHENTICATION':
+    case 'AUTHORIZATION':
+      return 'PROVIDER_NOT_CONFIGURED';
+    case 'MODEL_NOT_FOUND':
+      return 'MODEL_NOT_AVAILABLE';
+    case 'RATE_LIMIT':
+      return 'RATE_LIMITED';
+    case 'TIMEOUT':
+      return 'TIMEOUT';
+    case 'NETWORK':
+    case 'PROVIDER_ERROR':
+      return 'UNAVAILABLE';
+    case 'INVALID_RESPONSE':
+      return 'SCHEMA_REJECTED';
+    default:
+      return 'UNKNOWN_FAILURE';
+  }
+}
+
 @Injectable()
 export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventBus {
   private readonly validationAttempts = new Map<string, number[]>();
@@ -109,11 +138,17 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
     private readonly database: DatabaseService,
     private readonly vault: ProviderCredentialVaultService,
     private readonly audit: AuditService,
+    private readonly intelligenceRouting: IntelligenceRoutingService,
   ) {}
 
   async execute(
     request: ExecuteCapabilityRequest,
   ): Promise<AiosResult<GovernedIntelligenceArtifact>> {
+    // CALL_SUMMARY is governed by the operator-configured TRANSCRIPT_SUMMARY route.
+    // It never falls through to the simulator: an unconfigured route fails honestly
+    // rather than producing a synthetic summary that looks real.
+    if (request.capabilityKey === 'CALL_SUMMARY') return this.executeRoutedSummary(request);
+
     const capability = await this.getActiveCapability(request.capabilityKey);
     if (
       capability &&
@@ -147,6 +182,77 @@ export class AiosPlatformService implements AIOSGovernanceRepository, AIOSEventB
     }
     const contextBuilder = new AIOSContextBuilder([this.transcriptContextSource()]);
     return new AIOSOrchestrator(this, contextBuilder, providers, this).executeCapability(request);
+  }
+
+  /**
+   * Executes CALL_SUMMARY through the operator-configured TRANSCRIPT_SUMMARY route.
+   *
+   * The provider and submodel that actually answered are carried back on the artifact,
+   * so downstream records state which model produced a summary rather than assuming.
+   */
+  private async executeRoutedSummary(
+    request: ExecuteCapabilityRequest,
+  ): Promise<AiosResult<GovernedIntelligenceArtifact>> {
+    const revisionId = request.executionContext.sourceRevisionId;
+    if (!revisionId)
+      return {
+        state: 'VALIDATION_FAILED',
+        code: 'AIOS_SUMMARY_NO_REVISION',
+        safeMessage: 'No transcript revision was supplied for the summary.',
+        retryable: false,
+      };
+
+    const turns = await this.database.db
+      .select({
+        id: transcriptTurns.id,
+        speaker: transcriptTurns.speaker,
+        content: transcriptTurns.content,
+      })
+      .from(transcriptTurns)
+      .where(eq(transcriptTurns.revisionId, revisionId))
+      .orderBy(transcriptTurns.sequence);
+
+    const startedAt = Date.now();
+    const outcome = await this.intelligenceRouting.summariseTranscript(turns);
+    if (!outcome.ok)
+      return {
+        state: summaryFailureState(outcome.category),
+        code: `AIOS_SUMMARY_${outcome.category}`,
+        safeMessage: outcome.message,
+        retryable: outcome.category === 'RATE_LIMIT' || outcome.category === 'TIMEOUT',
+      };
+
+    const contextManifest = {
+      id: `transcript:${revisionId}`,
+      version: 1 as const,
+      items: [],
+      totalTokenEstimate: 0,
+      excluded: [],
+    };
+
+    return {
+      state: outcome.usedFallback ? ('FALLBACK_USED' as const) : ('SUCCESS' as const),
+      fallbackUsed: outcome.usedFallback,
+      data: {
+        capabilityKey: request.capabilityKey,
+        capabilityVersion: 1,
+        serviceKey: 'intelligence-routing',
+        serviceVersion: 1,
+        pipelineVersionId: 'intelligence-routing-v1',
+        routeVersionId: `TRANSCRIPT_SUMMARY:${outcome.executionId}`,
+        contextManifest,
+        providerKey: outcome.provider,
+        providerConnectionId: outcome.executionId,
+        modelId: outcome.submodel,
+        promptVersionId: 'transcript-summary-v1',
+        schemaVersionId: 'summary-v1',
+        result: outcome.summary,
+        evidenceIds: turns.map((turn) => turn.id),
+        usage: { inputTokens: 0, outputTokens: 0, costMicros: 0 },
+        latencyMs: Date.now() - startedAt,
+        dependencyArtifacts: {},
+      },
+    };
   }
 
   async overview() {

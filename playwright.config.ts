@@ -36,18 +36,20 @@ export default defineConfig({
       testMatch: /customer\.spec\.ts/,
     },
   ],
-  webServer: [
-    {
-      command: 'pnpm --filter @quantum-parks/admin-web dev',
-      url: 'http://127.0.0.1:3000',
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-    {
-      command: 'pnpm --filter @quantum-parks/customer-web dev',
-      url: 'http://127.0.0.1:3001',
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-  ],
+  webServer: process.env.PLAYWRIGHT_SKIP_WEB_SERVER
+    ? undefined
+    : [
+        {
+          command: 'pnpm --filter @quantum-parks/admin-web dev',
+          url: 'http://127.0.0.1:3000',
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+        {
+          command: 'pnpm --filter @quantum-parks/customer-web dev',
+          url: 'http://127.0.0.1:3001',
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      ],
 });

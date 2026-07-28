@@ -14,6 +14,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { IntelligenceDetailExplorer } from '../detail-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,6 +109,36 @@ export default async function TrendsPage() {
       description="Movements detected by comparing periods. Each carries a confidence score and the evidence it was derived from."
       meta={<StatusPill tone="neutral">{formatNumber(trends.length)} movements</StatusPill>}
     >
+      <IntelligenceDetailExplorer
+        eyebrow="Trend investigation"
+        title="Compare movement strength and confidence"
+        description="Switch the measure, rank signals, and inspect the derivation boundary before acting."
+        rows={trends.map((trend) => ({
+          id: trend.id,
+          label: humaniseState(trend.trendType),
+          subtitle: Object.values(trend.dimensions).map(humaniseState).join(' · ') || 'All calls',
+          metrics: {
+            change: trend.metric,
+            confidence: trend.confidence,
+            magnitude: Math.abs(trend.metric),
+          },
+          evidence: [
+            { label: 'Period start', value: formatDate(trend.periodStart) },
+            { label: 'Period end', value: formatDate(trend.periodEnd) },
+            {
+              label: 'Evidence fields',
+              value: `${Object.keys(trend.evidence).length} persisted fields`,
+            },
+          ],
+        }))}
+        metrics={[
+          { key: 'magnitude', label: 'Movement magnitude', format: 'signed-percent' },
+          { key: 'change', label: 'Direction and change', format: 'signed-percent' },
+          { key: 'confidence', label: 'Confidence', format: 'percent', higherIsBetter: true },
+        ]}
+        sourceLabel="Persisted trend evidence"
+      />
+
       <Panel
         title="Detected movements"
         eyebrow="Most recent period first"

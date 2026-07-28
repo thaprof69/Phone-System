@@ -103,8 +103,40 @@ test('no navigation element looks like a tab without being one', async ({ page }
 });
 
 test('the calls list filters, sorts and paginates against real records', async ({ page }) => {
+  await page.route('**/api/admin/reports/copilot/advice', async (route) => {
+    const request = route.request().postDataJSON() as {
+      signals: Array<{ id: string }>;
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        answer:
+          'Review overdue customer commitments first, then inspect calls whose processing failed.',
+        citedSignalIds: request.signals.slice(0, 2).map((signal) => signal.id),
+      }),
+    });
+  });
   await page.goto('/calls');
+  await expect(page.getByRole('heading', { name: 'Calls mission control' })).toBeVisible();
+  await expect(page.getByLabel('Calls operational indicators')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What needs attention' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Operator advisory' })).toBeVisible();
+  await expect(page.getByText('AI routed')).toBeVisible();
+  await expect(page.getByText('Evidence', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Failed calls:/ })).toHaveAttribute(
+    'href',
+    '/calls?status=FAILED',
+  );
+  await expectNoAxeViolations(page);
   await expect(page.getByRole('heading', { name: /\d+ calls?/ })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /^Call$/ })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Call reason' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Status' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Origin' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Provider reference' })).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: 'Handling' })).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: /Processing/ })).toHaveCount(0);
 
   // Sorting is expressed in the URL so a sorted view can be shared and reloaded.
   await page.getByRole('link', { name: /^Park/ }).click();
@@ -112,36 +144,72 @@ test('the calls list filters, sorts and paginates against real records', async (
   await expect(page.locator('th[aria-sort="ascending"]')).toHaveCount(1);
 
   // Filtering genuinely reduces the set rather than decorating the page.
-  await page.goto('/calls?state=FAILED_FINAL');
+  await page.goto('/calls?status=FAILED');
   await expect(page.getByText('Filtered')).toBeVisible();
   const rows = page.locator('tbody tr');
   await expect(rows.first()).toBeVisible();
   for (const cell of await page.locator('tbody tr td').allTextContents()) {
     expect(cell).not.toContain('Completed');
   }
+
+  await page.goto('/calls?origin=SIMULATION');
+  await expect(page.getByText('Filtered')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Simulation', exact: true }).first()).toBeVisible();
 });
 
-test('a call opens a workspace keeping provider and canonical records distinct', async ({
-  page,
-}) => {
-  // Filter to a completed call so the assertions below have a summary, a
-  // classification and an outcome to check. Picking whichever row happened to be
-  // first would sometimes land on a call that failed before enrichment.
-  await page.goto('/calls?state=COMPLETED');
+test('the operator-facing calls table remains usable on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/calls?origin=SIMULATION');
+  await expect(page.getByRole('heading', { name: 'Calls mission control' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /^Call$/ })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Call reason' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Status' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Origin' })).toBeVisible();
+  await expect(page.locator('tbody th a').first()).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+});
+
+test('a call opens a concise operator workspace', async ({ page }) => {
+  // Filter to a completed call so the operator view has a summary and reason.
+  await page.goto('/calls?status=COMPLETED');
   await page.locator('tbody th a').first().click();
   await expect(page).toHaveURL(/\/calls\/[0-9a-f-]{36}$/);
 
-  // The redacted revision is what operators see; the provider payload sits behind
-  // a disclosure and is never presented as the platform's own record.
-  await expect(page.getByRole('heading', { name: 'Transcript' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Provider evidence' })).toBeVisible();
-  await expect(page.getByText(/never edited/)).toBeVisible();
-
-  // In-page tabs switch content in the same document.
-  await page.getByRole('tab', { name: 'Outcome' }).click();
-  await expect(page.getByText(/never asserted by a model/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Call summary' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Call transcript' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Follow-up' })).toBeVisible();
+  await expect(page.getByText('Next action')).toBeVisible();
+  await expect(page.getByText('SLA status')).toBeVisible();
+  await expect(page.getByText('Assigned operator')).toBeVisible();
+  await expect(page.getByText('Call returned')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Provider evidence' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Propose a correction' })).toHaveCount(0);
+  await expect(page.getByRole('tab')).toHaveCount(0);
 
   await expectNoAxeViolations(page);
+});
+
+test('the call operator workspace remains readable on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/calls?status=COMPLETED');
+  await page.locator('tbody th a').first().click();
+
+  await expect(page.getByRole('heading', { name: 'Call summary' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Call transcript' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Follow-up' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
 });
 
 test('release gates are reported individually and cannot be bypassed here', async ({ page }) => {
@@ -163,9 +231,126 @@ test('knowledge releases report local and runtime state separately', async ({ pa
   await expect(page.getByText(/never overwrites local state/)).toBeVisible();
 });
 
-test('analytics renders charts with an accessible table fallback', async ({ page }) => {
+test('Knowledge Hub starts with ingestion and preserves the approved library', async ({ page }) => {
+  await page.route('**/api/admin/ai/intelligence/copilot/enhance', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        suggestion:
+          'Tickets, parties, memberships, accessibility support, and lost-property assistance.',
+      }),
+    });
+  });
+  await page.route('**/api/admin/knowledge-copilot/analyse', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        analysis: {
+          shortSummary: 'Defines opening hours and weather-closure communication.',
+          detailedSummary:
+            'This document defines the normal opening window and directs guests to the website for weather closures.',
+          documentPurpose: 'Give guests reliable opening and closure guidance.',
+          topics: ['Opening hours', 'Weather closures'],
+          keyFacts: [
+            {
+              fact: 'The park opens at 10:00.',
+              evidenceQuote: 'The park opens at 10:00.',
+            },
+          ],
+          ambiguities: ['No seasonal exception dates are supplied.'],
+          knowledgeContribution: 'Candidate guest-hours guidance after human approval.',
+          confidence: 'HIGH',
+        },
+      }),
+    });
+  });
+  await page.goto('/settings/knowledge');
+
+  await expect(page.getByRole('heading', { name: 'Knowledge Hub' })).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', {
+      name: 'Settings',
+      exact: true,
+    }),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { name: 'Ingest company intelligence' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ingestion inventory' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Understanding snapshot' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Direct-entry company facts' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Enhance Services with AI' }).click();
+  await expect(page.getByText('Copilot suggestion')).toBeVisible();
+  await page.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByRole('textbox', { name: 'Services', exact: true })).toHaveValue(
+    'Tickets, parties, memberships, accessibility support, and lost-property assistance.',
+  );
+
+  await page.getByLabel('Choose a knowledge document').setInputFiles({
+    name: 'opening-hours.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('The park opens at 10:00. Weather closures are announced on the website.'),
+  });
+  await expect(
+    page.getByText('Defines opening hours and weather-closure communication.'),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Open AI analysis for opening-hours.txt' }).click();
+  const analysisDrawer = page.getByRole('dialog', { name: 'opening-hours.txt' });
+  await expect(analysisDrawer).toBeVisible();
+  await expect(
+    analysisDrawer.getByRole('heading', { name: 'Proof of understanding' }),
+  ).toBeVisible();
+  await expect(analysisDrawer.getByText('“The park opens at 10:00.”')).toBeVisible();
+  await analysisDrawer.getByRole('button', { name: 'Close document analysis' }).click();
+  await expectNoAxeViolations(page);
+
+  const knowledgeRail = page.getByRole('navigation', { name: 'Knowledge Hub areas' });
+  await knowledgeRail.getByRole('link', { name: 'Library', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\/knowledge\/library$/);
+  await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+});
+
+test('Knowledge Hub remains readable on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/settings/knowledge');
+
+  await expect(page.getByRole('heading', { name: 'Ingestion inventory' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Understanding snapshot' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Direct-entry company facts' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+});
+
+test('Intelligence cockpit investigates signals, sources, and Copilot advice', async ({ page }) => {
   await page.goto('/intelligence');
-  await expect(page.getByRole('heading', { name: 'Call demand' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Intelligence cockpit' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your operational briefing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Calls and resolution over time' })).toBeVisible();
+  const heatmap = page.getByRole('group', { name: 'Calls by day and time of day' });
+  await expect(heatmap).toBeVisible();
+  await expect(page.getByText('Stronger colour = busier')).toBeVisible();
+  const heatCells = heatmap.locator('button[data-heat-level]');
+  await expect(heatCells).toHaveCount(28);
+  const heatRendering = await heatCells.evaluateAll((cells) => ({
+    backgrounds: new Set(cells.map((cell) => getComputedStyle(cell).backgroundColor)).size,
+    levels: new Set(cells.map((cell) => cell.getAttribute('data-heat-level'))).size,
+  }));
+  expect(heatRendering.levels).toBeGreaterThan(2);
+  expect(heatRendering.backgrounds).toBeGreaterThan(2);
+
+  const reasonChart = page.locator('figure').filter({ hasText: 'Calls by reason' }).first();
+  const reasonBars = reasonChart.locator('.recharts-bar-rectangle path');
+  await expect(reasonBars.first()).toBeVisible();
+  const reasonColours = await reasonBars.evaluateAll(
+    (bars) => new Set(bars.map((bar) => getComputedStyle(bar).fill)).size,
+  );
+  expect(reasonColours).toBeGreaterThan(2);
 
   // Every chart carries the same numbers in a table, so the visual is never the
   // only representation.
@@ -174,7 +359,30 @@ test('analytics renders charts with an accessible table fallback', async ({ page
   await fallbacks.first().click();
   await expect(page.getByRole('table').first()).toBeVisible();
 
+  await page.getByRole('button', { name: /Calls received/ }).click();
+  const evidence = page.getByRole('complementary', { name: 'Evidence drawer' });
+  await expect(evidence.getByRole('heading', { name: 'Calls received' })).toBeVisible();
+  await expect(evidence.getByText(/Conversation records/)).toBeVisible();
+  await expect(evidence.locator('a[href^="/calls/"]').first()).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Ask about this cohort' }).click();
+  await page.getByRole('button', { name: 'What is driving unresolved calls?' }).click();
+  await expect(page.getByLabel('Question for Intelligence Copilot')).toHaveValue(
+    'What is driving unresolved calls?',
+  );
+
   await expectNoAxeViolations(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/intelligence');
+  await expect(page.getByRole('heading', { name: 'Intelligence cockpit' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
 });
 
 test('administration exposes every area without a placeholder', async ({ page }) => {
@@ -204,7 +412,12 @@ test('AI Providers and AI Routing expose every area without a placeholder', asyn
   test.setTimeout(180_000);
   await page.goto('/settings/ai-providers/elevenlabs');
   const providersRail = page.getByRole('navigation', { name: 'AI Providers areas' });
-  for (const area of ['ElevenLabs setup', 'Intelligence providers', 'Models', 'Provider health']) {
+  for (const area of [
+    'ElevenLabs setup',
+    'Intelligence Models',
+    'Model Routing',
+    'Provider health',
+  ]) {
     await providersRail.getByRole('link', { name: area, exact: true }).click();
     await expect(page.locator('main h1')).toBeVisible();
   }
@@ -226,68 +439,220 @@ test('AI Providers and AI Routing expose every area without a placeholder', asyn
   }
 });
 
-test('the ElevenLabs provider form is a direct inline form, never a modal, with exactly one primary save action', async ({
+test('the ElevenLabs provider form matches the shared app surface without changing its actions', async ({
   page,
 }) => {
   await page.goto('/settings/ai-providers/elevenlabs');
 
   // No dialog — the form is directly on the page.
   await expect(page.locator('dialog')).toHaveCount(0);
-  const form = page.locator('#elevenlabs-provider-form');
+  const form = page.locator('#provider');
   await expect(form).toBeVisible();
 
   // Two distinct, differently-scoped actions: "Save ElevenLabs" (persist only) and
-  // "Save & test provider" (persist + real verify) — never a bare "Test connection"
-  // and never more than one primary button to choose between.
+  // "Save & test provider" (persist + real verify) — never a bare "Test connection".
   await expect(form.getByRole('button', { name: 'Save ElevenLabs', exact: true })).toBeVisible();
   await expect(
     form.getByRole('button', { name: 'Save & test provider', exact: true }),
   ).toBeVisible();
   await expect(form.getByRole('button', { name: 'Test connection', exact: true })).toHaveCount(0);
-  await expect(form.locator('.button.primary')).toHaveCount(1);
+  await expect(form.locator('button[type="submit"]')).toHaveCount(1);
 
-  // The real, editable Voice Mode field this port added is present and offers both
-  // real transports.
-  const voiceMode = form.locator('#el-voice-mode');
+  // The real, editable Voice Mode field is preserved with both real transports.
+  const voiceMode = form.locator('select[name="voiceMode"]');
   await expect(voiceMode).toBeVisible();
   await expect(voiceMode.locator('option')).toHaveCount(2);
+
+  // This provider used to be the app's only navy cinematic surface. It now consumes
+  // the same light paper, ink and compact-radius vocabulary as Knowledge and Simulation.
+  const visual = await form.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      color: style.color,
+      radius: style.borderRadius,
+    };
+  });
+  expect(visual).toEqual({
+    background: 'rgb(252, 252, 248)',
+    color: 'rgb(23, 32, 29)',
+    radius: '8px',
+  });
+  await expectNoAxeViolations(page);
 });
 
-test('running diagnostics reports an honest result, and a WebRTC bootstrap pass is never presented as proof that real audio works', async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  await page.goto('/settings/ai-providers/elevenlabs');
+test('every operator domain consumes the shared visual system', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('visual-theme-initialised')) {
+      localStorage.setItem('quantum-parks-theme', 'light');
+      sessionStorage.setItem('visual-theme-initialised', 'true');
+    }
+  });
+  const routes = [
+    '/',
+    '/calls',
+    '/calls/live',
+    '/alerts',
+    '/intelligence',
+    '/reports',
+    '/readiness',
+    '/settings',
+    '/settings/receptionist',
+    '/settings/knowledge',
+    '/settings/simulation',
+    '/settings/ai-providers/elevenlabs',
+    '/settings/ai-providers/models',
+    '/settings/ai-providers/routing',
+    '/settings/ai-routing',
+    '/settings/communications',
+    '/settings/administration',
+    '/settings/advanced',
+  ];
 
-  const diagnostics = page.locator('section[aria-labelledby="diagnostics-title"]');
-  await diagnostics.getByRole('button', { name: 'Run diagnostics' }).click();
+  for (const route of routes) {
+    await page.goto(route);
+    await expect(page.locator('main h1')).toBeVisible();
+    const audit = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const heading = document.querySelector('main h1');
+      const surfaceSelector = [
+        '.panel',
+        '.metric-card',
+        '.settings-card',
+        '.settings-group-card',
+        '.readiness-domain-card',
+        '.knowledge-panel',
+        '.receptionist-live-card',
+        '.receptionist-result-panel',
+        '.calls-command',
+        '[class*="_card_"]',
+        '[class*="_explorer_"]',
+        '[class*="_controlBand_"]',
+      ].join(',');
+      const oversizedSurfaces = Array.from(document.querySelectorAll(surfaceSelector)).filter(
+        (element) => {
+          const radius = Number.parseFloat(getComputedStyle(element).borderRadius);
+          return Number.isFinite(radius) && radius > 8 && radius < 999;
+        },
+      ).length;
 
-  // Either an honest NOT_CONFIGURED single-check result (no credential stored in this
-  // environment) or a real multi-check grid — both are legitimate, non-fabricated outcomes.
-  const notConfigured = page.getByText('No encrypted ElevenLabs credential is saved.');
-  const webrtcBootstrap = page.getByText('WebRTC bootstrap', { exact: true });
-  await expect(notConfigured.or(webrtcBootstrap)).toBeVisible({ timeout: 20_000 });
+      return {
+        canvas: root.getPropertyValue('--canvas').trim(),
+        paper: root.getPropertyValue('--paper').trim(),
+        forest: root.getPropertyValue('--forest').trim(),
+        quantumPurple: root.getPropertyValue('--quantum-purple').trim(),
+        sidebarBackground: getComputedStyle(document.querySelector('.sidebar')!).backgroundColor,
+        brandLogoLoaded:
+          document.querySelector<HTMLImageElement>('.brand-logo')?.complete === true &&
+          document.querySelector<HTMLImageElement>('.brand-logo')!.naturalWidth > 0,
+        userLogoLoaded:
+          document.querySelector<HTMLImageElement>('.user-logo')?.complete === true &&
+          document.querySelector<HTMLImageElement>('.user-logo')!.naturalWidth > 0,
+        radius: root.getPropertyValue('--radius').trim(),
+        headingSpacing: heading
+          ? getComputedStyle(heading).letterSpacing === 'normal'
+            ? '0px'
+            : getComputedStyle(heading).letterSpacing
+          : null,
+        horizontalOverflow:
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        oversizedSurfaces,
+      };
+    });
 
-  if (await webrtcBootstrap.isVisible().catch(() => false)) {
-    // The bootstrap check and the separately-tracked "media session" fact must never collapse
-    // into a single fact — a passing token/signed-URL round trip is not evidence of real audio.
-    await expect(page.getByText('WebSocket bootstrap', { exact: true })).toBeVisible();
-    await expect(page.getByText('WebRTC media session', { exact: true })).toBeVisible();
-    await expect(page.getByText('WebSocket media session', { exact: true })).toBeVisible();
+    expect(audit, route).toEqual({
+      canvas: '#f4f5f0',
+      paper: '#fcfcf8',
+      forest: '#153f35',
+      quantumPurple: '#3f2599',
+      sidebarBackground: 'rgb(8, 43, 87)',
+      brandLogoLoaded: true,
+      userLogoLoaded: true,
+      radius: '8px',
+      headingSpacing: '0px',
+      horizontalOverflow: false,
+      oversizedSurfaces: 0,
+    });
+  }
+
+  const topActions = page.locator('.top-actions');
+  await expect(topActions.getByText('Authenticated user')).toHaveCount(0);
+  await expect(topActions.getByText('Live activity')).toHaveCount(0);
+  const themeToggle = topActions.getByRole('button', { name: 'Switch to dark mode' });
+  await expect(themeToggle).toBeVisible();
+  await themeToggle.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(topActions.getByRole('button', { name: 'Switch to light mode' })).toBeVisible();
+
+  for (const route of routes) {
+    await page.goto(route);
+    await expect(page.locator('main h1')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    const darkAudit = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      return {
+        theme: document.documentElement.dataset.theme,
+        canvas: root.getPropertyValue('--canvas').trim(),
+        paper: root.getPropertyValue('--paper').trim(),
+        sidebarBackground: getComputedStyle(document.querySelector('.sidebar')!).backgroundColor,
+        horizontalOverflow:
+          document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+    expect(darkAudit, route).toEqual({
+      theme: 'dark',
+      canvas: '#0c1020',
+      paper: '#151b2f',
+      sidebarBackground: 'rgb(5, 26, 53)',
+      horizontalOverflow: false,
+    });
+  }
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const route of [
+    '/calls',
+    '/intelligence',
+    '/reports',
+    '/settings/ai-providers/models',
+    '/settings/administration',
+  ]) {
+    await page.goto(route);
+    await expect(page.locator('main h1')).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        ),
+      )
+      .toBe(true);
   }
 });
 
-test('the Simulation Lab shows a provider readiness summary linking to Configure ElevenLabs', async ({
+test('saving and testing the provider reports an honest connection result', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/settings/ai-providers/elevenlabs');
+
+  await page.getByRole('button', { name: 'Save & test provider' }).click();
+  const result = page.getByRole('status');
+  await expect(result).toBeVisible({ timeout: 30_000 });
+  await expect(result).not.toBeEmpty();
+});
+
+test('the receptionist test shows one concise readiness state without setup clutter', async ({
   page,
 }) => {
   await page.goto('/settings/simulation');
-  await expect(page.getByText('Provider:', { exact: false })).toBeVisible();
-  await expect(page.getByText('Diagnostics:', { exact: false })).toBeVisible();
-  await expect(page.getByText('Agent:', { exact: false })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Configure ElevenLabs' })).toHaveAttribute(
-    'href',
-    '/settings/ai-providers/elevenlabs',
-  );
+  const testSurface = page.getByRole('region', { name: 'Test Your AI Receptionist' });
+  await expect(testSurface).toBeVisible();
+  await expect(testSurface.getByText(/Ready|Not ready/, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Generated ElevenLabs Agent Instructions' }),
+  ).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Recent Sessions' })).toHaveCount(0);
 });
 
 test('the ElevenLabs diagnostics history page is reachable and lists past runs honestly', async ({
@@ -359,7 +724,6 @@ test('a live receptionist session response never carries the permanent provider 
   });
 
   const liveTest = page.getByRole('region', { name: 'Live Receptionist Test' });
-  await liveTest.getByLabel('Agent version').selectOption({ index: 1 });
   await liveTest.getByRole('button', { name: 'Start Voice Call' }).click();
   await expect(liveTest.getByText('Refused', { exact: true })).toBeVisible();
 
@@ -387,7 +751,7 @@ test('mobile navigation reaches every domain', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Simulation Lab' }).click();
   await expect(
-    page.getByRole('heading', { name: 'Live Receptionist Test', level: 1 }),
+    page.getByRole('heading', { name: 'Test Your AI Receptionist', level: 1 }),
   ).toBeVisible();
 });
 
@@ -1167,7 +1531,6 @@ test('starting a live receptionist session against an agent with no in-sync prov
   await page.goto('/settings/simulation');
 
   const liveTest = page.getByRole('region', { name: 'Live Receptionist Test' });
-  await liveTest.getByLabel('Agent version').selectOption({ index: 1 });
   await liveTest.getByRole('button', { name: 'Start Voice Call' }).click();
 
   // The seeded synthetic agent versions have no genuinely in-sync ElevenLabs
@@ -1242,41 +1605,6 @@ test('the audit chain stays intact under rapid consecutive writes', async ({ pag
   await page.goto('/settings/administration/audit');
   await expect(page.getByText('Chain intact')).toBeVisible();
   await expect(page.getByText(/broken link/)).toHaveCount(0);
-});
-
-test('a correction can be proposed from a call and appears awaiting review', async ({ page }) => {
-  test.setTimeout(120_000);
-  await page.goto('/calls?state=COMPLETED');
-  await page.locator('tbody th a').first().click();
-  await expect(page).toHaveURL(/\/calls\/[0-9a-f-]{36}$/);
-
-  const proposeHeading = page.getByRole('heading', { name: 'Propose a correction' });
-  await expect(proposeHeading).toBeVisible();
-
-  const reasonField = page.getByLabel('Reason', { exact: true });
-  if (!(await reasonField.isVisible().catch(() => false))) return;
-  await reasonField.fill(`Verified against the recording at ${Date.now()}`);
-  await page
-    .getByLabel('Proposed value (JSON)')
-    .fill('{"purpose": "Corrected during verification"}');
-  await page.getByRole('button', { name: 'Propose correction' }).click();
-
-  await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('awaiting review')).toBeVisible();
-});
-
-test('proposing a correction with invalid JSON is refused', async ({ page }) => {
-  test.setTimeout(120_000);
-  await page.goto('/calls?state=COMPLETED');
-  await page.locator('tbody th a').first().click();
-
-  const reasonField = page.getByLabel('Reason', { exact: true });
-  if (!(await reasonField.isVisible().catch(() => false))) return;
-  await reasonField.fill('Attempting an invalid proposal');
-  await page.getByLabel('Proposed value (JSON)').fill('{ not json');
-  await page.getByRole('button', { name: 'Propose correction' }).click();
-
-  await expect(page.getByText(/not valid JSON/)).toBeVisible();
 });
 
 test('a proposed correction can be decided, and a second decision is refused as already decided', async ({
@@ -1404,7 +1732,7 @@ test('an unapproved retention policy cannot be activated, and approving it unloc
 
 test('a legal hold can be placed on a call and later released', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/calls?state=COMPLETED');
+  await page.goto('/calls?status=COMPLETED');
   await page.locator('tbody th a').first().click();
   await expect(page).toHaveURL(/\/calls\/([0-9a-f-]{36})$/);
   const conversationId = new URL(page.url()).pathname.split('/').pop() as string;
@@ -1509,6 +1837,28 @@ test('a report can be run now and its lineage is real rather than a fabricated a
   await expect(latestRow).toContainText('No artefact');
 });
 
+test('reports provides an interactive BI workspace and exports the filtered call register', async ({
+  page,
+}) => {
+  await page.goto('/reports');
+
+  await expect(page.getByRole('heading', { name: 'Business Intelligence' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Explore and analyse' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Park', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Sentiment', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Time grain', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Break down by', exact: true })).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Pivot analysis' }).click();
+  await expect(page.getByRole('heading', { name: 'Call reason performance' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Containment' })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download CSV' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^quantum-parks-call-intelligence-.*\.csv$/);
+});
+
 test('a report schedule can be paused and resumed', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto('/reports');
@@ -1592,6 +1942,26 @@ test('the Settings landing page groups every configuration area', async ({ page 
   }
 });
 
+test('model routing includes Knowledge Hub and the planned Email and Alerts capability', async ({
+  page,
+}) => {
+  await page.goto('/settings/ai-providers/routing');
+
+  const knowledge = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Knowledge Hub' }) });
+  await expect(knowledge).toContainText('uploaded documents, URLs, and business facts');
+  await expect(knowledge).toContainText('Awaiting Knowledge Hub ingestion wiring');
+
+  const communications = page
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: 'Email & Alerts' }) });
+  await expect(communications).toContainText('operational email and alert content');
+  await expect(communications).toContainText('Planned consumer · Alerts next');
+  await expect(communications.getByLabel('Primary Model')).toBeVisible();
+  await expect(communications.getByRole('button', { name: 'Save Route' })).toBeVisible();
+});
+
 test('agent performance is attributed to the version that actually handled each call', async ({
   page,
 }) => {
@@ -1605,7 +1975,8 @@ test('agent performance is attributed to the version that actually handled each 
   await expect(page.getByText('Not yet instrumented').first()).toBeVisible();
 
   // Each version drills through to the calls it actually handled.
-  const versionLink = page.locator('tbody tr').first().getByRole('link').first();
+  const versionTable = page.locator('table').filter({ hasText: 'Agent performance by version' });
+  const versionLink = versionTable.locator('tbody tr').first().getByRole('link').first();
   await versionLink.click();
   await expect(page).toHaveURL(/\/calls\?agentVersion=/);
 });
@@ -1646,4 +2017,38 @@ test('provider performance and costs trace back to real execution runs', async (
   await expect(page.getByRole('heading', { name: 'Costs' })).toBeVisible();
   await expect(page.getByText(/£/).first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Budget utilisation' })).toBeVisible();
+});
+
+test('specialist Intelligence pages provide interactive visual investigation', async ({ page }) => {
+  test.setTimeout(120_000);
+  const routes = [
+    ['/intelligence/trends', 'Compare movement strength and confidence'],
+    ['/intelligence/call-reasons', 'Rank, compare, and open the calls behind each reason'],
+    ['/intelligence/knowledge-gaps', 'Prioritise gaps by recurrence and evidence'],
+    ['/intelligence/customer-continuity', 'Inspect the platform-wide repeat-contact signal'],
+    ['/intelligence/agent-performance', 'Compare receptionist versions'],
+    ['/intelligence/provider-performance', 'Compare provider, model, and capability health'],
+    ['/intelligence/costs', 'Find what is driving AI spend'],
+  ] as const;
+
+  for (const [route, heading] of routes) {
+    await page.goto(route);
+    const explorer = page.getByRole('region', { name: `${heading} interactive analysis` });
+    await expect(explorer.getByRole('heading', { name: heading })).toBeVisible();
+    await expect(explorer.getByRole('combobox', { name: 'Measure' })).toBeVisible();
+    await expect(explorer.getByRole('heading', { name: 'Ranked comparison' })).toBeVisible();
+  }
+
+  await page.goto('/intelligence/agent-performance');
+  const versionExplorer = page.getByRole('region', {
+    name: 'Compare receptionist versions interactive analysis',
+  });
+  await versionExplorer.getByRole('button').filter({ hasText: 'Version' }).first().click();
+  const drawer = page.getByRole('complementary', { name: 'Investigation details' });
+  await expect(drawer.getByText('Release attribution')).toBeVisible();
+  await expect(drawer.getByRole('link', { name: /Open source records/ })).toHaveAttribute(
+    'href',
+    /\/calls\?agentVersion=/,
+  );
+  await expectNoAxeViolations(page);
 });

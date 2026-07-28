@@ -2,7 +2,7 @@ import { proxyActivities } from '@temporalio/workflow';
 import { CONVERSATION_FINALISATION_PIPELINE } from './finalisation-pipeline.js';
 
 export interface PostCallActivities {
-  normalizeAndRedact(input: { inboxId: string; conversationId: string }): Promise<{
+  normalizeAndRedact(input: { inboxId?: string; conversationId: string }): Promise<{
     conversationId: string;
     transcriptRevisionId: string;
     paymentDataDetected: boolean;
@@ -34,7 +34,7 @@ export interface PostCallActivities {
     partialSoFar: boolean;
   }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }>;
   completeProcessing(input: {
-    inboxId: string;
+    inboxId?: string;
     conversationId: string;
     partial: boolean;
   }): Promise<void>;
@@ -101,7 +101,7 @@ export function shouldHaltPipeline(stageBlocking: boolean, stageFailed: boolean)
 }
 
 export async function postCallWorkflow(input: {
-  inboxId: string;
+  inboxId?: string;
   conversationId: string;
 }): Promise<{ state: 'COMPLETED' | 'PARTIAL' }> {
   const [firstStage, ...remainingStages] = CONVERSATION_FINALISATION_PIPELINE;
@@ -134,7 +134,7 @@ export async function postCallWorkflow(input: {
   }
 
   await activities.completeProcessing({
-    inboxId: input.inboxId,
+    ...(input.inboxId ? { inboxId: input.inboxId } : {}),
     conversationId: normalized.conversationId,
     partial,
   });

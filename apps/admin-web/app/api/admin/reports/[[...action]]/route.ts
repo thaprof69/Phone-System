@@ -12,6 +12,10 @@ const UUID = '[0-9a-fA-F-]{36}';
 
 const ROUTES: Array<{ pattern: RegExp; upstream: (match: RegExpExecArray) => string }> = [
   {
+    pattern: /^copilot\/advice$/,
+    upstream: () => '/analytics/copilot',
+  },
+  {
     pattern: new RegExp(`^(${UUID})/schedule$`),
     upstream: (match) => `/reports/${match[1]}/schedule`,
   },

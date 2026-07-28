@@ -26,7 +26,12 @@ const legacyRedirects: NextConfig['redirects'] = async () => [
     destination: '/settings/receptionist/releases',
     permanent: true,
   },
-  { source: '/knowledge/library', destination: '/settings/knowledge', permanent: true },
+  { source: '/knowledge', destination: '/settings/knowledge', permanent: true },
+  {
+    source: '/knowledge/library',
+    destination: '/settings/knowledge/library',
+    permanent: true,
+  },
   { source: '/knowledge/review', destination: '/settings/knowledge/review', permanent: true },
   { source: '/knowledge/releases', destination: '/settings/knowledge/releases', permanent: true },
   { source: '/knowledge/gaps', destination: '/settings/knowledge/gaps', permanent: true },

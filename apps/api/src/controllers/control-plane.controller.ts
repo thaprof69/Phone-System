@@ -6,6 +6,7 @@ import { ToolRegistryService } from '../services/tool-registry.service.js';
 import { AiosPlatformService } from '../services/aios-platform.service.js';
 import { ReceptionistSessionService } from '../services/receptionist-session.service.js';
 import { ConversationLifecycleService } from '../services/conversation-lifecycle.service.js';
+import { IntelligenceRoutingService } from '../services/intelligence-routing.service.js';
 import { RequirePermission } from '../security/access.guard.js';
 
 const IdSchema = z.uuid();
@@ -44,6 +45,38 @@ const MessageTransitionSchema = z
   })
   .strict();
 const DriftResolutionSchema = z.object({ resolution: z.string().trim().min(8).max(500) }).strict();
+const IntelligenceAdviceSchema = z
+  .object({
+    question: z.string().trim().min(8).max(500),
+    cohort: z
+      .object({
+        period: z.string().trim().min(2).max(20),
+        calls: z.number().int().nonnegative(),
+        completed: z.number().int().nonnegative(),
+        contained: z.number().int().nonnegative(),
+        unresolved: z.number().int().nonnegative(),
+        negative: z.number().int().nonnegative(),
+        averageDurationSeconds: z.number().int().nonnegative(),
+      })
+      .strict(),
+    signals: z
+      .array(
+        z
+          .object({
+            id: z
+              .string()
+              .trim()
+              .regex(/^[a-z0-9_-]+$/)
+              .max(50),
+            label: z.string().trim().min(3).max(500),
+            evidenceCallIds: z.array(z.uuid()).max(25),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(10),
+  })
+  .strict();
 const ConfigurationSaveSchema = z
   .object({
     // Validated structurally by the domain contract, not here: this route only needs
@@ -263,6 +296,7 @@ export class ControlPlaneController {
     private readonly aios: AiosPlatformService,
     private readonly receptionistSessions: ReceptionistSessionService,
     private readonly conversationLifecycle: ConversationLifecycleService,
+    private readonly intelligenceRouting: IntelligenceRoutingService,
   ) {}
   @RequirePermission('agent:write')
   @Get('agents')
@@ -822,6 +856,20 @@ export class ControlPlaneController {
   @Get('analytics/costs')
   analyticsCosts() {
     return this.aios.costBreakdown();
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Get('reports/explorer')
+  reportExplorer() {
+    return this.platform.reportExplorer();
+  }
+  @RequirePermission('reports:read', 'ANALYTICS')
+  @Post('analytics/copilot')
+  async intelligenceCopilot(@Body() body: unknown) {
+    const result = await this.intelligenceRouting.adviseOperator(
+      IntelligenceAdviceSchema.parse(body),
+    );
+    if (!result.ok) return result;
+    return result;
   }
   @RequirePermission('reports:read', 'ANALYTICS')
   @Get('reports')

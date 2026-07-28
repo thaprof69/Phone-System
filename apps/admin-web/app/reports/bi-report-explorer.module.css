@@ -1,0 +1,342 @@
+.workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.controlBand {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.controlHeader,
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.controlHeader {
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.controlHeader h2,
+.sectionHeader h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.exportActions,
+.periods,
+.tabs,
+.activeFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.exportButton,
+.periodButton,
+.tabButton,
+.clearButton {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-surface),
+    transform 180ms ease;
+}
+
+.exportButton:hover,
+.periodButton:hover,
+.tabButton:hover,
+.clearButton:hover {
+  border-color: var(--forest);
+  box-shadow: 0 8px 18px rgb(20 42 35 / 8%);
+  transform: translateY(-1px);
+}
+
+.periodButtonActive,
+.tabButtonActive {
+  border-color: var(--forest);
+  background: var(--forest-solid);
+  color: white;
+}
+
+.periodRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.4fr) repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.input,
+.select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0 11px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--focus);
+  outline: 2px solid color-mix(in srgb, var(--focus) 25%, transparent);
+  outline-offset: 1px;
+}
+
+.customDates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 0 18px 16px;
+}
+
+.filterFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+}
+
+.filterSummary {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--forest-soft);
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.analysisToolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analysisControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 220px));
+  gap: 12px;
+}
+
+.view {
+  display: grid;
+  gap: 18px;
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.8fr);
+  gap: 18px;
+}
+
+.chartPanel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  padding: 18px;
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-surface);
+}
+
+.chartPanel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.chartPanel > p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tablePanel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-surface);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  background: var(--canvas);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.table th,
+.table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr {
+  transition:
+    background-color var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.table tbody tr:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 3px 0 var(--forest);
+}
+
+.table a {
+  color: var(--forest);
+  font-weight: 700;
+}
+
+.number {
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.empty {
+  padding: 42px 20px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.evidenceNote {
+  border-left: 3px solid var(--forest);
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1200px) {
+  .filters {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .controlHeader,
+  .periodRow,
+  .filterFooter,
+  .analysisToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filters,
+  .analysisControls,
+  .customDates,
+  .chartGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (hover: hover) {
+  .controlBand:hover,
+  .chartPanel:hover,
+  .tablePanel:hover {
+    border-color: var(--line);
+    box-shadow: var(--shadow-raised);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exportButton,
+  .periodButton,
+  .tabButton,
+  .clearButton,
+  .controlBand,
+  .chartPanel,
+  .tablePanel,
+  .table tbody tr {
+    transition: none;
+  }
+
+  .exportButton:hover,
+  .periodButton:hover,
+  .tabButton:hover,
+  .clearButton:hover {
+    transform: none;
+  }
+}

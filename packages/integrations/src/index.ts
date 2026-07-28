@@ -109,6 +109,204 @@ export interface MessagingPort {
   }): Promise<Result<{ providerMessageId: string; status: 'QUEUED' }>>;
 }
 
+export type CommunicationsDeliveryResult =
+  | {
+      status: 'ACCEPTED';
+      providerMessageId: string;
+      provider: 'GMAIL' | 'WHATSAPP_CLOUD';
+    }
+  | {
+      status: 'NOT_CONFIGURED' | 'REJECTED' | 'TEMPORARILY_UNAVAILABLE';
+      code: string;
+      detail: string;
+    };
+
+export interface EmailAlertInput {
+  to: string;
+  subject: string;
+  text: string;
+  idempotencyKey: string;
+}
+
+/**
+ * Gmail's REST boundary. OAuth tokens are supplied by server-side credential
+ * management and never accepted from, or returned to, browser code.
+ */
+export class GmailAlertAdapter {
+  constructor(
+    private readonly configuration: {
+      accessToken?: string;
+      sender?: string;
+      userId?: string;
+    },
+  ) {}
+
+  readiness() {
+    return {
+      provider: 'GMAIL' as const,
+      status:
+        this.configuration.accessToken && this.configuration.sender
+          ? ('CONFIGURED' as const)
+          : ('NOT_CONFIGURED' as const),
+      sender: this.configuration.sender ?? null,
+      auth: 'OAUTH_2' as const,
+      requiredScopes: ['https://www.googleapis.com/auth/gmail.send'],
+      supports: ['SEND_ALERT', 'CREATE_DRAFT'] as const,
+    };
+  }
+
+  async send(input: EmailAlertInput): Promise<CommunicationsDeliveryResult> {
+    if (!this.configuration.accessToken || !this.configuration.sender)
+      return {
+        status: 'NOT_CONFIGURED',
+        code: 'GMAIL_CREDENTIALS_REQUIRED',
+        detail: 'Gmail OAuth credentials and an approved sender mailbox are required.',
+      };
+
+    const mime = [
+      `From: ${this.configuration.sender}`,
+      `To: ${input.to}`,
+      `Subject: ${input.subject.replaceAll(/[\r\n]/g, ' ')}`,
+      'Content-Type: text/plain; charset=UTF-8',
+      `X-Quantum-Parks-Idempotency-Key: ${input.idempotencyKey}`,
+      '',
+      input.text,
+    ].join('\r\n');
+
+    try {
+      const response = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/${encodeURIComponent(this.configuration.userId ?? 'me')}/messages/send`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.configuration.accessToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ raw: Buffer.from(mime).toString('base64url') }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as { id?: string };
+      if (!response.ok || !payload.id)
+        return {
+          status: response.status >= 500 ? 'TEMPORARILY_UNAVAILABLE' : 'REJECTED',
+          code: `GMAIL_HTTP_${response.status}`,
+          detail: 'Gmail did not accept the alert message.',
+        };
+      return { status: 'ACCEPTED', providerMessageId: payload.id, provider: 'GMAIL' };
+    } catch {
+      return {
+        status: 'TEMPORARILY_UNAVAILABLE',
+        code: 'GMAIL_UNAVAILABLE',
+        detail: 'Gmail could not be reached.',
+      };
+    }
+  }
+}
+
+export interface WhatsAppAlertInput {
+  to: string;
+  templateName: string;
+  languageCode: string;
+  parameters: string[];
+  idempotencyKey: string;
+}
+
+/** Meta WhatsApp Cloud API boundary for approved operational templates. */
+export class WhatsAppCloudAlertAdapter {
+  constructor(
+    private readonly configuration: {
+      accessToken?: string;
+      phoneNumberId?: string;
+      businessAccountId?: string;
+      graphVersion?: string;
+    },
+  ) {}
+
+  readiness() {
+    return {
+      provider: 'WHATSAPP_CLOUD' as const,
+      status:
+        this.configuration.accessToken &&
+        this.configuration.phoneNumberId &&
+        this.configuration.businessAccountId
+          ? ('CONFIGURED' as const)
+          : ('NOT_CONFIGURED' as const),
+      phoneNumberId: this.configuration.phoneNumberId ?? null,
+      businessAccountId: this.configuration.businessAccountId ?? null,
+      auth: 'SYSTEM_USER_ACCESS_TOKEN' as const,
+      supports: ['SEND_APPROVED_TEMPLATE', 'DELIVERY_WEBHOOK', 'INBOUND_WEBHOOK'] as const,
+    };
+  }
+
+  async sendTemplate(input: WhatsAppAlertInput): Promise<CommunicationsDeliveryResult> {
+    if (
+      !this.configuration.accessToken ||
+      !this.configuration.phoneNumberId ||
+      !this.configuration.businessAccountId
+    )
+      return {
+        status: 'NOT_CONFIGURED',
+        code: 'WHATSAPP_CREDENTIALS_REQUIRED',
+        detail: 'A Meta access token, business account and phone number are required.',
+      };
+    if (!input.templateName)
+      return {
+        status: 'REJECTED',
+        code: 'WHATSAPP_TEMPLATE_REQUIRED',
+        detail: 'Business-initiated alerts require an approved WhatsApp template.',
+      };
+
+    try {
+      const version = this.configuration.graphVersion ?? 'v23.0';
+      const response = await fetch(
+        `https://graph.facebook.com/${version}/${encodeURIComponent(this.configuration.phoneNumberId)}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.configuration.accessToken}`,
+            'content-type': 'application/json',
+            'x-idempotency-key': input.idempotencyKey,
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: input.to,
+            type: 'template',
+            template: {
+              name: input.templateName,
+              language: { code: input.languageCode },
+              components: input.parameters.length
+                ? [
+                    {
+                      type: 'body',
+                      parameters: input.parameters.map((text) => ({ type: 'text', text })),
+                    },
+                  ]
+                : [],
+            },
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        messages?: Array<{ id?: string }>;
+      };
+      const id = payload.messages?.[0]?.id;
+      if (!response.ok || !id)
+        return {
+          status: response.status >= 500 ? 'TEMPORARILY_UNAVAILABLE' : 'REJECTED',
+          code: `WHATSAPP_HTTP_${response.status}`,
+          detail: 'WhatsApp Cloud API did not accept the alert template.',
+        };
+      return { status: 'ACCEPTED', providerMessageId: id, provider: 'WHATSAPP_CLOUD' };
+    } catch {
+      return {
+        status: 'TEMPORARILY_UNAVAILABLE',
+        code: 'WHATSAPP_UNAVAILABLE',
+        detail: 'WhatsApp Cloud API could not be reached.',
+      };
+    }
+  }
+}
+
 export class DeterministicCustomerAdapter implements CustomerPort {
   async matchCaller(e164: string): Promise<CallerMatch> {
     if (e164 === '+351910000001')

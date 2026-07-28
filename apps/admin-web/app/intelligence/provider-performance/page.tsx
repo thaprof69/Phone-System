@@ -9,6 +9,7 @@ import {
 } from '@quantum-parks/ui';
 import { DomainPage, LoadFailure } from '../../domain-page';
 import { apiGet } from '../../../lib/api';
+import { IntelligenceDetailExplorer, type DetailRow } from '../detail-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,6 +126,30 @@ export default async function ProviderPerformancePage() {
   const { byProvider, byModel, byCapability } = response.data;
   const totalRuns = byProvider.reduce((sum, row) => sum + row.executionCount, 0);
   const tableColumns = columns();
+  const visualRows: DetailRow[] = [
+    ...byProvider.map((row) => ({ ...row, group: 'Provider' })),
+    ...byModel.map((row) => ({ ...row, group: 'Model' })),
+    ...byCapability.map((row) => ({ ...row, group: 'Capability' })),
+  ].map((row) => ({
+    id: `${row.group}-${row.key}`,
+    label: row.label,
+    subtitle: `${row.group} · ${formatNumber(row.executionCount)} executions`,
+    href: '/settings/ai-routing/executions',
+    metrics: {
+      runs: row.executionCount,
+      success: row.successRate,
+      latency: row.averageLatencyMs,
+      p95: row.p95LatencyMs,
+      fallback: row.fallbackRate,
+      failures: row.failureCount,
+      retries: row.retryCount,
+    },
+    evidence: [
+      { label: 'Cohort type', value: row.group },
+      { label: 'Timeouts', value: formatNumber(row.timeoutCount) },
+      { label: 'Schema failures', value: formatNumber(row.schemaValidationFailures) },
+    ],
+  }));
 
   return (
     <DomainPage
@@ -133,6 +158,24 @@ export default async function ProviderPerformancePage() {
       description="Execution health of the AI providers, models and capabilities enriching calls after they end. Every figure traces back to the same execution runs Settings → AI Routing → Execution history lists."
       meta={<StatusPill tone="neutral">{formatNumber(totalRuns)} runs</StatusPill>}
     >
+      <IntelligenceDetailExplorer
+        eyebrow="Runtime investigation"
+        title="Compare provider, model, and capability health"
+        description="Switch measures to find reliability, latency, fallback, or validation pressure."
+        rows={visualRows}
+        metrics={[
+          { key: 'runs', label: 'Execution volume', format: 'number' },
+          { key: 'success', label: 'Success rate', format: 'percent', higherIsBetter: true },
+          { key: 'latency', label: 'Average latency', format: 'milliseconds' },
+          { key: 'p95', label: 'p95 latency', format: 'milliseconds' },
+          { key: 'fallback', label: 'Fallback rate', format: 'percent' },
+          { key: 'failures', label: 'Failures', format: 'number' },
+          { key: 'retries', label: 'Retries', format: 'number' },
+        ]}
+        sourceHref="/settings/ai-routing/executions"
+        sourceLabel="Execution history"
+      />
+
       <Panel title="By provider" eyebrow="Connection-level health">
         <DataTable
           caption="Provider execution health: runs, success rate, latency, fallback, timeouts and failures"

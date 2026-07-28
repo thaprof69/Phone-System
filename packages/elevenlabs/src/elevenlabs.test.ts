@@ -2,9 +2,65 @@ import { describe, expect, it } from 'vitest';
 import {
   HttpElevenLabsAdapter,
   parsePostCallWebhook,
+  projectElevenLabsAgentConfiguration,
   signWebhook,
+  toElevenLabsAgentConfiguration,
   verifyWebhookSignature,
 } from './index.js';
+
+describe('ElevenLabs agent configuration mapping', () => {
+  it('maps the approved local fields into the official conversation_config shape', () => {
+    const mapped = toElevenLabsAgentConfiguration({
+      systemPrompt: 'You are the receptionist.',
+      businessInstructions: 'Offer accessibility guidance.',
+      disclosure: 'This call is handled by an automated assistant.',
+      policyFragments: ['Never collect card data.'],
+      firstMessage: 'Hello, how can I help?',
+      defaultLanguage: 'en',
+    });
+
+    expect(mapped).toEqual({
+      conversation_config: {
+        agent: {
+          prompt: {
+            prompt:
+              'You are the receptionist.\n\nBusiness instructions:\nOffer accessibility guidance.\n\nRequired disclosure:\nThis call is handled by an automated assistant.\n\nMandatory policies:\n- Never collect card data.',
+          },
+          first_message: 'Hello, how can I help?',
+          language: 'en',
+        },
+      },
+    });
+  });
+
+  it('projects provider-owned defaults out of the read-back comparison', () => {
+    const expected = {
+      conversation_config: {
+        agent: {
+          prompt: { prompt: 'Approved prompt' },
+          first_message: 'Hello',
+          language: 'en',
+        },
+      },
+    };
+    expect(
+      projectElevenLabsAgentConfiguration(
+        {
+          agent_id: 'agent-1',
+          conversation_config: {
+            agent: {
+              prompt: { prompt: 'Approved prompt', llm: 'provider-default' },
+              first_message: 'Hello',
+              language: 'en',
+            },
+            tts: { voice_id: 'provider-owned' },
+          },
+        },
+        expected,
+      ),
+    ).toEqual(expected);
+  });
+});
 
 describe('ElevenLabs webhook verification', () => {
   it('validates t/v0 HMAC over timestamp.rawBody', () => {

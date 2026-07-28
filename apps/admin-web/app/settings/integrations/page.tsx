@@ -102,8 +102,8 @@ export default async function IntegrationsPage() {
       status: 'NOT_CONFIGURED',
       configured: false,
       lastVerifiedAt: null,
-      href: '/calls/messages',
-      note: 'Adapter not installed. Message records exist; delivery is simulated.',
+      href: '/settings/communications',
+      note: 'Configure shared email and WhatsApp identities centrally for alerts and future digital receptionists.',
     },
   ];
 

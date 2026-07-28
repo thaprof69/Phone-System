@@ -1,6 +1,8 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
+  agentConfigVersions,
+  agentDeployments,
   elevenLabsDiagnosticRuns,
   elevenLabsMediaVerifications,
   encryptedProviderCredentials,
@@ -9,7 +11,12 @@ import {
   providerWorkspaces,
   readinessEvaluations,
 } from '@quantum-parks/db';
-import { HttpElevenLabsAdapter } from '@quantum-parks/elevenlabs';
+import {
+  canonicalProviderChecksum,
+  HttpElevenLabsAdapter,
+  projectElevenLabsAgentConfiguration,
+  toElevenLabsAgentConfiguration,
+} from '@quantum-parks/elevenlabs';
 import type { Principal } from '@quantum-parks/auth';
 import { DatabaseService } from './database.service.js';
 import { AuditService } from './audit.service.js';
@@ -81,11 +88,56 @@ export class ElevenLabsIntegrationService {
     private readonly audit: AuditService,
   ) {}
 
-  private baseUrl(environment: IntegrationEnvironment): string {
-    if (environment === 'PRODUCTION') return 'https://api.elevenlabs.io';
-    if ((process.env.QP_ENVIRONMENT ?? 'development') === 'production')
-      return 'https://api.elevenlabs.io';
-    return process.env.ELEVENLABS_SANDBOX_BASE_URL ?? 'http://localhost:4100';
+  /** Runtime provider operations always use the live ElevenLabs service. */
+  usingSimulator(_environment: IntegrationEnvironment): boolean {
+    return false;
+  }
+
+  /** The single runtime origin used by validation, publication, and live sessions. */
+  baseUrl(_environment: IntegrationEnvironment): string {
+    return 'https://api.elevenlabs.io';
+  }
+
+  /** Names the host actually contacted, so no message can imply the wrong origin. */
+  private providerOrigin(_environment: IntegrationEnvironment): string {
+    return 'ElevenLabs';
+  }
+
+  /**
+   * Maps a provider failure onto the operator-facing vocabulary. `context` distinguishes
+   * a credential check from an agent lookup, because the same HTTP status means different
+   * things at each step.
+   */
+  private failureMessage(
+    code: string,
+    context: 'CREDENTIAL' | 'AGENT',
+    environment: IntegrationEnvironment,
+    providerMessage?: string,
+  ): string {
+    const origin = this.providerOrigin(environment);
+    switch (code) {
+      case 'EL_MISSING_PERMISSION':
+        // The provider names the exact permission; repeating it is what makes this fixable.
+        return `${providerMessage ?? 'The API key is missing a required permission.'} Add it to the key in the ElevenLabs dashboard, then test again.`;
+      case 'EL_AUTH':
+        return 'Invalid API key.';
+      case 'EL_FORBIDDEN':
+        return context === 'AGENT'
+          ? 'Insufficient permissions to read this agent with the stored API key.'
+          : 'Insufficient permissions for this API key.';
+      case 'EL_NOT_FOUND':
+        return context === 'AGENT'
+          ? `Agent not found. ${origin} does not expose this agent to the stored API key — it does not exist, or it belongs to a different workspace.`
+          : `The requested object was not found on ${origin}.`;
+      case 'EL_RATE_LIMIT':
+        return `${origin} rate limit reached. Try again shortly.`;
+      case 'EL_TIMEOUT':
+      case 'EL_NETWORK':
+      case 'EL_UNAVAILABLE':
+        return `Unable to reach ${origin}.`;
+      default:
+        return `${origin} rejected the request.`;
+    }
   }
 
   private enforceValidationLimit(actorId: string) {
@@ -113,7 +165,9 @@ export class ElevenLabsIntegrationService {
   }
 
   private providerFailureStatus(code: string): IntegrationConnectionStatus {
-    if (code === 'EL_AUTH' || code === 'EL_FORBIDDEN') return 'INVALID_CREDENTIALS';
+    // A key that authenticates but lacks a scope is not an invalid credential.
+    if (code === 'EL_MISSING_PERMISSION' || code === 'EL_FORBIDDEN') return 'DEGRADED';
+    if (code === 'EL_AUTH') return 'INVALID_CREDENTIALS';
     if (code === 'EL_RATE_LIMIT') return 'RATE_LIMITED';
     if (code === 'EL_TIMEOUT' || code === 'EL_NETWORK' || code === 'EL_UNAVAILABLE')
       return 'PROVIDER_UNAVAILABLE';
@@ -123,44 +177,58 @@ export class ElevenLabsIntegrationService {
   async testConnection(input: TestInput, principal: Principal): Promise<TestConnectionResult> {
     this.enforceValidationLimit(principal.subject);
     const provider = this.adapter(input.apiKey, input.environment);
-    const workspace = await provider.getWorkspace();
-    if (workspace.status !== 'SUCCESS') {
-      const status = this.providerFailureStatus(workspace.error.code);
+
+    /*
+     * Validate against the capability this product actually uses, not `/v1/user`.
+     *
+     * ElevenLabs supports scope-restricted API keys. A key scoped for Conversational AI —
+     * exactly the key an operator should issue for this platform — returns 401 on
+     * `/v1/user` while working correctly for `/v1/convai/*`. Gating validation on
+     * `/v1/user` therefore rejected valid keys as "Invalid API key". The ConvAI agent
+     * listing is now the authority; `/v1/user` is consulted only for workspace identity
+     * and is allowed to fail without failing the connection.
+     */
+    const agents = await provider.listAgents();
+    if (agents.status !== 'SUCCESS') {
+      const status = this.providerFailureStatus(agents.error.code);
       await this.auditAction(principal, 'ELEVENLABS_CONNECTION_TESTED', 'ephemeral', status, {
         environment: input.environment,
-        errorCode: workspace.error.code,
+        errorCode: agents.error.code,
       });
       return {
         status,
         verified: false,
-        message:
-          status === 'INVALID_CREDENTIALS'
-            ? 'The credential was rejected or does not have the required scope.'
-            : workspace.error.safeMessage,
+        message: this.failureMessage(
+          agents.error.code,
+          'CREDENTIAL',
+          input.environment,
+          agents.error.safeMessage,
+        ),
       };
     }
-    const [agents, voices, capabilities] = await Promise.all([
-      provider.listAgents(),
+
+    const [workspaceResult, voices, capabilities] = await Promise.all([
+      provider.getWorkspace(),
       provider.listVoices(),
       provider.getCapabilities(),
     ]);
-    const failed = [agents, voices].find((result) => result.status !== 'SUCCESS');
-    if (failed) {
-      const status = this.providerFailureStatus(failed.error.code);
-      await this.auditAction(
-        principal,
-        'ELEVENLABS_CONNECTION_TESTED',
-        workspace.data.workspaceId,
-        status,
-        {
-          environment: input.environment,
-          errorCode: failed.error.code,
-        },
-      );
-      return { status, verified: false, message: failed.error.safeMessage };
-    }
+
+    // A key without `user_read` still identifies a real workspace; record that honestly
+    // rather than inventing an id or rejecting the credential.
+    const workspace =
+      workspaceResult.status === 'SUCCESS'
+        ? workspaceResult.data
+        : { workspaceId: 'convai-scoped-key', subscription: undefined };
+
+    /*
+     * Voice listing is informational and needs the separate `voices_read` scope, which a
+     * ConvAI-scoped key legitimately lacks. It reports a count, so a failure here must not
+     * fail the connection — it is recorded as an unknown count instead.
+     */
+    const voicesReadable = voices.status === 'SUCCESS';
+
     const agentCount = agents.status === 'SUCCESS' ? agents.data.length : 0;
-    const voiceCount = voices.status === 'SUCCESS' ? voices.data.length : 0;
+    const voiceCount = voicesReadable ? voices.data.length : 0;
 
     let verifiedAgent: { id: string; name: string | null } | undefined;
     if (input.defaultAgentId) {
@@ -169,14 +237,19 @@ export class ElevenLabsIntegrationService {
         await this.auditAction(
           principal,
           'ELEVENLABS_CONNECTION_TESTED',
-          workspace.data.workspaceId,
+          workspace.workspaceId,
           'AGENT_UNAVAILABLE',
           { environment: input.environment, agentId: input.defaultAgentId },
         );
         return {
           status: 'AGENT_UNAVAILABLE' as const,
           verified: false,
-          message: `The configured agent could not be retrieved from ElevenLabs: ${agent.error.safeMessage}`,
+          message: this.failureMessage(
+            agent.error.code,
+            'AGENT',
+            input.environment,
+            agent.error.safeMessage,
+          ),
         };
       }
       const name = agent.data.name;
@@ -189,7 +262,7 @@ export class ElevenLabsIntegrationService {
     await this.auditAction(
       principal,
       'ELEVENLABS_CONNECTION_TESTED',
-      workspace.data.workspaceId,
+      workspace.workspaceId,
       'CONNECTED',
       { environment: input.environment, agentCount, voiceCount, verifiedAgent },
     );
@@ -203,8 +276,8 @@ export class ElevenLabsIntegrationService {
       }),
       expiresInSeconds: 300,
       workspace: {
-        id: workspace.data.workspaceId,
-        subscription: workspace.data.subscription ?? null,
+        id: workspace.workspaceId,
+        subscription: workspace.subscription ?? null,
       },
       counts: { agents: agentCount, voices: voiceCount },
       capabilities,
@@ -247,7 +320,7 @@ export class ElevenLabsIntegrationService {
           provider: 'ELEVENLABS',
           environment: input.environment === 'PRODUCTION' ? 'production' : 'development',
           providerWorkspaceId: test.workspace.id,
-          region: input.environment === 'PRODUCTION' ? 'global' : 'simulator',
+          region: 'global',
           displayName: input.connectionLabel,
           verifiedAt: now,
           synthetic: input.environment === 'SANDBOX',
@@ -279,6 +352,7 @@ export class ElevenLabsIntegrationService {
       await tx.insert(encryptedProviderCredentials).values({
         ...encrypted,
         provider: 'ELEVENLABS',
+        lastFour: input.apiKey.slice(-4),
       });
       const [credentialReference] = await tx
         .insert(providerCredentialReferences)
@@ -344,7 +418,146 @@ export class ElevenLabsIntegrationService {
       voiceCount: test.counts.voices,
       credentialReference: this.safeCredentialReference(integration.credentialReference.id),
     });
-    return { ...(await this.status()), saved: true };
+    const providerMapping = await this.synchronizeActiveAgent(
+      integration.saved,
+      input.apiKey,
+      principal,
+    );
+    return { ...(await this.status()), saved: true, providerMapping };
+  }
+
+  /**
+   * Provider onboarding is complete only when the approved active release has been
+   * written to the selected ElevenLabs agent and read back successfully.
+   */
+  private async synchronizeActiveAgent(
+    integration: {
+      id: string;
+      workspaceId: string;
+      environment: IntegrationEnvironment;
+      defaultAgentId: string | null;
+    },
+    apiKey: string,
+    principal: Principal,
+  ) {
+    if (!integration.defaultAgentId)
+      return {
+        status: 'NOT_CONFIGURED' as const,
+        message: 'Choose and verify an ElevenLabs agent before starting a live test.',
+      };
+    const version = await this.database.db.query.agentConfigVersions.findFirst({
+      where: eq(agentConfigVersions.state, 'ACTIVE'),
+      orderBy: [desc(agentConfigVersions.createdAt)],
+    });
+    if (!version)
+      return {
+        status: 'NOT_CONFIGURED' as const,
+        message: 'There is no approved active receptionist release to publish.',
+      };
+    const workspace = await this.database.db.query.providerWorkspaces.findFirst({
+      where: eq(providerWorkspaces.id, integration.workspaceId),
+    });
+    if (!workspace)
+      return {
+        status: 'NOT_CONFIGURED' as const,
+        message: 'The verified provider workspace could not be resolved.',
+      };
+
+    const provider = this.adapter(apiKey, integration.environment);
+    const expected = toElevenLabsAgentConfiguration(version.configuration);
+    const localChecksum = canonicalProviderChecksum(expected);
+    const published = await provider.updateAgent(integration.defaultAgentId, undefined, expected);
+    if (published.status !== 'SUCCESS') {
+      await this.recordActiveDeployment({
+        versionId: version.id,
+        workspaceId: workspace.id,
+        environment: workspace.environment,
+        providerAgentId: integration.defaultAgentId,
+        localChecksum,
+        remoteChecksum: null,
+        syncState: 'PUBLISH_FAILED',
+      });
+      return { status: 'PUBLISH_FAILED' as const, message: published.error.safeMessage };
+    }
+
+    const readBack = await provider.getAgent(integration.defaultAgentId);
+    if (readBack.status !== 'SUCCESS') {
+      await this.recordActiveDeployment({
+        versionId: version.id,
+        workspaceId: workspace.id,
+        environment: workspace.environment,
+        providerAgentId: integration.defaultAgentId,
+        localChecksum,
+        remoteChecksum: null,
+        syncState: 'PUBLISH_FAILED',
+      });
+      return { status: 'PUBLISH_FAILED' as const, message: readBack.error.safeMessage };
+    }
+    const remoteChecksum = canonicalProviderChecksum(
+      projectElevenLabsAgentConfiguration(readBack.data, expected),
+    );
+    const synchronized = remoteChecksum === localChecksum;
+    await this.recordActiveDeployment({
+      versionId: version.id,
+      workspaceId: workspace.id,
+      environment: workspace.environment,
+      providerAgentId: integration.defaultAgentId,
+      localChecksum,
+      remoteChecksum,
+      syncState: synchronized ? 'IN_SYNC' : 'DRIFTED',
+    });
+    await this.auditAction(
+      principal,
+      'ELEVENLABS_ACTIVE_AGENT_SYNCHRONIZED',
+      integration.id,
+      synchronized ? 'IN_SYNC' : 'DRIFTED',
+      { agentVersionId: version.id, providerAgentId: integration.defaultAgentId },
+    );
+    return synchronized
+      ? { status: 'IN_SYNC' as const, agentVersionId: version.id }
+      : {
+          status: 'DRIFTED' as const,
+          message: 'ElevenLabs read-back did not match the approved receptionist configuration.',
+        };
+  }
+
+  private async recordActiveDeployment(input: {
+    versionId: string;
+    workspaceId: string;
+    environment: 'development' | 'staging' | 'production';
+    providerAgentId: string;
+    localChecksum: string;
+    remoteChecksum: string | null;
+    syncState: 'IN_SYNC' | 'DRIFTED' | 'PUBLISH_FAILED';
+  }) {
+    const existing = await this.database.db.query.agentDeployments.findFirst({
+      where: and(
+        eq(agentDeployments.agentVersionId, input.versionId),
+        eq(agentDeployments.workspaceId, input.workspaceId),
+      ),
+    });
+    const values = {
+      providerAgentId: input.providerAgentId,
+      localChecksum: input.localChecksum,
+      remoteChecksum: input.remoteChecksum,
+      syncState: input.syncState,
+      publishedAt: new Date(),
+      verifiedAt: input.remoteChecksum ? new Date() : null,
+      updatedAt: new Date(),
+    };
+    if (existing) {
+      await this.database.db
+        .update(agentDeployments)
+        .set(values)
+        .where(eq(agentDeployments.id, existing.id));
+      return;
+    }
+    await this.database.db.insert(agentDeployments).values({
+      agentVersionId: input.versionId,
+      workspaceId: input.workspaceId,
+      environment: input.environment,
+      ...values,
+    });
   }
 
   async status() {
@@ -369,6 +582,14 @@ export class ElevenLabsIntegrationService {
     const workspace = await this.database.db.query.providerWorkspaces.findFirst({
       where: eq(providerWorkspaces.id, integration.workspaceId),
     });
+    const storedSecret = reference
+      ? await this.database.db.query.encryptedProviderCredentials.findFirst({
+          where: and(
+            eq(encryptedProviderCredentials.secretReference, reference.secretReference),
+            isNull(encryptedProviderCredentials.revokedAt),
+          ),
+        })
+      : undefined;
     return {
       provider: 'ELEVENLABS' as const,
       status: integration.status,
@@ -377,6 +598,8 @@ export class ElevenLabsIntegrationService {
       environment: integration.environment,
       workspace: workspace ? { id: workspace.providerWorkspaceId, subscription: null } : null,
       credentialReference: this.safeCredentialReference(reference?.id),
+      /** Last four characters only — never the key itself. */
+      credentialLastFour: storedSecret?.lastFour ?? null,
       defaultAgentId: integration.defaultAgentId,
       defaultVoiceId: integration.defaultVoiceId,
       counts: { agents: integration.agentCount, voices: integration.voiceCount },
@@ -411,9 +634,21 @@ export class ElevenLabsIntegrationService {
       return {
         connected: false,
         agentVerified: false,
+        agentVersionId: null,
         latestDiagnosticsStatus: null,
         latestDiagnosticsAt: null,
       };
+    const [deployment] = await this.database.db
+      .select({ agentVersionId: agentDeployments.agentVersionId })
+      .from(agentDeployments)
+      .where(
+        and(
+          eq(agentDeployments.workspaceId, integration.workspaceId),
+          eq(agentDeployments.syncState, 'IN_SYNC'),
+        ),
+      )
+      .orderBy(desc(agentDeployments.publishedAt))
+      .limit(1);
     const [latestDiagnostics] = await this.database.db
       .select({
         status: elevenLabsDiagnosticRuns.status,
@@ -426,6 +661,7 @@ export class ElevenLabsIntegrationService {
     return {
       connected: integration.status === 'CONNECTED',
       agentVerified: Boolean(integration.defaultAgentId && integration.agentVerifiedAt),
+      agentVersionId: deployment?.agentVersionId ?? null,
       latestDiagnosticsStatus: latestDiagnostics?.status ?? null,
       latestDiagnosticsAt: latestDiagnostics?.checkedAt?.toISOString() ?? null,
     };
@@ -475,7 +711,11 @@ export class ElevenLabsIntegrationService {
           return {
             status: 'AGENT_UNAVAILABLE' as const,
             updated: false,
-            message: `The configured agent could not be retrieved from ElevenLabs: ${agent.error.safeMessage}`,
+            message: this.failureMessage(
+              agent.error.code,
+              'AGENT',
+              resolved.integration.environment,
+            ),
           };
         const name = agent.data.name;
         verifiedAgentName = typeof name === 'string' ? name : null;
@@ -507,7 +747,12 @@ export class ElevenLabsIntegrationService {
 
   async verifySaved(principal: Principal) {
     const resolved = await this.resolveActiveCredential();
-    if (!resolved) return { status: 'NOT_CONFIGURED' as const, verified: false };
+    if (!resolved)
+      return {
+        status: 'NOT_CONFIGURED' as const,
+        verified: false,
+        message: 'API key missing. No active credential is stored.',
+      };
     const test = await this.testConnection(
       {
         apiKey: resolved.apiKey,
@@ -553,7 +798,13 @@ export class ElevenLabsIntegrationService {
         test.status,
         {},
       );
-    return { ...(await this.status()), verified: test.verified };
+    // Carry the specific reason back: the banner must say "Invalid API key" or
+    // "Agent not found", never a generic "could not be verified".
+    return {
+      ...(await this.status()),
+      verified: test.verified,
+      ...(test.verified ? {} : { message: test.message }),
+    };
   }
 
   /**
@@ -737,11 +988,21 @@ export class ElevenLabsIntegrationService {
       where: eq(providerIntegrations.provider, 'ELEVENLABS'),
     });
     if (!current) return { status: 'NOT_CONFIGURED' as const, rotated: false };
+    /*
+     * Prefer the agent supplied with this rotation over the stored one.
+     *
+     * Re-validating against `current.defaultAgentId` deadlocked the page whenever the
+     * stored agent was wrong: the operator would enter a correct key and a corrected
+     * agent id, `/test` would pass against the new agent, then rotation would re-test
+     * against the stale agent, fail, and silently save nothing — leaving "Key not saved"
+     * next to a successful verification.
+     */
+    const rotationAgentId = input.defaultAgentId ?? current.defaultAgentId;
     const connected = await this.connect(
       {
         ...input,
         validationProof: input.validationProof,
-        ...(current.defaultAgentId ? { defaultAgentId: current.defaultAgentId } : {}),
+        ...(rotationAgentId ? { defaultAgentId: rotationAgentId } : {}),
         ...(current.defaultVoiceId ? { defaultVoiceId: current.defaultVoiceId } : {}),
         receptionistDisplayName: current.receptionistDisplayName,
         greetingOverride: current.greetingOverride,

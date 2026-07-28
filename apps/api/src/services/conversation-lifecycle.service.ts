@@ -19,6 +19,7 @@ import { DatabaseService } from './database.service.js';
 import { PlatformService } from './platform.service.js';
 import { QuantumResultService, type QuantumResult } from './quantum-result.service.js';
 import { AuditService } from './audit.service.js';
+import { WorkflowDispatchService } from './workflow-dispatch.service.js';
 
 type StartSessionInput = {
   agentVersionId: string;
@@ -48,6 +49,7 @@ export class ConversationLifecycleService {
     private readonly platform: PlatformService,
     private readonly quantumResult: QuantumResultService,
     private readonly audit: AuditService,
+    private readonly workflows: WorkflowDispatchService,
   ) {}
 
   async start(input: StartSessionInput) {
@@ -487,6 +489,12 @@ export class ConversationLifecycleService {
       .update(receptionistSessions)
       .set({ status: 'ENDED', endedAt: now, endReason: input.reason, updatedAt: now })
       .where(eq(receptionistSessions.id, sessionId));
+    if (session.conversationId) {
+      await this.database.db
+        .update(conversations)
+        .set({ endedAt: now, updatedAt: now })
+        .where(eq(conversations.id, session.conversationId));
+    }
 
     await this.audit.append({
       actorType: 'USER',
@@ -506,7 +514,14 @@ export class ConversationLifecycleService {
     await this.publish('ReceptionistSession', sessionId, 'TRANSCRIPT_FINALISED', {});
     await this.publish('ReceptionistSession', sessionId, 'CONVERSATION_COMPLETED', {});
 
-    return { status: 'ENDED' as const };
+    const processingQueued =
+      Boolean(session.conversationId && session.messageCount > 0) &&
+      (await this.workflows.dispatchPostCall({
+        conversationId: session.conversationId!,
+        workflowId: `finalize-receptionist-${session.conversationId}`,
+      }));
+
+    return { status: 'ENDED' as const, processingQueued };
   }
 
   private async publish(

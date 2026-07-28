@@ -56,7 +56,9 @@ for (const absolute of await files(root)) {
   const isAiosAdapter = path.startsWith('packages/aios-adapters/');
   const isFitnessRule = path === 'scripts/architecture-check.ts';
   const isHostedAiosImplementation =
-    path === 'apps/api/src/services/aios-platform.service.ts' || path.startsWith('packages/aios/');
+    path === 'apps/api/src/services/aios-platform.service.ts' ||
+    path === 'apps/api/src/services/intelligence-routing.service.ts' ||
+    path.startsWith('packages/aios/');
   if (!isAiosAdapter && !isFitnessRule) {
     if (/api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com/.test(content))
       violations.push(`${path}: direct AI provider HTTP use is forbidden outside AIOS adapters`);

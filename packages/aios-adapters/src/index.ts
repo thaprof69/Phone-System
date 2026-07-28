@@ -484,3 +484,9 @@ export class SimulatorIntelligenceProvider implements IntelligenceProvider {
     };
   }
 }
+
+export * from './intelligence/contract.js';
+export * from './intelligence/openai-compatible.js';
+export * from './intelligence/anthropic.js';
+export * from './intelligence/gemini.js';
+export * from './intelligence/registry.js';

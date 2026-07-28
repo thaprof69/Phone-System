@@ -1,0 +1,1 @@
+ALTER TABLE "encrypted_provider_credentials" ADD COLUMN "last_four" text;

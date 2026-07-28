@@ -1,6 +1,8 @@
+import Link from 'next/link';
 import {
   DataTable,
   EmptyState,
+  Panel,
   StatusPill,
   formatNumber,
   formatRelativeTime,
@@ -10,6 +12,7 @@ import {
 import { DomainPage, LoadFailure } from '../domain-page';
 import { apiGet } from '../../lib/api';
 import { ReportScheduleToggle, RunReportButton } from './report-actions';
+import { BiReportExplorer, type ReportRow } from './bi-report-explorer';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,18 +46,26 @@ function describeSchedule(schedule: string): string {
 }
 
 export default async function ScheduledReportsPage() {
-  const response = await apiGet<{ definitions: Definition[]; runs: Run[] }>('/reports', {
-    purpose: 'ANALYTICS',
-  });
+  const [response, explorer] = await Promise.all([
+    apiGet<{ definitions: Definition[]; runs: Run[] }>('/reports', {
+      purpose: 'ANALYTICS',
+    }),
+    apiGet<{ generatedAt: string; items: ReportRow[] }>('/reports/explorer', {
+      purpose: 'ANALYTICS',
+    }),
+  ]);
 
-  if (!response.ok) {
+  if (!response.ok || !explorer.ok) {
     return (
       <DomainPage
         eyebrow="Reports"
-        title="Scheduled reports"
-        description="Report definitions, their schedule and classification."
+        title="Business Intelligence"
+        description="Explore call operations, outcomes, demand, customer signals and agent performance."
       >
-        <LoadFailure subject="Reports" reason={response.reason} />
+        <LoadFailure
+          subject="Reports"
+          reason={response.ok ? (explorer.ok ? 'UNKNOWN' : explorer.reason) : response.reason}
+        />
       </DomainPage>
     );
   }
@@ -137,22 +148,39 @@ export default async function ScheduledReportsPage() {
   return (
     <DomainPage
       eyebrow="Reports"
-      title="Scheduled reports"
-      description="Classification governs masking and who a report can be delivered to."
-      meta={<StatusPill tone="neutral">{formatNumber(definitions.length)} definitions</StatusPill>}
+      title="Business Intelligence"
+      description="Slice, compare and export canonical call intelligence across every operational dimension."
+      meta={
+        <StatusPill tone="neutral">
+          {formatNumber(explorer.data.items.length)} canonical calls
+        </StatusPill>
+      }
+      actions={
+        <Link className="button secondary small" href="/reports/history">
+          Run history
+        </Link>
+      }
     >
-      <DataTable
-        caption="Report definitions with their schedule, classification and run history"
-        columns={columns}
-        rows={definitions}
-        getRowKey={(definition) => definition.id}
-        empty={
-          <EmptyState
-            title="No reports defined"
-            detail="A report definition sets its schedule, recipients, filters and masking."
-          />
-        }
-      />
+      <BiReportExplorer generatedAt={explorer.data.generatedAt} initialRows={explorer.data.items} />
+
+      <Panel
+        eyebrow="Scheduled delivery"
+        title="Managed report definitions"
+        description="Classification governs masking and who a recurring report can be delivered to."
+      >
+        <DataTable
+          caption="Report definitions with their schedule, classification and run history"
+          columns={columns}
+          rows={definitions}
+          getRowKey={(definition) => definition.id}
+          empty={
+            <EmptyState
+              title="No reports defined"
+              detail="A report definition sets its schedule, recipients, filters and masking."
+            />
+          }
+        />
+      </Panel>
     </DomainPage>
   );
 }

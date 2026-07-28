@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { AgentConversationConfigurationSchema, composeRuntimePrompt } from '@quantum-parks/domain';
 import {
   agentConfigVersions,
+  callClassifications,
+  callSummaries,
+  conversations,
+  intelligenceModels,
+  intelligenceRoutes,
   knowledgeAssets,
   knowledgeVersions,
   receptionistSessions,
@@ -9,8 +14,43 @@ import {
   voiceAgents,
 } from '@quantum-parks/db';
 import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { SummarySchema } from '@quantum-parks/intelligence';
 import { DatabaseService } from './database.service.js';
 import { QuantumResultService } from './quantum-result.service.js';
+
+export type CallIntelligenceStatus = 'WAITING' | 'PROVISIONAL' | 'ANALYSING' | 'READY' | 'PARTIAL';
+
+export function deriveCallIntelligenceStatus(input: {
+  hasSummary: boolean;
+  hasClassification: boolean;
+  sessionEnded: boolean;
+  processingFinished: boolean;
+  hasProvisionalResult: boolean;
+}): CallIntelligenceStatus {
+  if (input.hasSummary && input.hasClassification) return 'READY';
+  if (input.sessionEnded && !input.processingFinished) return 'ANALYSING';
+  if (input.processingFinished) return 'PARTIAL';
+  if (input.hasProvisionalResult) return 'PROVISIONAL';
+  return 'WAITING';
+}
+
+export function deriveSummaryIssue(input: {
+  hasSummary: boolean;
+  processingFinished: boolean;
+  primaryModel?: { enabled: boolean; status: string } | null;
+  fallbackModel?: { enabled: boolean; status: string } | null;
+}): string | null {
+  if (input.hasSummary || !input.processingFinished) return null;
+  const usable = (model: { enabled: boolean; status: string } | null | undefined) =>
+    Boolean(model?.enabled && model.status === 'CONNECTED');
+  if (!input.primaryModel && !input.fallbackModel) {
+    return 'No AI Router model is assigned to Transcript Summaries.';
+  }
+  if (!usable(input.primaryModel) && !usable(input.fallbackModel)) {
+    return 'The AI Router model selected for Transcript Summaries is not connected and tested.';
+  }
+  return 'The selected AI Router model did not return a valid transcript summary.';
+}
 
 /**
  * Read-side access to `ReceptionistSession` rows. All orchestration/mutation (start a session,
@@ -38,11 +78,104 @@ export class ReceptionistSessionService {
           .where(eq(transcriptTurns.revisionId, session.transcriptRevisionId))
           .orderBy(transcriptTurns.sequence)
       : [];
-    const quantumResult =
+    const provisionalResult =
       session.latestAnalysisArtifactId && session.conversationId
         ? await this.quantumResult.resolve(session.latestAnalysisArtifactId, session.conversationId)
         : null;
-    return { session, turns, quantumResult };
+    if (!session.conversationId) {
+      return {
+        session,
+        turns,
+        quantumResult: provisionalResult,
+        callIntelligence: {
+          status: 'WAITING' as const,
+          summary: null,
+          callerRequests: [],
+          unresolvedItems: [],
+          sentiment: null,
+          classification: null,
+          urgency: null,
+          confidence: null,
+          evidenceCoverage: null,
+          intelligenceState: null,
+          summaryIssue: null,
+        },
+      };
+    }
+
+    const [conversation, summaryRow, classification, summaryRoute] = await Promise.all([
+      this.database.db.query.conversations.findFirst({
+        where: eq(conversations.id, session.conversationId),
+      }),
+      this.database.db.query.callSummaries.findFirst({
+        where: eq(callSummaries.conversationId, session.conversationId),
+        orderBy: (table, { desc: descending }) => [descending(table.revision)],
+      }),
+      this.database.db.query.callClassifications.findFirst({
+        where: eq(callClassifications.conversationId, session.conversationId),
+        orderBy: (table, { desc: descending }) => [descending(table.revision)],
+      }),
+      this.database.db.query.intelligenceRoutes.findFirst({
+        where: eq(intelligenceRoutes.capability, 'TRANSCRIPT_SUMMARY'),
+      }),
+    ]);
+    const routedModelIds = [summaryRoute?.primaryModelId, summaryRoute?.fallbackModelId].filter(
+      (value): value is string => Boolean(value),
+    );
+    const routedModels = routedModelIds.length
+      ? await this.database.db
+          .select()
+          .from(intelligenceModels)
+          .where(inArray(intelligenceModels.id, routedModelIds))
+      : [];
+    const modelById = new Map(routedModels.map((model) => [model.id, model]));
+    const finalResult = classification?.aiArtifactId
+      ? await this.quantumResult.resolve(classification.aiArtifactId, session.conversationId)
+      : null;
+    const quantumResult = finalResult ?? provisionalResult;
+    const parsedSummary = summaryRow ? SummarySchema.safeParse(summaryRow.summary) : null;
+    const summary = parsedSummary?.success ? parsedSummary.data : null;
+    const processingFinished = ['COMPLETED', 'PARTIAL', 'FAILED_FINAL'].includes(
+      conversation?.processingState ?? '',
+    );
+
+    return {
+      session,
+      turns,
+      quantumResult,
+      callIntelligence: {
+        status: deriveCallIntelligenceStatus({
+          hasSummary: Boolean(summaryRow),
+          hasClassification: Boolean(classification),
+          sessionEnded: session.status === 'ENDED',
+          processingFinished,
+          hasProvisionalResult: Boolean(quantumResult),
+        }),
+        summary: summary?.purpose.text ?? null,
+        callerRequests: summary?.caller_requests.map((claim) => claim.text) ?? [],
+        unresolvedItems: summary?.unresolved_items.map((claim) => claim.text) ?? [],
+        sentiment: quantumResult?.sentiment ?? null,
+        classification: classification?.primaryIntent ?? quantumResult?.intent ?? null,
+        urgency: quantumResult?.urgency ?? null,
+        confidence: classification ? Number(classification.confidence) : quantumResult?.confidence,
+        evidenceCoverage: summaryRow ? Number(summaryRow.evidenceCoverage) : null,
+        intelligenceState: finalResult
+          ? ('FINAL' as const)
+          : quantumResult
+            ? quantumResult.intelligenceState
+            : null,
+        summaryIssue: deriveSummaryIssue({
+          hasSummary: Boolean(summaryRow),
+          processingFinished,
+          primaryModel: summaryRoute?.primaryModelId
+            ? (modelById.get(summaryRoute.primaryModelId) ?? null)
+            : null,
+          fallbackModel: summaryRoute?.fallbackModelId
+            ? (modelById.get(summaryRoute.fallbackModelId) ?? null)
+            : null,
+        }),
+      },
+    };
   }
 
   async listRecentSessions(limit = 8) {

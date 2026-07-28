@@ -1,9 +1,11 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity,
+  BellRing,
   ChartNoAxesCombined,
   FileText,
   Gauge,
@@ -12,11 +14,13 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
-import { DOMAINS, areaForPath, domainForPath, settingsGroupForPath } from './navigation';
+import { DOMAINS, domainForPath } from './navigation';
+import { ThemeToggle } from './theme-toggle';
 
 const ICONS: Record<string, LucideIcon> = {
   Gauge,
   Activity,
+  BellRing,
   ChartNoAxesCombined,
   FileText,
   Settings,
@@ -31,16 +35,13 @@ const ICONS: Record<string, LucideIcon> = {
  */
 export function AppShell({
   children,
-  environmentLabel = 'Development · simulator',
+  environmentLabel = 'Development · live ElevenLabs',
 }: {
   children: React.ReactNode;
   environmentLabel?: string;
 }) {
   const pathname = usePathname() ?? '/';
   const activeDomain = domainForPath(pathname);
-  const activeArea = areaForPath(activeDomain, pathname);
-  const activeSettingsGroup =
-    activeDomain.key === 'settings' ? settingsGroupForPath(pathname) : undefined;
 
   const links = DOMAINS.map((domain) => {
     const Icon = ICONS[domain.icon] ?? Gauge;
@@ -65,7 +66,14 @@ export function AppShell({
       </a>
       <aside className="sidebar">
         <Link className="brand" href="/" aria-label="Quantum Parks operations home">
-          <span className="brand-mark">QP</span>
+          <Image
+            className="brand-logo"
+            src="/brand/quantum-logo.png"
+            alt=""
+            width={42}
+            height={42}
+            priority
+          />
           <span>
             Quantum Parks<small>Voice operations</small>
           </span>
@@ -94,15 +102,16 @@ export function AppShell({
             <span aria-hidden="true" /> {environmentLabel}
           </div>
           <div className="top-actions">
-            <div className="user">
-              <span>QP</span>
-              <div>
-                <strong>Authenticated user</strong>
-                <small>
-                  {activeSettingsGroup?.label ?? activeArea?.label ?? activeDomain.label}
-                </small>
-              </div>
-            </div>
+            <ThemeToggle />
+            <Link className="header-logo" href="/" aria-label="Quantum Parks operations home">
+              <Image
+                className="user-logo"
+                src="/brand/quantum-logo.png"
+                alt=""
+                width={30}
+                height={30}
+              />
+            </Link>
           </div>
         </header>
         <main id="main">{children}</main>

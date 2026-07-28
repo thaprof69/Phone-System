@@ -132,10 +132,35 @@ export class HttpElevenLabsAdapter implements ElevenLabsPort {
       const providerRequestId = response.headers.get('request-id') ?? undefined;
       const data: unknown = await response.json().catch(() => ({}));
       if (response.ok) return success(data as T, providerRequestId);
-      if (response.status === 401)
+      /*
+       * ElevenLabs returns 401 — not 403 — when a valid key lacks a required permission,
+       * distinguishing the two only via `detail.status === 'missing_permissions'`. Treating
+       * every 401 as an authentication failure reported a correct, working key as
+       * "Invalid API key" and gave the operator nothing to act on. The provider's own
+       * message names the missing permission, so it is surfaced verbatim.
+       */
+      if (response.status === 401 || response.status === 403) {
+        const detail = (data as { detail?: unknown })?.detail;
+        const record =
+          typeof detail === 'object' && detail !== null ? (detail as Record<string, unknown>) : {};
+        const providerStatus = record['status'];
+        const providerMessage = record['message'];
+        if (providerStatus === 'missing_permissions')
+          return failure(
+            'FORBIDDEN',
+            'EL_MISSING_PERMISSION',
+            typeof providerMessage === 'string'
+              ? providerMessage
+              : 'The API key is missing a permission required for this operation',
+          );
+        if (response.status === 403)
+          return failure(
+            'FORBIDDEN',
+            'EL_FORBIDDEN',
+            'Provider capability or scope is unavailable',
+          );
         return failure('UNAUTHORIZED', 'EL_AUTH', 'Provider authentication failed');
-      if (response.status === 403)
-        return failure('FORBIDDEN', 'EL_FORBIDDEN', 'Provider capability or scope is unavailable');
+      }
       if (response.status === 404)
         return failure('NOT_FOUND', 'EL_NOT_FOUND', 'Provider object was not found');
       if (response.status === 409)
@@ -444,4 +469,66 @@ export function canonicalProviderChecksum(value: unknown): string {
     return candidate;
   };
   return checksum(canonicalize(value));
+}
+
+/**
+ * Converts the code-owned receptionist configuration into the narrow provider DTO that
+ * Quantum Parks owns. ElevenLabs may add model, voice and UI defaults around these
+ * fields; those provider-owned values are deliberately not copied into local state.
+ */
+export function toElevenLabsAgentConfiguration(
+  configuration: Record<string, unknown>,
+): Record<string, unknown> {
+  const text = (key: string) =>
+    typeof configuration[key] === 'string' ? (configuration[key] as string).trim() : '';
+  const list = (key: string) =>
+    Array.isArray(configuration[key])
+      ? (configuration[key] as unknown[]).filter(
+          (entry): entry is string => typeof entry === 'string' && entry.trim().length > 0,
+        )
+      : [];
+
+  const prompt = [
+    text('systemPrompt'),
+    text('businessInstructions') ? `Business instructions:\n${text('businessInstructions')}` : '',
+    text('disclosure') ? `Required disclosure:\n${text('disclosure')}` : '',
+    list('policyFragments').length
+      ? `Mandatory policies:\n${list('policyFragments')
+          .map((entry) => `- ${entry}`)
+          .join('\n')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const agent: Record<string, unknown> = {};
+  if (prompt) agent.prompt = { prompt };
+  if (text('firstMessage')) agent.first_message = text('firstMessage');
+  if (text('defaultLanguage')) agent.language = text('defaultLanguage');
+
+  return { conversation_config: { agent } };
+}
+
+/**
+ * Projects a provider read-back onto the exact shape Quantum Parks published. This keeps
+ * checksum comparison stable when ElevenLabs returns additional provider-owned defaults.
+ */
+export function projectElevenLabsAgentConfiguration(
+  remote: Record<string, unknown>,
+  expected: Record<string, unknown>,
+): Record<string, unknown> {
+  const project = (candidate: unknown, shape: unknown): unknown => {
+    if (!shape || typeof shape !== 'object' || Array.isArray(shape)) return candidate;
+    const source =
+      candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+        ? (candidate as Record<string, unknown>)
+        : {};
+    return Object.fromEntries(
+      Object.entries(shape as Record<string, unknown>).map(([key, value]) => [
+        key,
+        project(source[key], value),
+      ]),
+    );
+  };
+  return project(remote, expected) as Record<string, unknown>;
 }

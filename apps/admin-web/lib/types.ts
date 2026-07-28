@@ -190,6 +190,10 @@ export type CallRow = {
   synthetic: boolean;
   receivedAt: string | null;
   intent: string | null;
+  summary: string | null;
+  callStatus: 'COMPLETED' | 'FAILED';
+  origin: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+  mode: 'VOICE' | 'TEXT' | null;
   agentVersion: number | null;
 };
 

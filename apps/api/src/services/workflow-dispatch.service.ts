@@ -13,7 +13,7 @@ export class WorkflowDispatchService {
   private connection?: Connection;
 
   async dispatchPostCall(input: {
-    inboxId: string;
+    inboxId?: string;
     conversationId: string;
     workflowId: string;
   }): Promise<boolean> {
@@ -28,7 +28,12 @@ export class WorkflowDispatchService {
       await client.workflow.start(postCallWorkflow, {
         workflowId: input.workflowId,
         taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'quantum-parks-post-call',
-        args: [{ inboxId: input.inboxId, conversationId: input.conversationId }],
+        args: [
+          {
+            ...(input.inboxId ? { inboxId: input.inboxId } : {}),
+            conversationId: input.conversationId,
+          },
+        ],
       });
       return true;
     } catch {

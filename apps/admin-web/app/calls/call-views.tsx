@@ -5,6 +5,7 @@ import {
   EmptyState,
   Panel,
   StatusPill,
+  SyntheticBadge,
   formatDateTime,
   formatNumber,
   formatRelativeTime,
@@ -52,6 +53,18 @@ export async function CallStateView({
 
   const columns: Column<CallRow>[] = [
     {
+      key: 'call',
+      header: 'Call',
+      render: (row) => <span className="call-list-title">{callTitle(row)}</span>,
+      width: '36%',
+    },
+    {
+      key: 'reason',
+      header: 'Call reason',
+      render: (row) => humaniseState(row.intent ?? 'Unclassified'),
+    },
+    { key: 'park', header: 'Park', render: (row) => titleCase(row.park) },
+    {
       key: 'receivedAt',
       header: 'Received',
       render: (row) => (
@@ -61,26 +74,29 @@ export async function CallStateView({
         </>
       ),
     },
-    { key: 'park', header: 'Park', render: (row) => titleCase(row.park) },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (row) => (
+        <StatusPill tone={toneForState(row.callStatus)}>{humaniseState(row.callStatus)}</StatusPill>
+      ),
+    },
+    {
+      key: 'origin',
+      header: 'Origin',
+      render: (row) =>
+        row.origin === 'SYNTHETIC' ? (
+          <SyntheticBadge compact />
+        ) : (
+          <StatusPill tone={row.origin === 'SIMULATION' ? 'info' : 'neutral'}>
+            {humaniseState(row.origin)}
+          </StatusPill>
+        ),
+    },
     {
       key: 'language',
       header: 'Language',
       render: (row) => (row.language ?? '—').toUpperCase(),
-      priority: 'secondary',
-    },
-    {
-      key: 'processingState',
-      header: 'Processing state',
-      render: (row) => (
-        <StatusPill tone={toneForState(row.processingState)}>
-          {humaniseState(row.processingState)}
-        </StatusPill>
-      ),
-    },
-    {
-      key: 'reference',
-      header: 'Provider reference',
-      render: (row) => <code className="inline-code">{row.providerConversationId}</code>,
       priority: 'secondary',
     },
   ];
@@ -115,7 +131,7 @@ export async function CallStateView({
         eyebrow="Most recent first"
       >
         <DataTable
-          caption={`${title}: calls with their park, language and processing state`}
+          caption={`${title}: calls with their summary, reason, park, status and origin`}
           columns={columns}
           rows={rows}
           getRowKey={(row) => row.id}
@@ -130,4 +146,10 @@ export async function CallStateView({
 function titleCase(value: string | null): string {
   if (!value) return '—';
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function callTitle(row: CallRow): string {
+  if (row.summary?.trim()) return row.summary.trim();
+  const reason = humaniseState(row.intent ?? 'Unclassified');
+  return row.park ? `${reason} at ${titleCase(row.park)}` : reason;
 }
