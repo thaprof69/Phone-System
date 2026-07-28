@@ -54,6 +54,50 @@ test('Mission Control reports live state, attention and readiness', async ({ pag
   await expectNoAxeViolations(page);
 });
 
+test('a provider-authoritative live call is visible throughout the app', async ({ page }) => {
+  await page.route('**/api/admin/live-calls', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ACTIVE',
+        activeCalls: [
+          {
+            providerConversationId: 'conv-live',
+            providerAgentId: 'agent-live',
+            agentName: 'Quantum Parks Receptionist',
+            status: 'IN_PROGRESS',
+            startedAt: new Date(Date.now() - 18_000).toISOString(),
+            direction: 'inbound',
+            source: 'twilio',
+          },
+        ],
+        lastSyncedAt: new Date().toISOString(),
+        message: null,
+      }),
+    });
+  });
+
+  await page.goto('/settings/ai-providers/elevenlabs');
+  const banner = page.getByRole('link', { name: /Live call in progress/ });
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText('Quantum Parks Receptionist');
+  await expect(banner).toContainText('twilio');
+  await expect(banner).toHaveAttribute('href', '/calls/live');
+  await expect(page.locator('.workspace-chrome')).toHaveCSS('position', 'sticky');
+  await expectNoAxeViolations(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(banner).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+});
+
 test('every primary navigation item opens a working workspace', async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto('/');

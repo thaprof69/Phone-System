@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ProviderCapabilityState, Result } from '@quantum-parks/domain';
 import { failure, success } from '@quantum-parks/domain';
+import { z } from 'zod';
 
 export type ProviderCapability =
   | 'agent_versioning'
@@ -44,15 +45,31 @@ export interface ProviderTestResult {
   result?: string;
   rationale?: unknown;
 }
+export interface ProviderConversationSummary {
+  conversationId: string;
+  agentId: string;
+  status: string;
+  startTimeUnixSeconds?: number;
+  durationSeconds?: number;
+  branchId?: string | null;
+  versionId?: string | null;
+  direction?: string;
+  initiationSource?: string;
+  agentName?: string;
+}
+
+export interface ProviderConversationDetail extends ProviderConversationSummary {
+  transcript: unknown[];
+  metadata: Record<string, unknown>;
+  analysis?: Record<string, unknown> | null;
+  initiationClientData?: Record<string, unknown> | null;
+  providerHasAudio: boolean;
+  providerHasUserAudio: boolean;
+  providerHasResponseAudio: boolean;
+}
+
 export interface ProviderConversationPage {
-  conversations: Array<{
-    conversation_id: string;
-    agent_id: string;
-    status: string;
-    start_time_unix_secs?: number;
-    branch_id?: string | null;
-    version_id?: string | null;
-  }>;
+  conversations: ProviderConversationSummary[];
   has_more: boolean;
   next_cursor?: string | null;
 }
@@ -87,7 +104,7 @@ export interface ElevenLabsPort {
     branchId?: string,
   ): Promise<Result<ProviderTestRun>>;
   getTestInvocation(testInvocationId: string): Promise<Result<ProviderTestRun>>;
-  getConversation(conversationId: string): Promise<Result<Record<string, unknown>>>;
+  getConversation(conversationId: string): Promise<Result<ProviderConversationDetail>>;
   listConversations(
     cursor?: string,
     startedAfterUnix?: number,
@@ -113,6 +130,58 @@ export interface HttpAdapterOptions {
 
 function checksum(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+const ProviderConversationSummarySchema = z.looseObject({
+  conversation_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  status: z.string().min(1),
+  start_time_unix_secs: z.number().nonnegative().optional(),
+  call_duration_secs: z.number().nonnegative().optional(),
+  branch_id: z.string().nullable().optional(),
+  version_id: z.string().nullable().optional(),
+  direction: z.string().nullable().optional(),
+  conversation_initiation_source: z.string().nullable().optional(),
+  agent_name: z.string().nullable().optional(),
+});
+
+const ProviderConversationPageSchema = z.looseObject({
+  conversations: z.array(ProviderConversationSummarySchema),
+  has_more: z.boolean(),
+  next_cursor: z.string().nullable().optional(),
+});
+
+const ProviderConversationDetailSchema = ProviderConversationSummarySchema.extend({
+  transcript: z.array(z.unknown()).default([]),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  analysis: z.record(z.string(), z.unknown()).nullable().optional(),
+  conversation_initiation_client_data: z.record(z.string(), z.unknown()).nullable().optional(),
+  has_audio: z.boolean().optional(),
+  has_user_audio: z.boolean().optional(),
+  has_response_audio: z.boolean().optional(),
+});
+
+function mapConversationSummary(
+  value: z.infer<typeof ProviderConversationSummarySchema>,
+): ProviderConversationSummary {
+  return {
+    conversationId: value.conversation_id,
+    agentId: value.agent_id,
+    status: value.status,
+    ...(value.start_time_unix_secs === undefined
+      ? {}
+      : { startTimeUnixSeconds: value.start_time_unix_secs }),
+    ...(value.call_duration_secs === undefined
+      ? {}
+      : { durationSeconds: value.call_duration_secs }),
+    ...(value.branch_id === undefined ? {} : { branchId: value.branch_id }),
+    ...(value.version_id === undefined ? {} : { versionId: value.version_id }),
+    ...(value.direction ? { direction: value.direction } : {}),
+    ...(value.conversation_initiation_source
+      ? { initiationSource: value.conversation_initiation_source }
+      : {}),
+    ...(value.agent_name ? { agentName: value.agent_name } : {}),
+  };
 }
 
 export class HttpElevenLabsAdapter implements ElevenLabsPort {
@@ -378,18 +447,60 @@ export class HttpElevenLabsAdapter implements ElevenLabsPort {
       : result;
   }
 
-  getConversation(conversationId: string) {
-    return this.request<Record<string, unknown>>(
+  async getConversation(conversationId: string): Promise<Result<ProviderConversationDetail>> {
+    const result = await this.request<unknown>(
       `/v1/convai/conversations/${encodeURIComponent(conversationId)}`,
+    );
+    if (result.status !== 'SUCCESS') return result;
+    const parsed = ProviderConversationDetailSchema.safeParse(result.data);
+    if (!parsed.success)
+      return failure(
+        'PROVIDER_ERROR',
+        'EL_CONVERSATION_SCHEMA',
+        'Provider conversation response did not match the supported schema',
+      );
+    return success(
+      {
+        ...mapConversationSummary(parsed.data),
+        transcript: parsed.data.transcript,
+        metadata: parsed.data.metadata,
+        ...(parsed.data.analysis === undefined ? {} : { analysis: parsed.data.analysis }),
+        ...(parsed.data.conversation_initiation_client_data === undefined
+          ? {}
+          : { initiationClientData: parsed.data.conversation_initiation_client_data }),
+        providerHasAudio: parsed.data.has_audio ?? false,
+        providerHasUserAudio: parsed.data.has_user_audio ?? false,
+        providerHasResponseAudio: parsed.data.has_response_audio ?? false,
+      },
+      result.requestId,
     );
   }
 
-  listConversations(cursor?: string, startedAfterUnix?: number) {
+  async listConversations(
+    cursor?: string,
+    startedAfterUnix?: number,
+  ): Promise<Result<ProviderConversationPage>> {
     const query = new URLSearchParams({ page_size: '100', summary_mode: 'exclude' });
     if (cursor) query.set('cursor', cursor);
     if (startedAfterUnix !== undefined)
       query.set('call_start_after_unix', String(startedAfterUnix));
-    return this.request<ProviderConversationPage>(`/v1/convai/conversations?${query.toString()}`);
+    const result = await this.request<unknown>(`/v1/convai/conversations?${query.toString()}`);
+    if (result.status !== 'SUCCESS') return result;
+    const parsed = ProviderConversationPageSchema.safeParse(result.data);
+    if (!parsed.success)
+      return failure(
+        'PROVIDER_ERROR',
+        'EL_CONVERSATION_LIST_SCHEMA',
+        'Provider conversation list response did not match the supported schema',
+      );
+    return success(
+      {
+        conversations: parsed.data.conversations.map(mapConversationSummary),
+        has_more: parsed.data.has_more,
+        ...(parsed.data.next_cursor === undefined ? {} : { next_cursor: parsed.data.next_cursor }),
+      },
+      result.requestId,
+    );
   }
 
   async getSignedConversationUrl(agentId: string): Promise<Result<{ signedUrl: string }>> {

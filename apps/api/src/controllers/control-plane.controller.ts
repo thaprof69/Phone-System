@@ -7,6 +7,7 @@ import { AiosPlatformService } from '../services/aios-platform.service.js';
 import { ReceptionistSessionService } from '../services/receptionist-session.service.js';
 import { ConversationLifecycleService } from '../services/conversation-lifecycle.service.js';
 import { IntelligenceRoutingService } from '../services/intelligence-routing.service.js';
+import { ProviderConversationMonitorService } from '../services/provider-conversation-monitor.service.js';
 import { RequirePermission } from '../security/access.guard.js';
 
 const IdSchema = z.uuid();
@@ -297,6 +298,7 @@ export class ControlPlaneController {
     private readonly receptionistSessions: ReceptionistSessionService,
     private readonly conversationLifecycle: ConversationLifecycleService,
     private readonly intelligenceRouting: IntelligenceRoutingService,
+    private readonly providerConversationMonitor: ProviderConversationMonitorService,
   ) {}
   @RequirePermission('agent:write')
   @Get('agents')
@@ -643,6 +645,11 @@ export class ControlPlaneController {
   @Get('voice-sessions')
   listVoiceSessions(@Query('agentVersionId') agentVersionId?: string) {
     return this.platform.listVoiceSessions(agentVersionId);
+  }
+  @RequirePermission('calls:read', 'OPERATIONS')
+  @Get('live-calls')
+  liveCalls() {
+    return this.providerConversationMonitor.syncNow();
   }
   @RequirePermission('voice:live')
   @Get('voice-sessions/:id')

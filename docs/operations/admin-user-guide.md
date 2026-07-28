@@ -35,6 +35,22 @@ one. See [ADR 0012](../adr/0012-five-domain-operator-information-architecture.md
 Never use the ElevenLabs console for routine work. Restricted console activity must be recorded as
 a capability exception.
 
+## Live calls and automatic capture
+
+When ElevenLabs reports an active telephone or browser conversation, a blue **Live call in
+progress** banner appears above every page. It shows the receptionist and elapsed time and opens
+**Calls → Live activity**.
+
+Completed provider calls are captured automatically. Phone System first accepts the signed
+post-call webhook; if that delivery is missing or cannot reach the local environment, the provider
+conversation monitor retrieves the transcript and submits it to the same post-call processing
+pipeline. The Calls register then shows the call as **Live** origin rather than synthetic. The
+transcript, summary, reason, sentiment, outcome and follow-up remain governed local records.
+
+If the banner does not appear during a known call or a completed call is missing, treat it as a
+provider-capture incident and follow the post-call webhook runbook. Operators should not create a
+replacement call record by hand.
+
 ## Connecting ElevenLabs
 
 Open **Settings → AI Providers → ElevenLabs setup**. Choose **Connect**, enter a restricted API

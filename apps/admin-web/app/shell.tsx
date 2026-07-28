@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { DOMAINS, domainForPath } from './navigation';
 import { ThemeToggle } from './theme-toggle';
+import { LiveCallBanner } from './live-call-banner';
 
 const ICONS: Record<string, LucideIcon> = {
   Gauge,
@@ -89,31 +90,34 @@ export function AppShell({
         </div>
       </aside>
       <div className="workspace">
-        <header className="topbar">
-          <details className="mobile-navigation">
-            <summary className="mobile-menu" aria-label="Open navigation">
-              <Menu size={20} />
-            </summary>
-            <nav className="mobile-nav-panel" aria-label="Mobile primary navigation">
-              {links}
-            </nav>
-          </details>
-          <div className="environment">
-            <span aria-hidden="true" /> {environmentLabel}
-          </div>
-          <div className="top-actions">
-            <ThemeToggle />
-            <Link className="header-logo" href="/" aria-label="Quantum Parks operations home">
-              <Image
-                className="user-logo"
-                src="/brand/quantum-logo.png"
-                alt=""
-                width={30}
-                height={30}
-              />
-            </Link>
-          </div>
-        </header>
+        <div className="workspace-chrome">
+          <header className="topbar">
+            <details className="mobile-navigation">
+              <summary className="mobile-menu" aria-label="Open navigation">
+                <Menu size={20} />
+              </summary>
+              <nav className="mobile-nav-panel" aria-label="Mobile primary navigation">
+                {links}
+              </nav>
+            </details>
+            <div className="environment">
+              <span aria-hidden="true" /> {environmentLabel}
+            </div>
+            <div className="top-actions">
+              <ThemeToggle />
+              <Link className="header-logo" href="/" aria-label="Quantum Parks operations home">
+                <Image
+                  className="user-logo"
+                  src="/brand/quantum-logo.png"
+                  alt=""
+                  width={30}
+                  height={30}
+                />
+              </Link>
+            </div>
+          </header>
+          <LiveCallBanner />
+        </div>
         <main id="main">{children}</main>
       </div>
     </div>

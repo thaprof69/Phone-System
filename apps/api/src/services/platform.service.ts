@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { Principal } from '@quantum-parks/auth';
-import { and, desc, eq, gte, inArray, isNull, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import {
   adminUsers,
   agentApprovals,
@@ -159,7 +159,16 @@ export class PlatformService {
   }
 
   async requestReconciliation() {
-    const workspaceId = process.env.ELEVENLABS_WORKSPACE_ID ?? 'workspace_synthetic';
+    const configured = await this.elevenLabsIntegration.resolveActiveCredential();
+    const workspace = configured
+      ? await this.database.db.query.providerWorkspaces.findFirst({
+          where: eq(providerWorkspaces.id, configured.integration.workspaceId),
+        })
+      : null;
+    const workspaceId =
+      workspace?.providerWorkspaceId ??
+      process.env.ELEVENLABS_WORKSPACE_ID ??
+      'workspace_synthetic';
     const dispatched = await this.workflows.dispatchReconciliation(workspaceId);
     return {
       status: dispatched.queued ? 'QUEUED' : 'TEMPORARILY_UNAVAILABLE',
@@ -1751,7 +1760,7 @@ export class PlatformService {
         park: conversations.park,
         sensitive: conversations.sensitive,
         synthetic: conversations.synthetic,
-        receivedAt: conversations.createdAt,
+        receivedAt: sql<Date>`coalesce(${conversations.startedAt}, ${conversations.createdAt})`,
         agentVersionId: conversations.agentVersionId,
       })
       .from(conversations)
@@ -1759,7 +1768,7 @@ export class PlatformService {
         providerConversations,
         eq(conversations.providerConversationId, providerConversations.id),
       )
-      .orderBy(desc(conversations.createdAt))
+      .orderBy(desc(sql<Date>`coalesce(${conversations.startedAt}, ${conversations.createdAt})`))
       .limit(limit);
 
     // Intent and agent version are joined in application code rather than the

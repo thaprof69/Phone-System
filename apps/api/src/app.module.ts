@@ -30,6 +30,7 @@ import { ReceptionistSessionService } from './services/receptionist-session.serv
 import { ConversationLifecycleService } from './services/conversation-lifecycle.service.js';
 import { CommunicationsController } from './controllers/communications.controller.js';
 import { CommunicationsService } from './services/communications.service.js';
+import { ProviderConversationMonitorService } from './services/provider-conversation-monitor.service.js';
 
 @Module({
   controllers: [
@@ -63,6 +64,7 @@ import { CommunicationsService } from './services/communications.service.js';
     ReceptionistSessionService,
     ConversationLifecycleService,
     CommunicationsService,
+    ProviderConversationMonitorService,
     { provide: APP_GUARD, useClass: AccessGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],

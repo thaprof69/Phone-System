@@ -1222,13 +1222,13 @@ export const activities: PostCallActivities = {
       const page = await (await providerAdapter()).listConversations(cursor);
       if (page.status !== 'SUCCESS') break;
       for (const remoteConversation of page.data.conversations) {
-        if (localProviderIds.has(remoteConversation.conversation_id)) continue;
+        if (localProviderIds.has(remoteConversation.conversationId)) continue;
         missingConversationCount += 1;
         await db
           .insert(inboxEvents)
           .values({
             source: 'ELEVENLABS_RECONCILIATION',
-            sourceEventId: remoteConversation.conversation_id,
+            sourceEventId: remoteConversation.conversationId,
             payloadChecksum: createHash('sha256')
               .update(JSON.stringify(remoteConversation))
               .digest('hex'),

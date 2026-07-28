@@ -101,6 +101,116 @@ describe('ElevenLabs webhook verification', () => {
 });
 
 describe('ElevenLabs test adapter contract', () => {
+  it('maps conversation discovery and detail responses at the provider boundary', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('/v1/convai/conversations?'))
+        return new Response(
+          JSON.stringify({
+            conversations: [
+              {
+                conversation_id: 'conv-live',
+                agent_id: 'agent-1',
+                agent_name: 'Quantum Receptionist',
+                status: 'in-progress',
+                start_time_unix_secs: 1_700_000_000,
+                direction: null,
+                conversation_initiation_source: 'twilio',
+              },
+            ],
+            has_more: false,
+          }),
+          { status: 200 },
+        );
+      if (url.endsWith('/v1/convai/conversations/conv-live'))
+        return new Response(
+          JSON.stringify({
+            conversation_id: 'conv-live',
+            agent_id: 'agent-1',
+            status: 'done',
+            start_time_unix_secs: 1_700_000_000,
+            call_duration_secs: 42,
+            transcript: [
+              { role: 'user', message: 'I need help with a booking.', time_in_call_secs: 2 },
+              { role: 'agent', message: 'Of course.', time_in_call_secs: 4 },
+            ],
+            metadata: { termination_reason: 'Call ended' },
+            analysis: { call_successful: 'success' },
+            has_audio: true,
+            has_user_audio: true,
+            has_response_audio: true,
+          }),
+          { status: 200 },
+        );
+      throw new Error(`Unexpected request ${url}`);
+    };
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'secret',
+      });
+      await expect(adapter.listConversations(undefined, 1_699_999_000)).resolves.toEqual({
+        status: 'SUCCESS',
+        data: {
+          conversations: [
+            {
+              conversationId: 'conv-live',
+              agentId: 'agent-1',
+              agentName: 'Quantum Receptionist',
+              status: 'in-progress',
+              startTimeUnixSeconds: 1_700_000_000,
+              initiationSource: 'twilio',
+            },
+          ],
+          has_more: false,
+        },
+      });
+      await expect(adapter.getConversation('conv-live')).resolves.toMatchObject({
+        status: 'SUCCESS',
+        data: {
+          conversationId: 'conv-live',
+          agentId: 'agent-1',
+          status: 'done',
+          durationSeconds: 42,
+          providerHasAudio: true,
+          providerHasUserAudio: true,
+          providerHasResponseAudio: true,
+          transcript: [
+            { role: 'user', message: 'I need help with a booking.', time_in_call_secs: 2 },
+            { role: 'agent', message: 'Of course.', time_in_call_secs: 4 },
+          ],
+        },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects malformed conversation discovery responses instead of leaking provider DTOs', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ conversations: [{ status: 'done' }], has_more: false }), {
+        status: 200,
+      });
+    try {
+      const adapter = new HttpElevenLabsAdapter({
+        baseUrl: 'https://api.elevenlabs.test',
+        apiKeyReference: 'secret/ref',
+        workspaceId: 'workspace-1',
+        resolveSecret: async () => 'secret',
+      });
+      await expect(adapter.listConversations()).resolves.toMatchObject({
+        status: 'PROVIDER_ERROR',
+        error: { code: 'EL_CONVERSATION_LIST_SCHEMA' },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('maps the official user, agent, and voice discovery responses without exposing the key', async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; key: string | null }> = [];

@@ -563,6 +563,11 @@ textarea:focus-visible {
   grid-column: 2;
   min-width: 0;
 }
+.workspace-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
 .topbar {
   height: 67px;
   display: flex;
@@ -578,6 +583,83 @@ textarea:focus-visible {
 }
 html[data-theme='dark'] .topbar {
   background: rgb(21 27 47 / 90%);
+}
+.live-call-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 8px 34px;
+  color: #f8fbff;
+  text-decoration: none;
+  background: #0f559c;
+  border-bottom: 1px solid #07396c;
+  box-shadow: 0 8px 24px rgb(7 57 108 / 18%);
+}
+.live-call-banner:hover {
+  color: #fff;
+  background: #1263b4;
+}
+.live-call-signal {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #08284b;
+  background: #9df2bd;
+  border-radius: 50%;
+}
+.live-call-signal::after {
+  position: absolute;
+  inset: -4px;
+  content: '';
+  border: 2px solid rgb(157 242 189 / 70%);
+  border-radius: 50%;
+  animation: live-call-pulse 1.8s ease-out infinite;
+}
+.live-call-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.live-call-copy strong {
+  font-size: 14px;
+}
+.live-call-copy > span {
+  overflow: hidden;
+  color: #dcecff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-call-action {
+  font-size: 12px;
+  font-weight: 700;
+}
+html[data-theme='dark'] .live-call-banner {
+  background: #0a3d70;
+  border-color: #072c52;
+  box-shadow: 0 8px 24px rgb(2 15 32 / 35%);
+}
+html[data-theme='dark'] .live-call-banner:hover {
+  background: #0c4a87;
+}
+@keyframes live-call-pulse {
+  from {
+    opacity: 1;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-call-signal::after {
+    animation: none;
+  }
 }
 .environment {
   display: flex;
@@ -1565,6 +1647,13 @@ td a {
   .topbar {
     height: 60px;
     padding: 0 18px;
+  }
+  .live-call-banner {
+    min-height: 58px;
+    padding: 8px 18px;
+  }
+  .live-call-action {
+    display: none;
   }
   .mobile-menu {
     display: grid;

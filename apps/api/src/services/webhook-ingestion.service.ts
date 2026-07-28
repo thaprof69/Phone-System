@@ -71,10 +71,6 @@ export class WebhookIngestionService {
     } catch {
       return { status: 'REJECTED', message: 'Webhook payload is malformed' };
     }
-    if (event.data.has_audio || event.data.has_user_audio || event.data.has_response_audio) {
-      return { status: 'REJECTED', message: 'Audio ingestion is disabled by policy' };
-    }
-
     const workspace = await this.database.db.query.providerWorkspaces.findFirst({
       where: eq(providerWorkspaces.providerWorkspaceId, providerWorkspaceId),
     });
@@ -147,7 +143,23 @@ export class WebhookIngestionService {
             providerMetadata: event.data.metadata,
             hasAudio: false,
           })
-          .onConflictDoNothing()
+          .onConflictDoUpdate({
+            target: [
+              providerConversations.workspaceId,
+              providerConversations.providerConversationId,
+            ],
+            set: {
+              providerAgentId: event.data.agent_id,
+              providerBranchId: event.data.branch_id ?? null,
+              providerVersionId: event.data.version_id ?? null,
+              providerTranscript: event.data.transcript,
+              providerAnalysis: event.data.analysis ?? null,
+              providerMetadata: event.data.metadata,
+              // These provider booleans describe remotely available audio. They are not
+              // audio bytes and never mean Quantum Parks has ingested or retained audio.
+              hasAudio: false,
+            },
+          })
           .returning({ id: providerConversations.id });
         const providerConversation =
           insertedProviderConversation ??
@@ -168,9 +180,19 @@ export class WebhookIngestionService {
             .insert(conversations)
             .values({
               providerConversationId: providerConversation.id,
-              processingState: 'RAW_STORED',
+              processingState:
+                event.type === 'call_initiation_failure' ? 'FAILED_FINAL' : 'RAW_STORED',
               synthetic: workspace.synthetic,
             })
+            .returning();
+        } else if (
+          event.type === 'post_call_transcription' &&
+          !['COMPLETED', 'PARTIAL'].includes(conversation.processingState)
+        ) {
+          [conversation] = await tx
+            .update(conversations)
+            .set({ processingState: 'RAW_STORED', updatedAt: new Date() })
+            .where(eq(conversations.id, conversation.id))
             .returning();
         }
         if (!conversation) throw new Error('Canonical conversation was not persisted');
@@ -184,7 +206,12 @@ export class WebhookIngestionService {
           })
           .returning({ id: webhookInboxEntries.id });
         if (!inbox) throw new Error('Inbox record was not persisted');
-        return { inboxId: inbox.id, conversationId: conversation.id, duplicate: false };
+        return {
+          inboxId: inbox.id,
+          conversationId: conversation.id,
+          duplicate: false,
+          shouldProcess: event.type === 'post_call_transcription',
+        };
       });
 
       if (accepted.duplicate)
@@ -194,6 +221,18 @@ export class WebhookIngestionService {
           duplicate: true,
           processingQueued: false,
         };
+      if (!accepted.shouldProcess) {
+        await this.database.db
+          .update(webhookInboxEntries)
+          .set({ state: 'PROCESSED', processedAt: new Date(), updatedAt: new Date() })
+          .where(eq(webhookInboxEntries.id, accepted.inboxId));
+        return {
+          status: 'ACCEPTED',
+          inboxId: accepted.inboxId,
+          duplicate: false,
+          processingQueued: false,
+        };
+      }
       const workflowId = `post-call-${accepted.inboxId}`;
       const processingQueued = await this.workflows.dispatchPostCall({
         inboxId: accepted.inboxId,

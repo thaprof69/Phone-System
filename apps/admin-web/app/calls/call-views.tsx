@@ -66,7 +66,7 @@ export async function CallStateView({
     { key: 'park', header: 'Park', render: (row) => titleCase(row.park) },
     {
       key: 'receivedAt',
-      header: 'Received',
+      header: 'Call time',
       render: (row) => (
         <>
           {formatDateTime(row.receivedAt)}

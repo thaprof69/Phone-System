@@ -208,7 +208,7 @@ export default async function CallsPage({ searchParams }: { searchParams: Promis
     { key: 'park', header: 'Park', sortable: true, render: (row) => titleCase(row.park) },
     {
       key: 'receivedAt',
-      header: 'Received',
+      header: 'Call time',
       sortable: true,
       render: (row) => (
         <>

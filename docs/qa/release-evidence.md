@@ -1328,11 +1328,38 @@ golden-angle colours instead of clamping every remaining bar to the final palett
 affects Top call reasons and the equivalent breakdown charts across Intelligence and Reports.
 Multi-series charts and explicit status colours retain their established series semantics.
 
-| Check                  | Result                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------- |
-| GitNexus impact        | `IntelligenceCockpit` LOW: one page caller; shared `BarChart` LOW: `ComparisonChart` caller  |
-| Admin strict typecheck | Passed                                                                                       |
+| Check                  | Result                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| GitNexus impact        | `IntelligenceCockpit` LOW: one page caller; shared `BarChart` LOW: `ComparisonChart` caller   |
+| Admin strict typecheck | Passed                                                                                        |
 | Shared UI tests        | 37 passed; first 12 category colours are unique and overflow does not repeat the final colour |
-| Focused browser test   | Verifies 28 heat cells, distinct value bands/backgrounds and multi-colour categorical bars   |
-| Accessibility          | Values, labels and table fallbacks remain available independently of colour                  |
-| Behavior boundary      | Filters, chart values, evidence drill-downs, source records and domain actions are unchanged |
+| Focused browser test   | Verifies 28 heat cells, distinct value bands/backgrounds and multi-colour categorical bars    |
+| Accessibility          | Values, labels and table fallbacks remain available independently of colour                   |
+| Behavior boundary      | Filters, chart values, evidence drill-downs, source records and domain actions are unchanged  |
+
+## 2026-07-28 - Live provider call visibility and recovery
+
+Added provider-authoritative live call observation and a global in-progress banner. Signed
+post-call webhooks remain the preferred immutable evidence path; a distinct, idempotent provider
+conversation recovery path now captures terminal calls when webhooks cannot reach the environment.
+Both paths feed the existing canonical transcript and Temporal finalisation workflow.
+
+A real Twilio telephone call routed to the connected production ElevenLabs agent was recovered from
+the provider API. Phone System persisted the real call timing, five receptionist turns and four
+caller turns, then produced a final summary, classification, sentiment, urgency, outcome and
+complete Conversation Intelligence Manifest. The Calls register now presents it as a completed
+Live-origin call. Late recovery no longer makes historical calls appear simultaneous: the register
+uses the provider call start time, with local ingestion time only as a legacy fallback, and labels
+the column **Call time**.
+
+| Check                        | Result                                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| Official provider contract   | Verified list/detail states and post-call webhook timing against current ElevenLabs documentation   |
+| Provider adapter tests       | Passed DTO mapping, nullable direction, conversation detail and malformed payload rejection         |
+| Monitor tests                | Passed live-state and provider timing derivation                                                    |
+| Real production recovery     | Passed: latest Twilio call captured with nine alternating caller/receptionist turns                 |
+| Intelligence finalisation    | Passed: routed summary/classification and `COMPLETE` manifest persisted                             |
+| Call register identity       | One row per provider conversation ID, ordered by provider call start time                           |
+| Evidence boundary            | Retrieval uses its own inbox provenance and does not fabricate a signed raw webhook or stored audio |
+| Global operator visibility   | Live banner is shell-owned, provider-state-driven, responsive and links to `/calls/live`            |
+| Provider credential boundary | Permanent ElevenLabs credentials remain server-side                                                 |
