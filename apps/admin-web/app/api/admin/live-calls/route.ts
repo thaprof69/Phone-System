@@ -18,6 +18,7 @@ export async function GET() {
     const payload: unknown = await upstream.json().catch(() => ({
       status: 'DEGRADED',
       activeCalls: [],
+      activeChats: [],
       message: 'The live call monitor returned an unreadable response',
     }));
     return NextResponse.json(payload, {
@@ -29,6 +30,7 @@ export async function GET() {
       {
         status: 'DEGRADED',
         activeCalls: [],
+        activeChats: [],
         message: 'The live call monitor is temporarily unavailable',
       },
       { status: 503, headers: { 'cache-control': 'no-store, private' } },

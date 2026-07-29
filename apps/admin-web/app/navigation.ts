@@ -112,6 +112,22 @@ export const DOMAINS = [
     ],
   },
   {
+    key: 'chat',
+    href: '/chat',
+    label: 'Chat',
+    icon: 'MessageSquare',
+    description:
+      'Website and app chat conversations, with the same captured intelligence as phone calls.',
+    areas: [
+      {
+        href: '/chat',
+        label: 'Captured chats',
+        description:
+          'ElevenLabs text-chat sessions, their transcripts, summaries, sentiment, classification and operator test console.',
+      },
+    ],
+  },
+  {
     key: 'alerts',
     href: '/alerts',
     label: 'Alerts',
@@ -281,6 +297,12 @@ export const SETTINGS_GROUPS = [
         label: 'Ingest & overview',
         description:
           'Bring in documents, URLs and business facts, then review what the ingestion layer understood.',
+      },
+      {
+        href: '/settings/knowledge/encyclopedia',
+        label: 'Company encyclopedia',
+        description:
+          'A structured operator-readable view of what the AI believes the company is, does and sounds like.',
       },
       {
         href: '/settings/knowledge/library',
@@ -510,6 +532,7 @@ export const SETTINGS_GROUPS = [
 const DOMAIN_PREFIXES: Record<string, readonly string[]> = {
   'mission-control': ['/readiness'],
   calls: ['/calls'],
+  chat: ['/chat'],
   alerts: ['/alerts'],
   intelligence: ['/intelligence'],
   reports: ['/reports'],

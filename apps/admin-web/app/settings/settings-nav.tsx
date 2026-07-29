@@ -5,12 +5,9 @@ import { Breadcrumbs, NavList } from '@quantum-parks/ui';
 import { SETTINGS_GROUPS, settingsAreaForPath, settingsGroupForPath } from '../navigation';
 
 /**
- * Settings has too many areas across too many groups for a horizontal tab bar
- * (see navigation.ts) — each group gets a vertical rail instead, and the
- * breadcrumb carries the group context a flat tab strip would otherwise lose.
- * Both derive the active group/area from the pathname, the same way `DomainNav`
- * does for the other four domains, so a moved page never has to pass its own
- * location down by hand.
+ * Settings has too many areas across too many groups for one global tab bar, so
+ * each group gets a dedicated horizontal submenu below the page heading. Both
+ * breadcrumbs and submenu derive the active group/area from the pathname.
  */
 export function SettingsBreadcrumbs() {
   const pathname = usePathname() ?? '/settings';
@@ -32,10 +29,16 @@ export function SettingsRail() {
   const group = settingsGroupForPath(pathname) ?? SETTINGS_GROUPS[0];
   const area = settingsAreaForPath(group, pathname);
   return (
-    <NavList
-      label={`${group.label} areas`}
-      current={area?.href ?? group.areas[0]?.href ?? ''}
-      items={group.areas.map((entry) => ({ href: entry.href, label: entry.label }))}
-    />
+    <section className="settings-submenu" aria-labelledby="settings-submenu-title">
+      <div className="settings-submenu-heading">
+        <span>Section menu</span>
+        <strong id="settings-submenu-title">{group.label}</strong>
+      </div>
+      <NavList
+        label={`${group.label} areas`}
+        current={area?.href ?? group.areas[0]?.href ?? ''}
+        items={group.areas.map((entry) => ({ href: entry.href, label: entry.label }))}
+      />
+    </section>
   );
 }

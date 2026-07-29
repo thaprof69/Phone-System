@@ -10,6 +10,7 @@ import {
   FileText,
   Gauge,
   Menu,
+  MessageSquare,
   Settings,
   ShieldCheck,
   type LucideIcon,
@@ -21,6 +22,7 @@ import { LiveCallBanner } from './live-call-banner';
 const ICONS: Record<string, LucideIcon> = {
   Gauge,
   Activity,
+  MessageSquare,
   BellRing,
   ChartNoAxesCombined,
   FileText,

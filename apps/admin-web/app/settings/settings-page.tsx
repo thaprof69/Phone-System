@@ -5,7 +5,7 @@ import { SettingsBreadcrumbs, SettingsRail } from './settings-nav';
 
 /**
  * The frame every Settings sub-page shares: application shell, breadcrumb, page
- * heading, the group's vertical rail, then the page's own content. Mirrors
+ * heading, the group's submenu, then the page's own content. Mirrors
  * `DomainPage`'s prop shape exactly so a page moving under Settings only has to
  * change which component it imports, not how it calls it.
  */
@@ -35,12 +35,8 @@ export function SettingsPage({
         {...(actions ? { actions } : {})}
         {...(meta ? { meta } : {})}
       />
-      <div className="administration-layout">
-        <div className="administration-rail">
-          <SettingsRail />
-        </div>
-        <div className="administration-content">{children}</div>
-      </div>
+      <SettingsRail />
+      <div className="administration-content">{children}</div>
     </AppShell>
   );
 }

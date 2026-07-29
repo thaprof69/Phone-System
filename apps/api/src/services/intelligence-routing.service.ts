@@ -821,7 +821,13 @@ export class IntelligenceRoutingService {
    */
   async executeCapability(
     capability: IntelligenceCapability,
-    input: { system?: string; prompt: string; maxOutputTokens?: number; temperature?: number },
+    input: {
+      system?: string;
+      prompt: string;
+      maxOutputTokens?: number;
+      temperature?: number;
+      timeoutMs?: number;
+    },
   ): Promise<ExecutionOutcome> {
     const routeRow = await this.database.db.query.intelligenceRoutes.findFirst({
       where: eq(intelligenceRoutes.capability, capability),
@@ -875,6 +881,7 @@ export class IntelligenceRoutingService {
         prompt: input.prompt,
         ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
         ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
+        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
       });
       const completedAt = new Date();
 
@@ -1054,21 +1061,40 @@ export class IntelligenceRoutingService {
       }
     | { ok: false; message: string; category: ErrorCategory }
   > {
-    const outcome = await this.executeCapability('KNOWLEDGE_HUB', {
-      system: DOCUMENT_ANALYSIS_SYSTEM_PROMPT,
-      prompt: `Document title: ${input.title}
+    const executeAnalysis = (retry: boolean) =>
+      this.executeCapability('KNOWLEDGE_HUB', {
+        system: retry
+          ? `${DOCUMENT_ANALYSIS_SYSTEM_PROMPT}
+
+This is a bounded retry because the previous provider response was empty or invalid. Return the complete JSON object now.`
+          : DOCUMENT_ANALYSIS_SYSTEM_PROMPT,
+        prompt: `Document title: ${input.title}
 Document type: ${input.kind}
 
 <extracted-source>
 ${input.sourceText}
 </extracted-source>`,
-      maxOutputTokens: 3_500,
-      temperature: 0,
-    });
+        maxOutputTokens: 1_800,
+        temperature: 0,
+        timeoutMs: 28_000,
+      });
+
+    let retried = false;
+    let outcome = await executeAnalysis(false);
+    if (!outcome.ok && outcome.error.category === 'INVALID_RESPONSE') {
+      retried = true;
+      outcome = await executeAnalysis(true);
+    }
     if (!outcome.ok)
       return { ok: false, message: outcome.error.message, category: outcome.error.category };
 
-    const parsed = parseDocumentAnalysis(outcome.text, input.sourceText);
+    let parsed = parseDocumentAnalysis(outcome.text, input.sourceText);
+    if (!parsed.success && !retried) {
+      outcome = await executeAnalysis(true);
+      if (!outcome.ok)
+        return { ok: false, message: outcome.error.message, category: outcome.error.category };
+      parsed = parseDocumentAnalysis(outcome.text, input.sourceText);
+    }
     if (!parsed.success)
       return {
         ok: false,

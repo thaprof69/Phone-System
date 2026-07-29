@@ -322,6 +322,10 @@ export const providerIntegrations = pgTable(
     summaryGeneration: boolean('summary_generation').default(false).notNull(),
     escalationDetection: boolean('escalation_detection').default(false).notNull(),
     voiceMode: elevenLabsVoiceModeEnum('voice_mode').default('WEBSOCKET_ONLY').notNull(),
+    transferConfiguration: jsonb('transfer_configuration')
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
     createdBy: text('created_by').notNull(),
     updatedBy: text('updated_by').notNull(),
     ...timestamps,

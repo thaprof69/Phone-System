@@ -12,12 +12,20 @@ const UUID = '[0-9a-fA-F-]{36}';
 
 const ROUTES: Array<{ pattern: RegExp; upstream: (id: string) => string }> = [
   {
+    pattern: /^(create)$/,
+    upstream: () => '/knowledge',
+  },
+  {
     pattern: new RegExp(`^(${UUID})/versions$`),
     upstream: (id) => `/knowledge/${id}/versions`,
   },
   {
     pattern: new RegExp(`^versions/(${UUID})/submit$`),
     upstream: (id) => `/knowledge-versions/${id}/submit`,
+  },
+  {
+    pattern: new RegExp(`^versions/(${UUID})/save$`),
+    upstream: (id) => `/knowledge-versions/${id}/save`,
   },
   {
     pattern: new RegExp(`^versions/(${UUID})/decision$`),
@@ -37,7 +45,7 @@ const ROUTES: Array<{ pattern: RegExp; upstream: (id: string) => string }> = [
   },
 ];
 
-function resolve(path: string): string | null {
+export function resolve(path: string): string | null {
   for (const route of ROUTES) {
     const match = route.pattern.exec(path);
     if (match?.[1]) return route.upstream(match[1]);

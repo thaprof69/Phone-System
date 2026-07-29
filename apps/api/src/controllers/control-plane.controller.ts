@@ -116,6 +116,7 @@ const KnowledgeEditSchema = z
     expiresAt: z.iso.datetime().optional(),
   })
   .strict();
+const KnowledgeDraftSaveSchema = z.object({ content: z.string().min(1).max(200_000) }).strict();
 const KnowledgeAssignmentSchema = z
   .object({
     agentVersionId: z.uuid(),
@@ -464,6 +465,16 @@ export class ControlPlaneController {
   @Post('knowledge-versions/:id/submit')
   submitKnowledge(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.platform.submitKnowledgeForReview(UuidSchema.parse(id), request.principal);
+  }
+  @RequirePermission('knowledge:write')
+  @Post('knowledge-versions/:id/save')
+  saveKnowledgeDraft(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = KnowledgeDraftSaveSchema.parse(body);
+    return this.platform.saveKnowledgeDraft(UuidSchema.parse(id), input.content, request.principal);
   }
   @RequirePermission('knowledge:approve')
   @Post('knowledge-versions/:id/decision')

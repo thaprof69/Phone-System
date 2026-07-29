@@ -1185,6 +1185,37 @@ export class PlatformService {
     return { status: 'UPDATED' as const, from: 'DRAFT', to: 'IN_REVIEW', version: updated };
   }
 
+  /** Saves operator corrections to an existing draft without advancing its review state. */
+  async saveKnowledgeDraft(versionId: string, content: string, principal: Principal) {
+    const version = await this.database.db.query.knowledgeVersions.findFirst({
+      where: eq(knowledgeVersions.id, versionId),
+    });
+    if (!version) return { status: 'NOT_FOUND' as const };
+    if (version.state !== 'DRAFT') {
+      return { status: 'CONFLICT' as const, currentState: version.state };
+    }
+
+    const checksum = createHash('sha256').update(content).digest('hex');
+    const [updated] = await this.database.db
+      .update(knowledgeVersions)
+      .set({ content, contentChecksum: checksum })
+      .where(eq(knowledgeVersions.id, versionId))
+      .returning();
+    if (!updated) return { status: 'NOT_FOUND' as const };
+
+    await this.audit.append({
+      actorType: 'USER',
+      actorId: principal.subject,
+      action: 'KNOWLEDGE_VERSION_DRAFT_SAVED',
+      aggregateType: 'KnowledgeVersion',
+      aggregateId: versionId,
+      purpose: 'RELEASE_MANAGEMENT',
+      payload: { assetId: version.assetId, version: version.version, checksum },
+    });
+
+    return { status: 'UPDATED' as const, version: updated };
+  }
+
   /**
    * Retries a failed or drifted synchronisation.
    *

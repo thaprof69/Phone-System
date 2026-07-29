@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { PhoneCall } from 'lucide-react';
+import { MessageSquareText, PhoneCall } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 type LiveCall = {
@@ -16,6 +16,7 @@ type LiveCall = {
 type LiveCallResponse = {
   status: 'IDLE' | 'ACTIVE' | 'NOT_CONFIGURED' | 'DEGRADED';
   activeCalls: LiveCall[];
+  activeChats?: LiveCall[];
 };
 
 function elapsedLabel(startedAt: string, now: number): string {
@@ -27,6 +28,7 @@ function elapsedLabel(startedAt: string, now: number): string {
 
 export function LiveCallBanner() {
   const [calls, setCalls] = useState<LiveCall[]>([]);
+  const [chats, setChats] = useState<LiveCall[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -35,9 +37,15 @@ export function LiveCallBanner() {
       try {
         const response = await fetch('/api/admin/live-calls', { cache: 'no-store' });
         const payload = (await response.json()) as LiveCallResponse;
-        if (!disposed) setCalls(Array.isArray(payload.activeCalls) ? payload.activeCalls : []);
+        if (!disposed) {
+          setCalls(Array.isArray(payload.activeCalls) ? payload.activeCalls : []);
+          setChats(Array.isArray(payload.activeChats) ? payload.activeChats : []);
+        }
       } catch {
-        if (!disposed) setCalls([]);
+        if (!disposed) {
+          setCalls([]);
+          setChats([]);
+        }
       }
     };
     void refresh();
@@ -63,21 +71,51 @@ export function LiveCallBanner() {
       ),
     [calls],
   );
-  if (!oldestCall) return null;
+  const oldestChat = useMemo(
+    () =>
+      chats.reduce<LiveCall | null>(
+        (oldest, chat) => (!oldest || chat.startedAt < oldest.startedAt ? chat : oldest),
+        null,
+      ),
+    [chats],
+  );
+  if (!oldestCall && !oldestChat) return null;
 
-  const countLabel = calls.length === 1 ? 'Live call in progress' : `${calls.length} live calls`;
   return (
-    <Link className="live-call-banner" href="/calls/live" aria-live="polite">
-      <span className="live-call-signal" aria-hidden="true">
-        <PhoneCall size={17} />
-      </span>
-      <span className="live-call-copy">
-        <strong>{countLabel}</strong>
-        <span>
-          {oldestCall.agentName} · {oldestCall.source} · {elapsedLabel(oldestCall.startedAt, now)}
-        </span>
-      </span>
-      <span className="live-call-action">Open live activity</span>
-    </Link>
+    <div className="live-activity-notices" aria-live="polite">
+      {oldestCall ? (
+        <Link className="live-call-banner" href="/calls/live">
+          <span className="live-call-signal" aria-hidden="true">
+            <PhoneCall size={17} />
+          </span>
+          <span className="live-call-copy">
+            <strong>
+              {calls.length === 1 ? 'Live call in progress' : `${calls.length} live calls`}
+            </strong>
+            <span>
+              {oldestCall.agentName} · {oldestCall.source} ·{' '}
+              {elapsedLabel(oldestCall.startedAt, now)}
+            </span>
+          </span>
+          <span className="live-call-action">Open live calls</span>
+        </Link>
+      ) : null}
+      {oldestChat ? (
+        <Link className="live-call-banner live-chat-banner" href="/chat">
+          <span className="live-call-signal live-chat-signal" aria-hidden="true">
+            <MessageSquareText size={18} />
+          </span>
+          <span className="live-call-copy">
+            <strong>
+              {chats.length === 1 ? 'Live chat in progress' : `${chats.length} live chats`}
+            </strong>
+            <span>
+              {oldestChat.agentName} · Website/app · {elapsedLabel(oldestChat.startedAt, now)}
+            </span>
+          </span>
+          <span className="live-call-action">Open live chats</span>
+        </Link>
+      ) : null}
+    </div>
   );
 }

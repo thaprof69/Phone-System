@@ -59,6 +59,7 @@ type RuntimeConfigInput = {
   summaryGeneration?: boolean | undefined;
   escalationDetection?: boolean | undefined;
   voiceMode?: 'WEBRTC_PREFERRED' | 'WEBSOCKET_ONLY' | undefined;
+  transferConfiguration?: Record<string, unknown> | undefined;
 };
 type ConnectInput = TestInput &
   RuntimeConfigInput & {
@@ -393,6 +394,7 @@ export class ElevenLabsIntegrationService {
         // voiceMode unless the caller explicitly changes it. The DB column default
         // (WEBSOCKET_ONLY) only ever applies to rows this code path doesn't touch.
         voiceMode: input.voiceMode ?? existing?.voiceMode ?? ('WEBRTC_PREFERRED' as const),
+        transferConfiguration: input.transferConfiguration ?? existing?.transferConfiguration ?? {},
         updatedBy: principal.subject,
         updatedAt: now,
       };
@@ -617,6 +619,7 @@ export class ElevenLabsIntegrationService {
       summaryGeneration: integration.summaryGeneration,
       escalationDetection: integration.escalationDetection,
       voiceMode: integration.voiceMode,
+      transferConfiguration: integration.transferConfiguration,
       productionRoutingEnabled: readiness?.status === 'PRODUCTION_ACTIVE',
     };
   }
@@ -665,6 +668,16 @@ export class ElevenLabsIntegrationService {
       latestDiagnosticsStatus: latestDiagnostics?.status ?? null,
       latestDiagnosticsAt: latestDiagnostics?.checkedAt?.toISOString() ?? null,
     };
+  }
+
+  async synchronizeActiveAgentFromStoredCredential(principal: Principal) {
+    const resolved = await this.resolveActiveCredential();
+    if (!resolved)
+      return {
+        status: 'NOT_CONFIGURED' as const,
+        message: 'No active ElevenLabs credential is stored, so the agent cannot be republished.',
+      };
+    return this.synchronizeActiveAgent(resolved.integration, resolved.apiKey, principal);
   }
 
   capabilities() {
@@ -1012,6 +1025,7 @@ export class ElevenLabsIntegrationService {
         transcriptCapture: current.transcriptCapture,
         summaryGeneration: current.summaryGeneration,
         escalationDetection: current.escalationDetection,
+        transferConfiguration: current.transferConfiguration,
       },
       principal,
     );

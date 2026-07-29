@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   isLiveProviderConversation,
+  providerConversationChannel,
   providerConversationEndedAt,
   providerConversationStartedAt,
 } from './provider-conversation-monitor.service.js';
@@ -15,6 +16,15 @@ describe('provider conversation monitoring', () => {
 
   it.each(['processing', 'done', 'failed'])('does not show %s as a live call', (status) => {
     expect(isLiveProviderConversation(status)).toBe(false);
+  });
+
+  it('classifies unlinked ElevenLabs JavaScript SDK sessions as chat', () => {
+    expect(providerConversationChannel('js_sdk')).toBe('CHAT');
+  });
+
+  it('uses the authoritative local session mode when a provider source is ambiguous', () => {
+    expect(providerConversationChannel('js_sdk', 'VOICE')).toBe('CALL');
+    expect(providerConversationChannel('telephony', 'TEXT')).toBe('CHAT');
   });
 
   it('derives stable call timing from provider data', () => {

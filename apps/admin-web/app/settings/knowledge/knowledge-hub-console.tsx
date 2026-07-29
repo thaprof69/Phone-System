@@ -20,6 +20,7 @@ import {
   PhoneCall,
   Play,
   Search,
+  Save,
   Send,
   ShieldCheck,
   Sparkles,
@@ -41,12 +42,13 @@ type IngestItem = {
   id: string;
   title: string;
   kind: string;
-  status: 'Analysing' | 'In review' | 'Blocked';
+  status: 'Analysing' | 'Ready to review' | 'Draft saved' | 'In review' | 'Blocked';
   summary: string;
   category: string;
   confidence: string;
   analysis?: DocumentAnalysis;
-  error?: string;
+  reviewDraft?: ReviewDraft | undefined;
+  error?: string | undefined;
 };
 
 type DocumentAnalysis = {
@@ -58,6 +60,33 @@ type DocumentAnalysis = {
   ambiguities: string[];
   knowledgeContribution: string;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+};
+
+type UrlDraft = {
+  sourceUrl: string;
+  content: string;
+  crawledPages: Array<{ url: string; title: string }>;
+  researchCues: string[];
+  workflow: DraftWorkflow;
+};
+
+type DraftWorkflow = {
+  state: 'UNSAVED' | 'SAVING' | 'SAVED' | 'SUBMITTING' | 'IN_REVIEW';
+  assetId?: string | undefined;
+  versionId?: string | undefined;
+  savedContent?: string | undefined;
+  error?: string | undefined;
+};
+
+type ReviewDraft = DraftWorkflow & {
+  content: string;
+};
+
+type UrlIngestionResult = {
+  analysis?: DocumentAnalysis;
+  crawledPages?: Array<{ url: string; title: string }>;
+  researchCues?: string[];
+  message?: string;
 };
 
 const supportedSources = [
@@ -116,6 +145,8 @@ const businessFields = [
 type BusinessFieldLabel =
   (typeof businessFields)[number][0] | 'Company voice' | 'Approved examples';
 
+type UrlCopilotFieldLabel = 'URL research summary';
+
 const initialBusinessFacts: Record<BusinessFieldLabel, string> = {
   ...Object.fromEntries(businessFields),
   'Company voice':
@@ -161,6 +192,68 @@ function removeSuggestion(
   return next;
 }
 
+function formatUrlDraft(
+  sourceUrl: string,
+  analysis: DocumentAnalysis,
+  crawledPages: Array<{ url: string; title: string }>,
+  researchCues: string[],
+) {
+  const facts = analysis.keyFacts.map((fact) => `- ${fact.fact}`).join('\n');
+  const ambiguities =
+    analysis.ambiguities.length > 0
+      ? analysis.ambiguities.map((ambiguity) => `- ${ambiguity}`).join('\n')
+      : '- No ambiguity was identified by the configured analyser. Human review is still required.';
+  const pages = crawledPages.map((page) => `- ${page.title}: ${page.url}`).join('\n');
+  const cues =
+    researchCues.length > 0
+      ? researchCues.map((cue) => `- ${cue}`).join('\n')
+      : '- No external research cues were discovered in the crawled pages.';
+
+  return `Source URL
+${sourceUrl}
+
+Conclusion
+${analysis.detailedSummary}
+
+Receptionist knowledge contribution
+${analysis.knowledgeContribution}
+
+Evidence-backed facts
+${facts}
+
+Needs operator review
+${ambiguities}
+
+Pages analysed
+${pages}
+
+Wider research cues
+${cues}`;
+}
+
+function formatDocumentDraft(title: string, analysis: DocumentAnalysis) {
+  const facts = analysis.keyFacts.map((fact) => `- ${fact.fact}`).join('\n');
+  const ambiguities =
+    analysis.ambiguities.length > 0
+      ? analysis.ambiguities.map((ambiguity) => `- ${ambiguity}`).join('\n')
+      : '- No ambiguity was identified by the configured analyser. Human review is still required.';
+
+  return `Source document
+${title}
+
+Conclusion
+${analysis.detailedSummary}
+
+Receptionist knowledge contribution
+${analysis.knowledgeContribution}
+
+Evidence-backed facts
+${facts}
+
+Needs operator review
+${ambiguities}`;
+}
+
 export function KnowledgeHubConsole({
   records,
   unavailableReason,
@@ -173,6 +266,14 @@ export function KnowledgeHubConsole({
   const [activeItem, setActiveItem] = useState<IngestItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [businessFacts, setBusinessFacts] = useState(initialBusinessFacts);
+  const [businessWorkflow, setBusinessWorkflow] = useState<DraftWorkflow>({
+    state: 'UNSAVED',
+  });
+  const [urlDraft, setUrlDraft] = useState<UrlDraft | null>(null);
+  const [urlAnalysing, setUrlAnalysing] = useState(false);
+  const [urlEnhancing, setUrlEnhancing] = useState(false);
+  const [urlSuggestion, setUrlSuggestion] = useState<string | null>(null);
+  const [urlCopilotError, setUrlCopilotError] = useState<string | null>(null);
   const [enhancingField, setEnhancingField] = useState<BusinessFieldLabel | null>(null);
   const [suggestions, setSuggestions] = useState<Partial<Record<BusinessFieldLabel, string>>>({});
   const [copilotError, setCopilotError] = useState<string | null>(null);
@@ -218,10 +319,343 @@ export function KnowledgeHubConsole({
     [approvedCount, items, pendingCount],
   );
 
-  function ingestUrl() {
-    setMessage(
-      `URL ingestion for ${url} is not connected yet. No page was fetched and nothing was published.`,
+  function updateIngestItem(id: string, update: (item: IngestItem) => IngestItem) {
+    setItems((current) => current.map((item) => (item.id === id ? update(item) : item)));
+    setActiveItem((current) => (current?.id === id ? update(current) : current));
+  }
+
+  async function saveDraftRecord({
+    title,
+    category,
+    content,
+    workflow,
+  }: {
+    title: string;
+    category: string;
+    content: string;
+    workflow: DraftWorkflow;
+  }): Promise<DraftWorkflow> {
+    const response = await fetch(
+      workflow.versionId
+        ? `/api/admin/knowledge/versions/${workflow.versionId}/save`
+        : '/api/admin/knowledge/create',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          workflow.versionId
+            ? { content }
+            : {
+                title,
+                category,
+                language: 'en',
+                riskClass: 'MEDIUM',
+                content,
+              },
+        ),
+      },
     );
+    const payload = (await response.json().catch(() => ({}))) as {
+      id?: string;
+      assetId?: string;
+      version?: { id?: string; assetId?: string };
+      status?: string;
+      currentState?: string;
+      message?: string;
+    };
+    if (!response.ok || payload.status === 'CONFLICT' || payload.status === 'NOT_FOUND') {
+      throw new Error(
+        payload.message ??
+          (payload.status === 'CONFLICT'
+            ? `This record is already ${payload.currentState ?? 'in another state'}.`
+            : 'The draft could not be saved.'),
+      );
+    }
+
+    const versionId = workflow.versionId ?? payload.id ?? payload.version?.id;
+    const assetId = workflow.assetId ?? payload.assetId ?? payload.version?.assetId;
+    if (!versionId || !assetId) {
+      throw new Error('The platform saved the draft but did not return its record identifiers.');
+    }
+    return { state: 'SAVED', versionId, assetId, savedContent: content };
+  }
+
+  async function submitDraftRecord(workflow: DraftWorkflow): Promise<DraftWorkflow> {
+    if (!workflow.versionId) throw new Error('Save the draft before submitting it.');
+    const response = await fetch(`/api/admin/knowledge/versions/${workflow.versionId}/submit`, {
+      method: 'POST',
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      status?: string;
+      currentState?: string;
+      message?: string;
+    };
+    if (!response.ok || payload.status !== 'UPDATED') {
+      throw new Error(
+        payload.message ??
+          (payload.status === 'CONFLICT'
+            ? `This record is already ${payload.currentState ?? 'in another state'}.`
+            : 'The platform refused to submit this draft.'),
+      );
+    }
+    return { ...workflow, state: 'IN_REVIEW', error: undefined };
+  }
+
+  async function saveUrlDraft() {
+    if (!urlDraft || !activeItem) return;
+    if (!urlDraft.content.trim()) {
+      setUrlDraft((current) =>
+        current
+          ? { ...current, workflow: { ...current.workflow, error: 'The draft cannot be empty.' } }
+          : current,
+      );
+      return;
+    }
+    setUrlDraft((current) =>
+      current
+        ? { ...current, workflow: { ...current.workflow, state: 'SAVING', error: undefined } }
+        : current,
+    );
+    try {
+      const workflow = await saveDraftRecord({
+        title: `Website analysis: ${new URL(urlDraft.sourceUrl).hostname}`,
+        category: activeItem.category,
+        content: urlDraft.content,
+        workflow: urlDraft.workflow,
+      });
+      setUrlDraft((current) => (current ? { ...current, workflow } : current));
+      updateIngestItem(activeItem.id, (item) => ({ ...item, status: 'Draft saved' }));
+      setMessage('Draft saved locally. Review the saved text, then submit it when satisfied.');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The draft could not be saved.';
+      setUrlDraft((current) =>
+        current
+          ? { ...current, workflow: { ...current.workflow, state: 'UNSAVED', error: reason } }
+          : current,
+      );
+    }
+  }
+
+  async function submitUrlDraft() {
+    if (!urlDraft || !activeItem) return;
+    if (urlDraft.workflow.savedContent !== urlDraft.content) {
+      setUrlDraft((current) =>
+        current
+          ? {
+              ...current,
+              workflow: {
+                ...current.workflow,
+                error: 'Save your latest changes before submitting for review.',
+              },
+            }
+          : current,
+      );
+      return;
+    }
+    setUrlDraft((current) =>
+      current
+        ? { ...current, workflow: { ...current.workflow, state: 'SUBMITTING', error: undefined } }
+        : current,
+    );
+    try {
+      const workflow = await submitDraftRecord(urlDraft.workflow);
+      setUrlDraft((current) => (current ? { ...current, workflow } : current));
+      updateIngestItem(activeItem.id, (item) => ({ ...item, status: 'In review' }));
+      setMessage('The saved URL draft was submitted to the review queue. It is not published.');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The draft could not be submitted.';
+      setUrlDraft((current) =>
+        current
+          ? { ...current, workflow: { ...current.workflow, state: 'SAVED', error: reason } }
+          : current,
+      );
+    }
+  }
+
+  async function saveItemDraft(item: IngestItem) {
+    if (!item.reviewDraft || !item.reviewDraft.content.trim()) return;
+    updateIngestItem(item.id, (current) => ({
+      ...current,
+      reviewDraft: current.reviewDraft
+        ? { ...current.reviewDraft, state: 'SAVING', error: undefined }
+        : current.reviewDraft,
+    }));
+    try {
+      const workflow = await saveDraftRecord({
+        title: item.title,
+        category: item.category,
+        content: item.reviewDraft.content,
+        workflow: item.reviewDraft,
+      });
+      updateIngestItem(item.id, (current) => ({
+        ...current,
+        status: 'Draft saved',
+        reviewDraft: { ...workflow, content: current.reviewDraft?.content ?? '' },
+      }));
+      setMessage(`${item.title} was saved as a local draft.`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The draft could not be saved.';
+      updateIngestItem(item.id, (current) => ({
+        ...current,
+        reviewDraft: current.reviewDraft
+          ? { ...current.reviewDraft, state: 'UNSAVED', error: reason }
+          : current.reviewDraft,
+      }));
+    }
+  }
+
+  async function submitItemDraft(item: IngestItem) {
+    if (!item.reviewDraft || item.reviewDraft.savedContent !== item.reviewDraft.content) return;
+    updateIngestItem(item.id, (current) => ({
+      ...current,
+      reviewDraft: current.reviewDraft
+        ? { ...current.reviewDraft, state: 'SUBMITTING', error: undefined }
+        : current.reviewDraft,
+    }));
+    try {
+      const workflow = await submitDraftRecord(item.reviewDraft);
+      updateIngestItem(item.id, (current) => ({
+        ...current,
+        status: 'In review',
+        reviewDraft: { ...workflow, content: current.reviewDraft?.content ?? '' },
+      }));
+      setMessage(`${item.title} was submitted to the review queue. It is not published.`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The draft could not be submitted.';
+      updateIngestItem(item.id, (current) => ({
+        ...current,
+        reviewDraft: current.reviewDraft
+          ? { ...current.reviewDraft, state: 'SAVED', error: reason }
+          : current.reviewDraft,
+      }));
+    }
+  }
+
+  function businessDraftContent() {
+    return Object.entries(businessFacts)
+      .map(([label, value]) => `${label}\n${value.trim()}`)
+      .join('\n\n');
+  }
+
+  async function saveBusinessDraft() {
+    const content = businessDraftContent();
+    setBusinessWorkflow((current) => ({ ...current, state: 'SAVING', error: undefined }));
+    try {
+      const workflow = await saveDraftRecord({
+        title: 'Company profile and operating facts',
+        category: 'Company profile',
+        content,
+        workflow: businessWorkflow,
+      });
+      setBusinessWorkflow(workflow);
+      setMessage('Company facts were saved as a local draft. They are not published.');
+    } catch (error) {
+      setBusinessWorkflow((current) => ({
+        ...current,
+        state: 'UNSAVED',
+        error: error instanceof Error ? error.message : 'The company facts could not be saved.',
+      }));
+    }
+  }
+
+  async function submitBusinessDraft() {
+    const content = businessDraftContent();
+    if (businessWorkflow.savedContent !== content) {
+      setBusinessWorkflow((current) => ({
+        ...current,
+        error: 'Save your latest company-fact changes before submitting for review.',
+      }));
+      return;
+    }
+    setBusinessWorkflow((current) => ({ ...current, state: 'SUBMITTING', error: undefined }));
+    try {
+      setBusinessWorkflow(await submitDraftRecord(businessWorkflow));
+      setMessage('The saved company facts were submitted for review. They are not published.');
+    } catch (error) {
+      setBusinessWorkflow((current) => ({
+        ...current,
+        state: 'SAVED',
+        error: error instanceof Error ? error.message : 'The company facts could not be submitted.',
+      }));
+    }
+  }
+
+  async function ingestUrl() {
+    const trimmedUrl = url.trim();
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      setMessage('Enter a valid public URL before extracting.');
+      return;
+    }
+
+    const item: IngestItem = {
+      id: `url-${Date.now()}`,
+      title: trimmedUrl,
+      kind: 'Website',
+      status: 'Analysing',
+      summary: 'Fetching same-site pages and routing extracted text to Knowledge Hub analysis.',
+      category: 'Website crawl',
+      confidence: 'Pending',
+    };
+    setItems((current) => [item, ...current]);
+    setActiveItem(item);
+    setUrlDraft(null);
+    setUrlSuggestion(null);
+    setUrlCopilotError(null);
+    setUrlAnalysing(true);
+    setMessage(`${trimmedUrl} is being crawled and analysed. Nothing will publish automatically.`);
+
+    try {
+      const response = await fetch('/api/admin/knowledge-copilot/analyse', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: trimmedUrl }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as UrlIngestionResult;
+      if (!response.ok || !payload.analysis) {
+        throw new Error(payload.message ?? 'The configured Knowledge Hub route refused the URL.');
+      }
+
+      const crawledPages = payload.crawledPages ?? [];
+      const researchCues = payload.researchCues ?? [];
+      const analysed: IngestItem = {
+        ...item,
+        title: new URL(trimmedUrl).hostname,
+        status: 'Ready to review',
+        summary: payload.analysis.shortSummary,
+        category: payload.analysis.topics[0] ?? 'Website knowledge',
+        confidence: payload.analysis.confidence,
+        analysis: payload.analysis,
+      };
+      setItems((current) => current.map((entry) => (entry.id === item.id ? analysed : entry)));
+      setActiveItem(analysed);
+      setUrlDraft({
+        sourceUrl: trimmedUrl,
+        content: formatUrlDraft(trimmedUrl, payload.analysis, crawledPages, researchCues),
+        crawledPages,
+        researchCues,
+        workflow: { state: 'UNSAVED' },
+      });
+      setMessage(
+        `${trimmedUrl} was analysed. Review and edit the result, then save the draft before submitting it.`,
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'The URL could not be analysed.';
+      const blocked: IngestItem = {
+        ...item,
+        status: 'Blocked',
+        summary: reason,
+        category: 'Analysis blocked',
+        confidence: 'Not assessed',
+        error: reason,
+      };
+      setItems((current) => current.map((entry) => (entry.id === item.id ? blocked : entry)));
+      setActiveItem(blocked);
+      setMessage(`${trimmedUrl} was not analysed: ${reason}`);
+    } finally {
+      setUrlAnalysing(false);
+    }
   }
 
   function chooseFile(kind: string, accept: string) {
@@ -263,17 +697,19 @@ export function KnowledgeHubConsole({
 
       const analysed: IngestItem = {
         ...item,
-        status: 'In review',
+        status: 'Ready to review',
         summary: payload.analysis.shortSummary,
         category: payload.analysis.topics[0] ?? 'Company knowledge',
         confidence: payload.analysis.confidence,
         analysis: payload.analysis,
+        reviewDraft: {
+          content: formatDocumentDraft(file.name, payload.analysis),
+          state: 'UNSAVED',
+        },
       };
       setItems((current) => current.map((entry) => (entry.id === item.id ? analysed : entry)));
       setActiveItem(analysed);
-      setMessage(
-        `${file.name} was analysed into a reviewable draft. Human approval is still required.`,
-      );
+      setMessage(`${file.name} was analysed. Review and edit the result before saving the draft.`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'The document could not be analysed.';
       const blocked: IngestItem = {
@@ -326,6 +762,53 @@ export function KnowledgeHubConsole({
       );
     } finally {
       setEnhancingField(null);
+    }
+  }
+
+  async function enhanceUrlDraft(fieldLabel: UrlCopilotFieldLabel) {
+    if (!urlDraft || urlDraft.content.trim().length < 3) {
+      setUrlCopilotError('Add a little more detail before asking Copilot to enhance it.');
+      return;
+    }
+
+    setUrlEnhancing(true);
+    setUrlCopilotError(null);
+    try {
+      const response = await fetch('/api/admin/ai/intelligence/copilot/enhance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          fieldLabel,
+          currentText: urlDraft.content,
+          context: [
+            { label: 'Source URL', value: urlDraft.sourceUrl },
+            {
+              label: 'Pages analysed',
+              value:
+                urlDraft.crawledPages.map((page) => `${page.title}: ${page.url}`).join('\n') ||
+                'No page list was returned.',
+            },
+            {
+              label: 'Research cues',
+              value: urlDraft.researchCues.join('\n') || 'No external cues were returned.',
+            },
+          ],
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        suggestion?: string;
+        message?: string;
+      };
+      if (!response.ok || !payload.suggestion) {
+        throw new Error(payload.message ?? 'The configured AI Copilot route refused this request.');
+      }
+      setUrlSuggestion(payload.suggestion);
+    } catch (error) {
+      setUrlCopilotError(
+        error instanceof Error ? error.message : 'Copilot is temporarily unavailable.',
+      );
+    } finally {
+      setUrlEnhancing(false);
     }
   }
 
@@ -413,11 +896,125 @@ export function KnowledgeHubConsole({
               <span>URL ingestion</span>
               <input value={url} onChange={(event) => setUrl(event.target.value)} />
             </label>
-            <button className="button primary" type="button" onClick={ingestUrl}>
-              <Link2 size={15} />
-              Extract URL
+            <button
+              className="button primary"
+              type="button"
+              onClick={() => void ingestUrl()}
+              disabled={urlAnalysing}
+            >
+              {urlAnalysing ? <LoaderCircle className="spin" size={15} /> : <Link2 size={15} />}
+              {urlAnalysing ? 'Analysing URL' : 'Extract URL'}
             </button>
           </div>
+          {urlDraft ? (
+            <article className="url-analysis-card">
+              <header>
+                <div>
+                  <p className="eyebrow">URL conclusion</p>
+                  <h3>Editable research summary</h3>
+                </div>
+                <button
+                  type="button"
+                  className="button secondary small"
+                  disabled={urlEnhancing}
+                  onClick={() => void enhanceUrlDraft('URL research summary')}
+                >
+                  {urlEnhancing ? (
+                    <LoaderCircle className="spin" size={15} />
+                  ) : (
+                    <Sparkles size={15} />
+                  )}
+                  AI Copilot enhance
+                </button>
+              </header>
+              <textarea
+                aria-label="Editable URL research summary"
+                value={urlDraft.content}
+                onChange={(event) =>
+                  setUrlDraft((current) =>
+                    current ? { ...current, content: event.target.value } : current,
+                  )
+                }
+                rows={13}
+                disabled={urlDraft.workflow.state === 'IN_REVIEW'}
+              />
+              {urlCopilotError ? (
+                <div className="notice danger compact" role="alert">
+                  <AlertTriangle size={16} />
+                  <p>{urlCopilotError}</p>
+                </div>
+              ) : null}
+              <CopilotSuggestion
+                suggestion={urlSuggestion ?? undefined}
+                onApply={(suggestion) => {
+                  setUrlDraft((current) =>
+                    current ? { ...current, content: suggestion } : current,
+                  );
+                  setUrlSuggestion(null);
+                }}
+                onDismiss={() => setUrlSuggestion(null)}
+              />
+              {urlDraft.workflow.error ? (
+                <div className="notice danger compact" role="alert">
+                  <AlertTriangle size={16} />
+                  <p>{urlDraft.workflow.error}</p>
+                </div>
+              ) : null}
+              <div className="draft-checkpoint">
+                <div>
+                  <strong>
+                    {urlDraft.workflow.state === 'IN_REVIEW'
+                      ? 'Submitted for review'
+                      : urlDraft.workflow.savedContent === urlDraft.content
+                        ? 'All changes saved'
+                        : 'Unsaved operator changes'}
+                  </strong>
+                  <span>
+                    Saving creates a local draft only. Submission moves that saved version to the
+                    review queue; neither action publishes it.
+                  </span>
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => void saveUrlDraft()}
+                    disabled={
+                      urlDraft.workflow.state === 'SAVING' ||
+                      urlDraft.workflow.state === 'SUBMITTING' ||
+                      urlDraft.workflow.state === 'IN_REVIEW' ||
+                      urlDraft.workflow.savedContent === urlDraft.content
+                    }
+                  >
+                    {urlDraft.workflow.state === 'SAVING' ? (
+                      <LoaderCircle className="spin" size={15} />
+                    ) : (
+                      <Save size={15} />
+                    )}
+                    {urlDraft.workflow.versionId ? 'Save changes' : 'Save draft'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick={() => void submitUrlDraft()}
+                    disabled={
+                      urlDraft.workflow.state === 'SUBMITTING' ||
+                      urlDraft.workflow.state === 'IN_REVIEW' ||
+                      !urlDraft.workflow.versionId ||
+                      urlDraft.workflow.savedContent !== urlDraft.content
+                    }
+                  >
+                    {urlDraft.workflow.state === 'SUBMITTING' ? (
+                      <LoaderCircle className="spin" size={15} />
+                    ) : (
+                      <Send size={15} />
+                    )}
+                    {urlDraft.workflow.state === 'IN_REVIEW' ? 'Submitted' : 'Submit for review'}
+                  </button>
+                </div>
+              </div>
+            </article>
+          ) : null}
         </section>
 
         <section className="knowledge-panel">
@@ -707,6 +1304,64 @@ export function KnowledgeHubConsole({
               />
             </div>
           </div>
+          {businessWorkflow.error ? (
+            <div className="notice danger compact" role="alert">
+              <AlertTriangle size={16} />
+              <p>{businessWorkflow.error}</p>
+            </div>
+          ) : null}
+          <div className="draft-checkpoint business-draft-checkpoint">
+            <div>
+              <strong>
+                {businessWorkflow.state === 'IN_REVIEW'
+                  ? 'Company facts submitted for review'
+                  : businessWorkflow.savedContent === businessDraftContent()
+                    ? 'All company-fact changes saved'
+                    : 'Unsaved company-fact changes'}
+              </strong>
+              <span>
+                Save the combined company profile, then submit that exact version for review.
+              </span>
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void saveBusinessDraft()}
+                disabled={
+                  businessWorkflow.state === 'SAVING' ||
+                  businessWorkflow.state === 'SUBMITTING' ||
+                  businessWorkflow.state === 'IN_REVIEW' ||
+                  businessWorkflow.savedContent === businessDraftContent()
+                }
+              >
+                {businessWorkflow.state === 'SAVING' ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : (
+                  <Save size={15} />
+                )}
+                {businessWorkflow.versionId ? 'Save changes' : 'Save draft'}
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void submitBusinessDraft()}
+                disabled={
+                  businessWorkflow.state === 'SUBMITTING' ||
+                  businessWorkflow.state === 'IN_REVIEW' ||
+                  !businessWorkflow.versionId ||
+                  businessWorkflow.savedContent !== businessDraftContent()
+                }
+              >
+                {businessWorkflow.state === 'SUBMITTING' ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : (
+                  <Send size={15} />
+                )}
+                {businessWorkflow.state === 'IN_REVIEW' ? 'Submitted' : 'Submit for review'}
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="knowledge-panel knowledge-panel-wide">
@@ -846,6 +1501,91 @@ export function KnowledgeHubConsole({
             <div className="drawer-body knowledge-analysis-body">
               {activeItem.analysis ? (
                 <>
+                  {activeItem.reviewDraft ? (
+                    <section className="drawer-review-draft">
+                      <div className="drawer-section-heading">
+                        <div>
+                          <p className="eyebrow">Operator checkpoint</p>
+                          <h3>Editable knowledge draft</h3>
+                        </div>
+                        <StatusPill
+                          tone={activeItem.reviewDraft.state === 'IN_REVIEW' ? 'info' : 'warning'}
+                        >
+                          {activeItem.reviewDraft.state === 'IN_REVIEW'
+                            ? 'In review'
+                            : activeItem.reviewDraft.savedContent === activeItem.reviewDraft.content
+                              ? 'Saved'
+                              : 'Unsaved'}
+                        </StatusPill>
+                      </div>
+                      <textarea
+                        aria-label={`Editable knowledge draft for ${activeItem.title}`}
+                        value={activeItem.reviewDraft.content}
+                        rows={14}
+                        disabled={activeItem.reviewDraft.state === 'IN_REVIEW'}
+                        onChange={(event) =>
+                          updateIngestItem(activeItem.id, (item) => ({
+                            ...item,
+                            reviewDraft: item.reviewDraft
+                              ? { ...item.reviewDraft, content: event.target.value }
+                              : item.reviewDraft,
+                          }))
+                        }
+                      />
+                      {activeItem.reviewDraft.error ? (
+                        <div className="notice danger compact" role="alert">
+                          <AlertTriangle size={16} />
+                          <p>{activeItem.reviewDraft.error}</p>
+                        </div>
+                      ) : null}
+                      <div className="draft-checkpoint">
+                        <span>
+                          Save your corrections first. Submit only enables when the visible text
+                          exactly matches the saved draft.
+                        </span>
+                        <div className="button-row">
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => void saveItemDraft(activeItem)}
+                            disabled={
+                              activeItem.reviewDraft.state === 'SAVING' ||
+                              activeItem.reviewDraft.state === 'SUBMITTING' ||
+                              activeItem.reviewDraft.state === 'IN_REVIEW' ||
+                              activeItem.reviewDraft.savedContent === activeItem.reviewDraft.content
+                            }
+                          >
+                            {activeItem.reviewDraft.state === 'SAVING' ? (
+                              <LoaderCircle className="spin" size={15} />
+                            ) : (
+                              <Save size={15} />
+                            )}
+                            {activeItem.reviewDraft.versionId ? 'Save changes' : 'Save draft'}
+                          </button>
+                          <button
+                            type="button"
+                            className="button primary"
+                            onClick={() => void submitItemDraft(activeItem)}
+                            disabled={
+                              activeItem.reviewDraft.state === 'SUBMITTING' ||
+                              activeItem.reviewDraft.state === 'IN_REVIEW' ||
+                              !activeItem.reviewDraft.versionId ||
+                              activeItem.reviewDraft.savedContent !== activeItem.reviewDraft.content
+                            }
+                          >
+                            {activeItem.reviewDraft.state === 'SUBMITTING' ? (
+                              <LoaderCircle className="spin" size={15} />
+                            ) : (
+                              <Send size={15} />
+                            )}
+                            {activeItem.reviewDraft.state === 'IN_REVIEW'
+                              ? 'Submitted'
+                              : 'Submit for review'}
+                          </button>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
                   <div className="analysis-verdict">
                     <div>
                       <span>Confidence</span>

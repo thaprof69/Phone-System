@@ -14,6 +14,8 @@ import {
   providerConversations,
   providerWorkspaces,
   rawWebhookEvents,
+  receptionistSessions,
+  voiceSessions,
   voiceAgents,
 } from '@quantum-parks/db';
 import {
@@ -41,6 +43,7 @@ export type LiveProviderCall = {
 export type ProviderCallMonitorSnapshot = {
   status: 'IDLE' | 'ACTIVE' | 'NOT_CONFIGURED' | 'DEGRADED';
   activeCalls: LiveProviderCall[];
+  activeChats: LiveProviderCall[];
   lastSyncedAt: string | null;
   message: string | null;
 };
@@ -53,6 +56,14 @@ type AgentMapping = {
 
 export function isLiveProviderConversation(status: string): boolean {
   return LIVE_STATUSES.has(status.toLowerCase());
+}
+
+export function providerConversationChannel(
+  initiationSource: string | undefined,
+  localMode?: 'VOICE' | 'TEXT',
+): 'CALL' | 'CHAT' {
+  if (localMode) return localMode === 'TEXT' ? 'CHAT' : 'CALL';
+  return initiationSource?.toLowerCase() === 'js_sdk' ? 'CHAT' : 'CALL';
 }
 
 export function providerConversationStartedAt(
@@ -101,6 +112,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
   private current: ProviderCallMonitorSnapshot = {
     status: 'IDLE',
     activeCalls: [],
+    activeChats: [],
     lastSyncedAt: null,
     message: null,
   };
@@ -139,6 +151,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
         this.current = {
           status: 'DEGRADED',
           activeCalls: [],
+          activeChats: [],
           lastSyncedAt: new Date().toISOString(),
           message: 'Live call monitoring is temporarily unavailable',
         };
@@ -156,6 +169,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
       this.current = {
         status: 'NOT_CONFIGURED',
         activeCalls: [],
+        activeChats: [],
         lastSyncedAt: new Date().toISOString(),
         message: 'ElevenLabs is not connected',
       };
@@ -169,6 +183,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
       this.current = {
         status: 'DEGRADED',
         activeCalls: [],
+        activeChats: [],
         lastSyncedAt: new Date().toISOString(),
         message: 'The connected ElevenLabs workspace is not mapped',
       };
@@ -202,6 +217,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
       this.current = {
         status: 'DEGRADED',
         activeCalls: [],
+        activeChats: [],
         lastSyncedAt: new Date().toISOString(),
         message: 'No ElevenLabs agent is configured for call capture',
       };
@@ -223,6 +239,7 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
         this.current = {
           status: 'DEGRADED',
           activeCalls: [],
+          activeChats: [],
           lastSyncedAt: new Date().toISOString(),
           message: page.error.safeMessage,
         };
@@ -237,25 +254,52 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
       cursor = page.data.next_cursor;
     }
 
-    const activeCalls = discovered
+    const activeSessionRows = await this.database.db
+      .select({
+        providerConversationId: voiceSessions.providerConversationId,
+        mode: receptionistSessions.mode,
+      })
+      .from(receptionistSessions)
+      .innerJoin(voiceSessions, eq(receptionistSessions.voiceSessionId, voiceSessions.id))
+      .where(eq(receptionistSessions.status, 'ACTIVE'));
+    const localModeByConversation = new Map<string, 'VOICE' | 'TEXT'>();
+    for (const row of activeSessionRows) {
+      if (row.providerConversationId) {
+        localModeByConversation.set(row.providerConversationId, row.mode);
+      }
+    }
+
+    const activeActivities = discovered
       .filter((conversation) => isLiveProviderConversation(conversation.status))
-      .map((conversation): LiveProviderCall => {
+      .map((conversation): { channel: 'CALL' | 'CHAT'; activity: LiveProviderCall } => {
         const mapping = mappings.get(conversation.agentId);
         return {
-          providerConversationId: conversation.conversationId,
-          providerAgentId: conversation.agentId,
-          agentName:
-            conversation.agentName ??
-            mapping?.agentName ??
-            resolved.integration.verifiedAgentName ??
-            'AI Receptionist',
-          status: conversation.status.toLowerCase() === 'initiated' ? 'INITIATED' : 'IN_PROGRESS',
-          startedAt: providerConversationStartedAt(conversation).toISOString(),
-          direction: conversation.direction ?? 'inbound',
-          source: conversation.initiationSource ?? 'telephony',
+          channel: providerConversationChannel(
+            conversation.initiationSource,
+            localModeByConversation.get(conversation.conversationId),
+          ),
+          activity: {
+            providerConversationId: conversation.conversationId,
+            providerAgentId: conversation.agentId,
+            agentName:
+              conversation.agentName ??
+              mapping?.agentName ??
+              resolved.integration.verifiedAgentName ??
+              'AI Receptionist',
+            status: conversation.status.toLowerCase() === 'initiated' ? 'INITIATED' : 'IN_PROGRESS',
+            startedAt: providerConversationStartedAt(conversation).toISOString(),
+            direction: conversation.direction ?? 'inbound',
+            source: conversation.initiationSource ?? 'telephony',
+          },
         };
       })
-      .sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+      .sort((left, right) => left.activity.startedAt.localeCompare(right.activity.startedAt));
+    const activeCalls = activeActivities
+      .filter(({ channel }) => channel === 'CALL')
+      .map(({ activity }) => activity);
+    const activeChats = activeActivities
+      .filter(({ channel }) => channel === 'CHAT')
+      .map(({ activity }) => activity);
 
     const terminal = discovered.filter(
       (conversation) =>
@@ -277,8 +321,9 @@ export class ProviderConversationMonitorService implements OnApplicationBootstra
     }
 
     this.current = {
-      status: activeCalls.length > 0 ? 'ACTIVE' : 'IDLE',
+      status: activeCalls.length + activeChats.length > 0 ? 'ACTIVE' : 'IDLE',
       activeCalls,
+      activeChats,
       lastSyncedAt: new Date().toISOString(),
       message: null,
     };

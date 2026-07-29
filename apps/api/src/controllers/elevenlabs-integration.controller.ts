@@ -18,6 +18,87 @@ const TestSchema = z
     defaultAgentId: SafeProviderIdSchema.optional(),
   })
   .strict();
+const TransferTypeSchema = z.enum(['provider_default', 'conference', 'blind', 'sip_refer']);
+const TransferDestinationSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    label: z.string().trim().min(1).max(120),
+    type: z.enum(['alias', 'phone', 'sip_uri']),
+    value: z.string().trim().min(1).max(240),
+    availability: z.string().trim().min(1).max(240),
+    priority: z.number().int().min(1).max(99),
+    notes: z.string().trim().max(1_000),
+  })
+  .strict();
+const TransferRuleSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    label: z.string().trim().min(1).max(120),
+    enabled: z.boolean(),
+    priority: z.number().int().min(1).max(99),
+    destinationId: z.string().trim().min(1).max(80),
+    transferType: TransferTypeSchema,
+    reasonCode: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .regex(/^[A-Z0-9_-]+$/),
+    condition: z.string().trim().min(10).max(2_000),
+    clientMessage: z.string().trim().min(1).max(500),
+    operatorMessage: z.string().trim().min(1).max(1_000),
+  })
+  .strict();
+const TransferConfigurationSchema = z
+  .object({
+    enabled: z.boolean(),
+    executionOwner: z.literal('ELEVENLABS'),
+    transferTool: z.literal('transfer_to_number'),
+    defaultTransferType: TransferTypeSchema,
+    warmHandoffPreferred: z.boolean(),
+    preserveCallerIdPreferred: z.boolean(),
+    passConversationContext: z.boolean(),
+    destinations: z.array(TransferDestinationSchema).min(1).max(12),
+    rules: z.array(TransferRuleSchema).min(1).max(20),
+    fallback: z
+      .object({
+        type: z.enum(['callback', 'voicemail', 'message_only']),
+        destinationId: z.string().trim().min(1).max(80).nullable(),
+        instructions: z.string().trim().min(1).max(1_000),
+      })
+      .strict(),
+    copilotContext: z.string().trim().min(1).max(2_000),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const destinationIds = new Set(value.destinations.map((destination) => destination.id));
+    for (const rule of value.rules) {
+      if (!destinationIds.has(rule.destinationId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['rules', rule.id, 'destinationId'],
+          message: 'Rule destination must reference an approved destination.',
+        });
+      }
+    }
+    if (value.fallback.destinationId && !destinationIds.has(value.fallback.destinationId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['fallback', 'destinationId'],
+        message: 'Fallback destination must reference an approved destination.',
+      });
+    }
+  });
 const RuntimeConfigFields = {
   receptionistDisplayName: z.string().trim().min(1).max(100).nullable().optional(),
   greetingOverride: z.string().trim().min(1).max(500).nullable().optional(),
@@ -28,6 +109,7 @@ const RuntimeConfigFields = {
   summaryGeneration: z.boolean().optional(),
   escalationDetection: z.boolean().optional(),
   voiceMode: z.enum(['WEBRTC_PREFERRED', 'WEBSOCKET_ONLY']).optional(),
+  transferConfiguration: TransferConfigurationSchema.optional(),
 };
 const DiagnosticsRunIdSchema = z.string().uuid();
 const ConnectSchema = TestSchema.extend({
@@ -103,6 +185,11 @@ export class ElevenLabsIntegrationController {
   @Post('verify')
   verify(@Req() request: AuthenticatedRequest) {
     return this.integration.verifySaved(request.principal);
+  }
+
+  @Post('synchronize-active-agent')
+  synchronizeActiveAgent(@Req() request: AuthenticatedRequest) {
+    return this.integration.synchronizeActiveAgentFromStoredCredential(request.principal);
   }
 
   @Post('rotate')

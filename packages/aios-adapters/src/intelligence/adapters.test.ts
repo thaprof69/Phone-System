@@ -135,6 +135,13 @@ describe('OpenAI-compatible adapter', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.category).toBe('INVALID_RESPONSE');
   });
+
+  it('rejects a 200 response with empty completion text', async () => {
+    mockFetch(200, { id: 'x', choices: [{ message: { content: '' } }] });
+    const result = await adapter.execute('sk-test', { submodel: 'gpt-4o', prompt: 'hi' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.category).toBe('INVALID_RESPONSE');
+  });
 });
 
 describe('Anthropic adapter', () => {

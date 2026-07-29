@@ -128,7 +128,7 @@ export class OpenAICompatibleAdapter implements IntelligenceProviderAdapter {
       | { id?: string; choices?: Array<{ message?: { content?: unknown } }>; usage?: unknown }
       | undefined;
     const content = body?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string')
+    if (typeof content !== 'string' || content.trim().length === 0)
       return {
         ok: false,
         error: buildError(

@@ -4,6 +4,7 @@ import {
   compactIdentifier,
   formValuesFrom,
   keyLabel,
+  normaliseTransferConfiguration,
   settingsPayload,
   type ProviderStatus,
 } from './provider-card.logic.js';
@@ -26,6 +27,46 @@ const saved: ProviderStatus = {
   summaryGeneration: true,
   escalationDetection: true,
   voiceMode: 'WEBSOCKET_ONLY',
+  transferConfiguration: {
+    enabled: true,
+    executionOwner: 'ELEVENLABS',
+    transferTool: 'transfer_to_number',
+    defaultTransferType: 'sip_refer',
+    warmHandoffPreferred: false,
+    preserveCallerIdPreferred: true,
+    passConversationContext: true,
+    destinations: [
+      {
+        id: 'ops',
+        label: 'Operations',
+        type: 'sip_uri',
+        value: 'sip:ops@example.com',
+        availability: 'Always',
+        priority: 1,
+        notes: 'Primary escalation route',
+      },
+    ],
+    rules: [
+      {
+        id: 'complaint',
+        label: 'Complaint',
+        enabled: true,
+        priority: 1,
+        destinationId: 'ops',
+        transferType: 'sip_refer',
+        reasonCode: 'COMPLAINT',
+        condition: 'Transfer formal complaints to operations.',
+        clientMessage: 'I will connect you with operations.',
+        operatorMessage: 'Complaint escalation. Review the transcript first.',
+      },
+    ],
+    fallback: {
+      type: 'callback',
+      destinationId: 'ops',
+      instructions: 'Create a callback task if the transfer fails.',
+    },
+    copilotContext: 'Keep handoff rules concise and provider neutral.',
+  },
 };
 
 describe('keyLabel', () => {
@@ -73,6 +114,7 @@ describe('formValuesFrom', () => {
       detectEscalations: true,
       enableChatTest: false,
       generateSummaries: true,
+      transferConfiguration: saved.transferConfiguration,
     });
   });
 
@@ -92,6 +134,61 @@ describe('formValuesFrom', () => {
       detectEscalations: false,
       generateSummaries: false,
     });
+  });
+});
+
+describe('transfer configuration', () => {
+  it('defaults to a provider-neutral ElevenLabs transfer policy', () => {
+    const values = formValuesFrom({ provider: 'ELEVENLABS', status: 'NOT_CONFIGURED' });
+    expect(values.transferConfiguration).toMatchObject({
+      enabled: false,
+      executionOwner: 'ELEVENLABS',
+      transferTool: 'transfer_to_number',
+      defaultTransferType: 'provider_default',
+    });
+    expect(values.transferConfiguration.destinations[0]).toMatchObject({
+      id: 'main_operator',
+      type: 'alias',
+    });
+  });
+
+  it('repairs an empty migration-default transfer object', () => {
+    const config = normaliseTransferConfiguration({});
+    expect(config.fallback).toMatchObject({
+      type: 'callback',
+      destinationId: 'main_operator',
+    });
+    expect(config.rules[0]!.destinationId).toBe('main_operator');
+  });
+
+  it('keeps transfer policy inside the non-secret settings payload', () => {
+    const payload = settingsPayload(saved, formValuesFrom(saved));
+    expect(payload.transferConfiguration).toMatchObject({
+      enabled: true,
+      defaultTransferType: 'sip_refer',
+      rules: [
+        expect.objectContaining({
+          destinationId: 'ops',
+          reasonCode: 'COMPLAINT',
+        }),
+      ],
+    });
+  });
+
+  it('normalises stale rule destinations to an approved destination', () => {
+    const firstRule = saved.transferConfiguration!.rules[0]!;
+    const config = normaliseTransferConfiguration({
+      ...saved.transferConfiguration!,
+      rules: [
+        {
+          ...firstRule,
+          destinationId: 'missing',
+          transferType: 'conference',
+        },
+      ],
+    });
+    expect(config.rules[0]!.destinationId).toBe('ops');
+    expect(config.rules[0]!.transferType).toBe('conference');
   });
 });
 

@@ -126,6 +126,7 @@ export function useReceptionistConversation() {
   const conversationRef = useRef<VoiceConversation | TextConversation | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const entryId = useRef(0);
+  const turnQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     if (phase !== 'ended' || callIntelligence.status !== 'ANALYSING' || !sessionId) return;
@@ -152,6 +153,15 @@ export function useReceptionistConversation() {
     setTranscript((current) => [...current, { id: entryId.current, role, text }]);
   }
 
+  function enqueueTurn<T>(operation: () => Promise<T>): Promise<T> {
+    const next = turnQueueRef.current.catch(() => undefined).then(operation);
+    turnQueueRef.current = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
   function postMediaVerification(input: {
     status: 'PASS' | 'FAILED';
     microphoneEstablished?: boolean;
@@ -170,6 +180,7 @@ export function useReceptionistConversation() {
     agentVersionId: string;
     mode: 'VOICE' | 'TEXT';
     source: 'SCENARIO' | 'MANUAL' | 'LIVE';
+    purpose?: 'TEST' | 'TRAINING' | 'DEBUG' | 'VALIDATION';
   }) {
     setPhase('requesting');
     setMessage('');
@@ -206,6 +217,7 @@ export function useReceptionistConversation() {
       agentVersionId: string;
       mode: 'VOICE' | 'TEXT';
       source: 'SCENARIO' | 'MANUAL' | 'LIVE';
+      purpose?: 'TEST' | 'TRAINING' | 'DEBUG' | 'VALIDATION';
     },
     activeSessionId: string,
   ): Promise<boolean> {
@@ -235,7 +247,7 @@ export function useReceptionistConversation() {
       pushTranscript(role, text);
       const attached = await attachmentReady;
       if (!attached) return;
-      await call(`/${activeSessionId}/turn`, 'POST', { role, text });
+      await enqueueTurn(() => call(`/${activeSessionId}/turn`, 'POST', { role, text }));
       if (input.mode === 'VOICE')
         postMediaVerification({
           status: 'PASS',
@@ -356,7 +368,7 @@ export function useReceptionistConversation() {
     if (!id || !text.trim()) return;
     conversationRef.current?.sendUserMessage(text);
     pushTranscript('user', text);
-    const result = await call(`/${id}/turn`, 'POST', { role: 'user', text });
+    const result = await enqueueTurn(() => call(`/${id}/turn`, 'POST', { role: 'user', text }));
     if (result.quantumResult) applyProvisionalResult(result.quantumResult as QuantumResult);
     if (result.status !== 'SUCCESS') {
       setMessage(String(result.message ?? 'The caller turn could not be analysed.'));
@@ -369,7 +381,7 @@ export function useReceptionistConversation() {
     if (!id) return;
     conversationRef.current?.sendUserMessage(message);
     pushTranscript('user', message);
-    const result = await call(`/${id}/preset`, 'POST', { scenarioKey });
+    const result = await enqueueTurn(() => call(`/${id}/preset`, 'POST', { scenarioKey }));
     if (result.quantumResult) applyProvisionalResult(result.quantumResult as QuantumResult);
     if (result.status !== 'SUCCESS') {
       setMessage(String(result.message ?? 'The preset turn could not be analysed.'));
@@ -409,6 +421,7 @@ export function useReceptionistConversation() {
   async function endSession() {
     await conversationRef.current?.endSession();
     conversationRef.current = null;
+    await turnQueueRef.current.catch(() => undefined);
     const id = sessionIdRef.current;
     if (id) {
       const ended = await call(`/${id}/end`, 'POST', { reason: 'USER_ENDED' });

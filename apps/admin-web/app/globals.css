@@ -597,9 +597,27 @@ html[data-theme='dark'] .topbar {
   border-bottom: 1px solid #07396c;
   box-shadow: 0 8px 24px rgb(7 57 108 / 18%);
 }
+.live-activity-notices {
+  display: grid;
+}
 .live-call-banner:hover {
   color: #fff;
   background: #1263b4;
+}
+.live-chat-banner {
+  background: #7c350f;
+  border-color: #572209;
+  box-shadow: 0 8px 24px rgb(87 34 9 / 20%);
+}
+.live-chat-banner:hover {
+  background: #934112;
+}
+.live-chat-signal {
+  color: #ffad42;
+  background: #361804;
+}
+.live-chat-signal::after {
+  border-color: rgb(255 157 46 / 72%);
 }
 .live-call-signal {
   position: relative;
@@ -645,6 +663,14 @@ html[data-theme='dark'] .live-call-banner {
 }
 html[data-theme='dark'] .live-call-banner:hover {
   background: #0c4a87;
+}
+html[data-theme='dark'] .live-chat-banner {
+  background: #672b0d;
+  border-color: #451b07;
+  box-shadow: 0 8px 24px rgb(35 13 2 / 40%);
+}
+html[data-theme='dark'] .live-chat-banner:hover {
+  background: #79330e;
 }
 @keyframes live-call-pulse {
   from {
@@ -1180,7 +1206,7 @@ td a {
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--surface);
   font-size: 11px;
 }
 .governed-form textarea {
@@ -1456,7 +1482,7 @@ td a {
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--surface);
   font-size: 11px;
 }
 .integration-form .checkbox-field {
